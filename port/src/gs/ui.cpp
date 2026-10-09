@@ -780,22 +780,44 @@ static void controls_tab(void) {
         ImGui::EndTable();
     }
 }
+static void qol_tab(void) {
+    if (ImGui::Checkbox("Skip logos"), qol.skiplogos)
+    {
+        Port_SettingSave("skip_logos", qol.skiplogos);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Automatically skip logos without user input.");
+    if (ImGui::Checkbox("Skip intro video"), qol.skipintro)
+    {
+        Port_SettingSave("skip_intro", qol.skipintro);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Automatically skip intro video without user input.")
+}
+
+void GetQoLSettings(void)
+{
+    qol->skipintro = Port_Setting("skip_intro", 0);
+    qol->skiplogos = Port_Setting("skip_logos", 0);
+}
 
 static void build(void) {
     PortVideo v, was;
+    QoLSettings qol;
     ImGuiIO &io = ImGui::GetIO();
     bool open = true;
-
+    GetQoLSettings(&qol);
     GsGpu_GetSettings(&v);
     was = v;
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(640.0f, 560.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Settings", &open, ImGuiWindowFlags_NoCollapse)) {
         if (ImGui::BeginTabBar("tabs")) {
-            if (tab("Video", 0)) { video_tab(v); ImGui::EndTabItem(); }
-            if (tab("Effects", 1)) { effects_tab(v); ImGui::EndTabItem(); }
-            if (tab("Audio", 2)) { audio_tab(v); ImGui::EndTabItem(); }
-            if (tab("Controls", 3)) {
+            if (tab("QoL", 1)) { qol_tab(qol); ImGui::EndTabItem(); }
+            if (tab("Video", 1)) { video_tab(v); ImGui::EndTabItem(); }
+            if (tab("Effects", 2)) { effects_tab(v); ImGui::EndTabItem(); }
+            if (tab("Audio", 3)) { audio_tab(v); ImGui::EndTabItem(); }
+            if (tab("Controls", 4)) {
                 bool cs = Port_ClashSquare() != 0;
                 if (ImGui::Checkbox("Clashes: Square counts as a direction", &cs)) {
                     Port_ClashSquareSet(cs);
@@ -826,7 +848,7 @@ static void build(void) {
                 controls_tab();
                 ImGui::EndTabItem();
             }
-            if (tab("Cheats", 4)) { cheats_tab(); ImGui::EndTabItem(); }
+            if (tab("Cheats", 5)) { cheats_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         if (ImGui::GetFrameCount() > 3) {

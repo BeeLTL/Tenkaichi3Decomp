@@ -1,7 +1,7 @@
 #include "common.h"
 #include "menu/menu_i.h"
 #include "sys/pad.h"
-
+#include "../../port/src/gs/ui.h"
 Logo *gLogo = NULL; /* 0x3B590C */
 
 /*
@@ -160,7 +160,7 @@ void FirstRun_WaitPartition(s32 pt) {
 }
 
 /* The first-run sequence. Returns 1. */
-s32 FirstRun_Main(void) {
+s32 FirstRun_Main() {
     u32 *res;
 
     File_LoadPartitionNw(2);
@@ -170,8 +170,11 @@ s32 FirstRun_Main(void) {
         gMenuArc0 = File_LoadSync(gProgress->baseFile + 0x19, NULL, 0);
     }
     BootCard_Run(2);
-    res = Sprite_Unpack(MPACK_AT(gMenuArc0, 3), NULL, NULL);
-    Logo_ShowAll(res);
+    if (qol.skiplogos != 1)
+    {
+        res = Sprite_Unpack(MPACK_AT(gMenuArc0, 3), NULL, NULL);
+        Logo_ShowAll(res);
+    }
     if (res != NULL) {
         Heap_Free(res);
     }
@@ -180,7 +183,10 @@ s32 FirstRun_Main(void) {
         gMenuArc0 = NULL;
     }
     FirstRun_WaitPartition(2);
-    Movie_PlayOpening();
+    if (qol.skipintro != 1)
+    {
+        Movie_PlayOpening();
+    }
     PadWatch_SetEnabled(1);
     return 1;
 }
