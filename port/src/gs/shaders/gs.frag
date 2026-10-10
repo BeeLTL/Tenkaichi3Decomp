@@ -44,7 +44,7 @@ void main() {
             vec2 at = uv - (dx * (f.x - g.x) + dy * (f.y - g.y)); // where the GS takes it
             if (p.misc.w > 0.0) {
                 uv = at;
-            } else if (p.mode.x != 3) {
+            } else if (p.mode.x != 3 || p.orig.w != 0.0) {
                 // The game's own 2D art, shown smooth (BT3_2D_SMOOTH): the coordinate of this output pixel as it
                 // is. The GS shows the texel its whole pixel falls into over the whole GS pixel, so that texel's
                 // middle belongs at the GS pixel's middle, which is where the plain coordinate puts it; the
@@ -53,6 +53,9 @@ void main() {
                 // in. (The replacement's rule below, tried here, chooses between two formulas by a derivative
                 // for every pixel: on art near one texel a pixel the choice flickered from pixel to pixel, seen as
                 // comb-like stripes in small text.)
+                // A texture pack's replacement takes this rule too (orig.w, set unless BT3_TEX_GRID=1): the rule below
+                // holds the picture to the GS's pixel grid, so a piece that glides by parts of a GS pixel (the main
+                // menu's entries) had its letters step one after the other: text that tears while it moves.
                 vec2 inset = 0.5 / vec2(textureSize(tex, 0));
                 uv = clamp(uv, p.rect.xy + inset, p.rect.zw - inset);
             } else {
@@ -62,7 +65,10 @@ void main() {
                 // falls into, so the output pixel shows the matching part of that texel; otherwise the
                 // coordinate is carried on from `at`, half a GS pixel to either side.
                 vec2 o = (f - g) / s, step = vec2(dx.x, dy.y) * s * p.orig.xy; // texels per GS pixel
-                vec2 snapped = (floor(at * p.orig.xy) + mix(1.0 - o, o, step2(step))) / p.orig.xy;
+                // (`at` lies ON a texel boundary where a piece has whole-texel coordinates: a 64th of a texel in the
+                // piece's direction decides which side, as the piece's rectangle is worked out. Without it the
+                // rounding of `at` chose from pixel to pixel: columns of a letter missing, steps along a logo.)
+                vec2 snapped = (floor(at * p.orig.xy + sign(step) / 64.0) + mix(1.0 - o, o, step2(step))) / p.orig.xy;
                 vec2 carried = at + (o - 0.5) * vec2(dx.x, dy.y) * s;
                 bvec2 one = lessThan(abs(abs(step) - 1.0), vec2(0.02));
                 uv = vec2(one.x ? snapped.x : carried.x, one.y ? snapped.y : carried.y);

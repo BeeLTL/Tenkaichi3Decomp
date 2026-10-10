@@ -1407,3 +1407,26 @@ of the vertices into the transfer buffer could be saved by recording straight in
   triangles were not where the layer under them was: depth fighting, the shine there in one picture and gone or
   in shreds in the next. Layer 5 goes through `interp_bone` now.
 - Checked: the same six consecutive pictures before and after; after, the shine is whole and the same in each.
+
+## Texture packs: broken letters and logos, text that tears while it moves (2026-10-11)
+
+Reported by a player on 0.1.22 with a pack: "some things are pixelated". Seen with the 18,704-file pack: the
+publishers' logos had steps along their edges, the copyright text had letters with columns missing ("righ:s",
+"SH.JEISHA"), and the main menu's entries tore while they glided. Without the pack the same screens were clean.
+Two faults of the rule a replacement is sampled by as 2D art (gs.frag, mode 3):
+
+- **The texel was chosen on its boundary.** The rule takes the original texel the GS pixel shows (`floor(at *
+  size)`) and shows the matching part of the replacement. Where a piece has whole-texel coordinates, `at` lies ON
+  the boundary between two texels, and its rounding chose one side or the other from pixel to pixel. Now a 64th of
+  a texel in the piece's direction decides, as where the piece's rectangle is worked out (GsGpu_Draw).
+- **The picture was held to the GS's pixel grid.** A piece that glides by parts of a GS pixel (the main menu's
+  entries) moved smoothly as geometry while each letter's picture stepped a whole GS pixel at another moment. A
+  replacement now takes the rule of the game's own smooth 2D art: the plain coordinate of each output pixel, held
+  inside the piece's rectangle of its sheet. This does not depend on the setting "2D filtering": sharp means the
+  game's own art as blocks of a GS pixel, which a replacement of several texels per GS pixel is not.
+  `BT3_TEX_GRID=1` gives the grid rule back, to compare.
+
+Checked: frames of the boot and the main menu with the pack, before and after, smooth and sharp, beside the
+frames without the pack (windowless, the processor's own Radeon, Vulkan); the recorded fight ends as before. The
+user saw on screen: the logos, the copyright text and the menu's motion right in both settings, the fight's HUD
+unchanged in sharp. Not checked: widescreen with a pack; the OpenGL renderer with a pack.

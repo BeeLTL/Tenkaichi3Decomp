@@ -773,6 +773,10 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
         d.rect[3] = (float)hi[1] / th;
         d.orig[0] = tw;
         d.orig[1] = th;
+        /* A replacement follows its piece smoothly whatever "2D filtering" says: sharp means the game's own art as
+           blocks of a GS pixel, which a replacement of several texels per GS pixel is not; held to the GS's grid
+           its letters stepped one after the other while a piece glided (BT3_TEX_GRID=1: the grid rule, to compare). */
+        d.orig[3] = getenv("BT3_TEX_GRID") != NULL && atoi(getenv("BT3_TEX_GRID")) != 0 ? 0.0f : 1.0f;
     }
     d.first = gsVertCount;
     if (type == 6) { /* sprite: two corners, flat colour and depth of the second vertex */
