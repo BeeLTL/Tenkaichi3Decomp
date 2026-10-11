@@ -5,8 +5,20 @@ layout(location = 0) in vec4 vColor;
 layout(location = 1) in vec3 vStq;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outAux; // .r: the alpha byte exactly as the GS stores it (object numbers live there)
+// SEPARATE_SAMPLERS: the WebGPU build (port/tools/wasm_shaders.py: naga -D SEPARATE_SAMPLERS). WGSL has no
+// combined texture + sampler: each becomes a texture at binding 2k and its sampler at 2k + 1 of the same set
+// (k = its binding below). Vulkan (glslc) and OpenGL compile the #else part, as before.
+#ifdef SEPARATE_SAMPLERS
+layout(set = 2, binding = 0) uniform texture2D tex_texture;
+layout(set = 2, binding = 1) uniform sampler tex_sampler;
+#define tex sampler2D(tex_texture, tex_sampler)
+layout(set = 2, binding = 2) uniform texture2D dateTex_texture; // a copy of the target's alpha bytes, for the destination alpha test
+layout(set = 2, binding = 3) uniform sampler dateTex_sampler;
+#define dateTex sampler2D(dateTex_texture, dateTex_sampler)
+#else
 layout(set = 2, binding = 0) uniform sampler2D tex;
 layout(set = 2, binding = 1) uniform sampler2D dateTex; // a copy of the target's alpha bytes, for the destination alpha test
+#endif
 layout(set = 3, binding = 0) uniform Params {
     ivec4 mode;  // x: textured (1 from GS memory, 2 a frame buffer, 3 a texture pack's replacement), y: TFX, z: TCC, w: alpha test (0 off, else ATST + 1)
     vec4 misc;   // x: AREF in GS units (0..255); y: destination alpha test (0 off, 1 pass where bit 7 of the
