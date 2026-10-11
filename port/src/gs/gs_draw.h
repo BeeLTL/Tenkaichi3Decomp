@@ -19,6 +19,23 @@ extern int gsScale;
 /* The part of a frame buffer the game shows (its display registers): 512 x 448 GS pixels, at SCALE in a target. */
 #define GS_DISPLAY_W 512
 #define GS_DISPLAY_H 448
+/* The game's two display buffers: frame-buffer pages 0x000 and 0x070, 448 lines apart (its double buffering). */
+#define GS_DISPLAY_BUFFERS 2
+#define GS_DISPLAY_FBP(i) ((i) ? 0x70u : 0u)
+
+/* GsDraw.native: a recorded step that is not a primitive; each back end replays it as a pass of its own. */
+enum {
+    GS_NATIVE_NONE = 0,
+    GS_NATIVE_OUTLINE = 1,     /* the outline effect (the game's PORT_FX_OUTLINE marker, src/sys/gfxm_a.c) */
+    GS_NATIVE_ALPHA_KEY = 2,   /* the see-through tint (PORT_FX_ALPHA_KEY): no longer recorded, the table pass draws it */
+    GS_NATIVE_TABLE_PASS = 3,  /* the depth / alpha byte through a 256-entry table (dclut.frag) */
+    GS_NATIVE_COPY_IDS = 4,    /* the alpha bytes (object ids) copied for the passes that read them */
+    GS_NATIVE_COPY_DATE = 5,   /* the alpha bytes copied for the destination alpha test (TEST.DATE) */
+    GS_NATIVE_FB_UPLOAD = 100, /* + display buffer: a picture uploaded into it (movies), drawn scaled into its target */
+};
+
+/* GsBackend.texSlotsLeft of a back end that uploads at once (no queue that could fill up within a frame). */
+#define GS_TEX_SLOTS_UNLIMITED (1 << 20)
 
 /* A draw's sampler (GsDraw.sampler): these flags, from TEX1.MMAG and CLAMP; a back end makes one sampler object for
    each of the GS_SAMPLER_COUNT combinations and indexes them with the value. */
@@ -243,5 +260,8 @@ int GsDraw_TargetGet(uint32_t fbp, int create);
 
 void GsGpu_TitlePoll(void); /* gs_draw.c */
 void GsDraw_FrameReset(void); /* gs_draw.c: the frame was replayed: an empty list for the next one */
+/* gs_draw.c: the picture uploaded into display buffer `buffer` (GS_NATIVE_FB_UPLOAD), GS_W x GS_H RGBA from GS memory,
+   opaque, top row first, into px (GS_W * GS_H words). */
+void GsDraw_DisplayBufferPixels(int buffer, uint32_t *px);
 
 #endif

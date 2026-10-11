@@ -497,7 +497,7 @@ static int tex_upload(GsTex handle, int level, uint32_t w, uint32_t h, int forma
 }
 
 static void tex_destroy(GsTex tex) { GLuint t = (GLuint)tex; glDeleteTextures(1, &t); }
-static int tex_slots_left(void) { return 1 << 20; }
+static int tex_slots_left(void) { return GS_TEX_SLOTS_UNLIMITED; } /* (uploads go to GL at once) */
 static GsTex white_tex(void) { return (GsTex)sWhite; }
 
 static void copies_create(void) {
@@ -623,7 +623,7 @@ static void set_native(int effect) {
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     if (sHasIndexed) { glEnablei(GL_BLEND, 0); glDisablei(GL_BLEND, 1); } else { glEnable(GL_BLEND); }
-    if (effect == 2) {
+    if (effect == GS_NATIVE_ALPHA_KEY) {
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO);
         glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     } else {
@@ -636,8 +636,8 @@ static void set_native(int effect) {
     } else {
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
     }
-    if (sCurProgram != (effect == 2 ? sKeyProg : sOutlineProg)) {
-        sCurProgram = effect == 2 ? sKeyProg : sOutlineProg;
+    if (sCurProgram != (effect == GS_NATIVE_ALPHA_KEY ? sKeyProg : sOutlineProg)) {
+        sCurProgram = effect == GS_NATIVE_ALPHA_KEY ? sKeyProg : sOutlineProg;
         glUseProgram(sCurProgram);
     }
 }
@@ -881,8 +881,8 @@ static void frame_end(void) {
         glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, (GLsizeiptr)(gsVuIdxCount * sizeof(uint32_t)), gsVuIdx);
         glBindVertexArray(0);
     }
-    for (i = 0; i < 2; i++) {
-        uint32_t *px, x, y, fbp = i ? 0x70 : 0;
+    for (i = 0; i < GS_DISPLAY_BUFFERS; i++) {
+        uint32_t *px;
         if (!(gGsFbUploads & (1u << i))) { continue; }
         if (sFbTex[i] == 0) {
             glGenTextures(1, &sFbTex[i]);
@@ -893,11 +893,7 @@ static void frame_end(void) {
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sFbTex[i], 0);
         }
         px = malloc((size_t)GS_W * GS_H * 4);
-        for (y = 0; y < GS_H; y++) {
-            for (x = 0; x < GS_W; x++) {
-                px[y * GS_W + x] = Gs_VramRead(fbp * 32, 8, 0, x, y) | 0xFF000000u;
-            }
-        }
+        GsDraw_DisplayBufferPixels(i, px);
         glBindTexture(GL_TEXTURE_2D, sFbTex[i]);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GS_W, GS_H, GL_RGBA, GL_UNSIGNED_BYTE, px);
         free(px);
@@ -917,11 +913,11 @@ static void frame_end(void) {
     glEnable(GL_SCISSOR_TEST);
     for (n = 0; n < gsDrawCount; n++) {
         const GsDraw *d = &gsDraws[n];
-        if (d->native >= 100) {
+        if (d->native >= GS_NATIVE_FB_UPLOAD) {
             GLenum one[1] = {GL_COLOR_ATTACHMENT0};
-            if (sFbTex[d->native - 100] == 0) { continue; }
+            if (sFbTex[d->native - GS_NATIVE_FB_UPLOAD] == 0) { continue; }
             glDisable(GL_SCISSOR_TEST); /* glBlitFramebuffer honours the scissor test: the copy must be whole */
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, sFbFbo[d->native - 100]);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, sFbFbo[d->native - GS_NATIVE_FB_UPLOAD]);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sTgFbo[d->target]);
             glDrawBuffers(1, one);
             glBlitFramebuffer(0, 0, GS_W, GS_H, 0, 0, GS_W * SCALE, GS_H * SCALE, GL_COLOR_BUFFER_BIT, GL_LINEAR);
@@ -931,8 +927,8 @@ static void frame_end(void) {
             cur = -1;
             continue;
         }
-        if (d->native == 5 || d->native == 4) {
-            GLuint dst = d->native == 5 ? sDateCopy : sAuxCopy;
+        if (d->native == GS_NATIVE_COPY_DATE || d->native == GS_NATIVE_COPY_IDS) {
+            GLuint dst = d->native == GS_NATIVE_COPY_DATE ? sDateCopy : sAuxCopy;
             GLenum one[1] = {GL_COLOR_ATTACHMENT0};
             if (!gsTargets[d->target].cleared) { continue; }
             /* The copy of the frame's alpha ids (the outline and the DATE passes read it). glBlitFramebuffer is
@@ -954,7 +950,7 @@ static void frame_end(void) {
             cur = -1;
             continue;
         }
-        if (d->native == 3) {
+        if (d->native == GS_NATIVE_TABLE_PASS) {
             float params[4] = {(float)d->src, d->misc[0], 0.0f, 0.0f};
             if (!gsTargets[d->target].cleared) { continue; }
 #ifdef __EMSCRIPTEN__

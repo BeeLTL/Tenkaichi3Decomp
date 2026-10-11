@@ -5,6 +5,7 @@
 //
 //   node port/tests/bench/bench.js --label <name> [--browser <exe>] [--url http://127.0.0.1:8080/index.html]
 //        [--from 300] [--to 2100] [--profile] [--headless] [--env NAME=value,...] [--query page-option=value]
+//        [--shots N] [--boot]
 //
 // The page and the data must be served (port/web/devserver.py with the gamedata mount). Frames [from, to) are
 // measured; frames before `from` are the warm-up (loading, first textures and pipelines). Writes
@@ -32,7 +33,8 @@ const from = Number(args.from || 300), to = Number(args.to || 2100);
 // engine's in-memory file system at the end, for picture comparisons (port/tests/bench/compare_shots.js).
 const SHOT_DIR = 'port/build/shots';  // where the back ends write them (gs_gl.c, gs_gpu.c), relative to the engine's cwd
 const shotEvery = args.shots ? Number(args.shots) : 0;
-const env = ['BT3_DEMO=1', 'BT3_FRAME_LOG=1', `BT3_TRACE=${TRACE_EVERY_VBLANKS}`]
+// --boot: the game's own start (logos, the opening movie, the title) instead of the attract-demo battle
+const env = (args.boot ? [] : ['BT3_DEMO=1']).concat(['BT3_FRAME_LOG=1', `BT3_TRACE=${TRACE_EVERY_VBLANKS}`])
   .concat(shotEvery ? [`BT3_SHOT=${shotEvery}`, `BT3_SHOT_FROM=${from}`, `BT3_SHOT_TO=${to - 1}`] : [])
   .concat(args.env && args.env !== true ? args.env.split(',') : []);
 const url = `${args.url || 'http://127.0.0.1:8080/index.html'}?autostart=1${args.query ? '&' + args.query : ''}&env=${env.join(',')}`;

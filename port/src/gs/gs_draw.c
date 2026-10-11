@@ -406,7 +406,7 @@ static void depth_clut(int ctx) {
         return;
     }
     memset(&d, 0, sizeof(d));
-    d.native = 3;
+    d.native = GS_NATIVE_TABLE_PASS;
     d.src = gsDepthByteIsFog ? 0 : 1;
     d.target = GsDraw_TargetGet((uint32_t)(gGs.frame[ctx] & 0x1FF), 0);
     /* switched off by the user: the passes that colour the picture (the ones that only write alpha feed the glow) */
@@ -433,7 +433,7 @@ static void depth_clut(int ctx) {
     d.scissor[1] = (int)((sc >> 32) & 0x7FF) * SCALE;
     d.scissor[2] = ((int)((sc >> 16) & 0x7FF) + 1) * SCALE - d.scissor[0];
     d.scissor[3] = ((int)((sc >> 48) & 0x7FF) + 1) * SCALE - d.scissor[1];
-    if (last != NULL && last->native == 3 && last->tex == d.tex && last->target == d.target && last->pipeline == d.pipeline && last->src == d.src) {
+    if (last != NULL && last->native == GS_NATIVE_TABLE_PASS && last->tex == d.tex && last->target == d.target && last->pipeline == d.pipeline && last->src == d.src) {
         return; /* the next strip of the same pass */
     }
     gsDraws[gsDrawCount++] = d;
@@ -461,9 +461,9 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
             if (tpsm != 0x1B) { /* the copy of the ids: taken now, read by the passes that follow */
                 GsDraw c, *last = gsDrawCount ? &gsDraws[gsDrawCount - 1] : NULL;
                 memset(&c, 0, sizeof(c));
-                c.native = 4;
+                c.native = GS_NATIVE_COPY_IDS;
                 c.target = GsDraw_TargetGet(tbp / 32, 0);
-                if (c.target >= 0 && gsDrawCount < MAX_DRAWS && !(last != NULL && last->native == 4)) {
+                if (c.target >= 0 && gsDrawCount < MAX_DRAWS && !(last != NULL && last->native == GS_NATIVE_COPY_IDS)) {
                     gsDraws[gsDrawCount++] = c;
                 }
             }
@@ -635,7 +635,7 @@ static void date_snapshot(const GsDraw *d) {
         return;
     }
     memset(&c, 0, sizeof(c));
-    c.native = 5;
+    c.native = GS_NATIVE_COPY_DATE;
     c.target = d->target;
     if (gsDrawCount + 1 < MAX_DRAWS) {
         gsDraws[gsDrawCount++] = c;
@@ -1069,8 +1069,8 @@ void GsGpu_FbUpload(int second) {
         return;
     }
     memset(&d, 0, sizeof(d));
-    d.native = 100 + (second != 0);
-    d.target = GsDraw_TargetGet(second ? 0x70 : 0, 1);
+    d.native = GS_NATIVE_FB_UPLOAD + (second != 0);
+    d.target = GsDraw_TargetGet(GS_DISPLAY_FBP(second), 1);
     if (d.target >= 0) {
         gsDraws[gsDrawCount++] = d;
     }
@@ -1089,7 +1089,7 @@ void GsGpu_Native(int effect) {
         gsAnchor = effect == 0x13 ? 0 : effect == 0x14 ? 4 : effect - 0x0F; /* 1 left, 2 right, 3 centre, 4 by position */
         return;
     }
-    if (effect != 1 || gsDrawCount == MAX_DRAWS || (gsFxOff & 1)) {
+    if (effect != GS_NATIVE_OUTLINE || gsDrawCount == MAX_DRAWS || (gsFxOff & 1)) {
         return;
     }
     gsNative++;
@@ -1256,6 +1256,22 @@ void GsDraw_PictureSize(int windowW, int windowH, int *w, int *h) {
         *w = (int)((float)windowH * want + 0.5f);
     } else {
         *h = (int)((float)windowW / want + 0.5f);
+    }
+}
+
+/* GS memory addressing (GS manual): a frame-buffer page (FBP) is 32 blocks (BP); buffer widths count 64 pixels. */
+#define GS_BLOCKS_PER_PAGE 32
+#define GS_WIDTH_UNIT 64
+#define GS_PSMCT32 0 /* 32-bit pixels */
+#define GS_OPAQUE 0xFF000000u
+
+void GsDraw_DisplayBufferPixels(int buffer, uint32_t *px) {
+    uint32_t x, y;
+    for (y = 0; y < GS_H; y++) {
+        for (x = 0; x < GS_W; x++) {
+            px[y * GS_W + x] = Gs_VramRead(GS_DISPLAY_FBP(buffer) * GS_BLOCKS_PER_PAGE, GS_DISPLAY_W / GS_WIDTH_UNIT, GS_PSMCT32, x, y) |
+                               GS_OPAQUE;
+        }
     }
 }
 
