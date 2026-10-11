@@ -216,6 +216,10 @@ static char *translate(const char *src, int is_vertex) {
     while (*p) {
         if (!strncmp(p, "#version 450", 12)) { PUSH("#version 330 core"); p += 12; continue; }
         if (!strncmp(p, "gl_VertexIndex", 14)) { PUSH("gl_VertexID"); p += 14; continue; }
+        if (!strncmp(p, "layout(depth_less)", 18)) { /* (GL 4.2's; without it gl_FragDepth is simply written) */
+            while (*p && *p != '\n') { p++; }
+            continue;
+        }
         if (!strncmp(p, "layout(set", 10)) {
             const char *e = strchr(p, ')');
             if (e) { p = e + 1; if (*p == ' ') p++; continue; }
@@ -625,6 +629,12 @@ static void bind_target(int i, int clear) {
     }
 }
 
+void GsGl_Vsync(int on) { /* the settings window's "V-sync" */
+    if (sCtx != NULL) {
+        SDL_GL_SetSwapInterval(on != 0);
+    }
+}
+
 /* ---- init --------------------------------------------------------------------------------------- */
 static int gl_init(void) {
     static const uint32_t white = 0xFFFFFFFFu;
@@ -644,7 +654,7 @@ static int gl_init(void) {
         fprintf(stderr, "bt3: gl: no GL 3.3 core context: %s\n", SDL_GetError());
         return 0;
     }
-    SDL_GL_SetSwapInterval(0);
+    SDL_GL_SetSwapInterval(Port_Setting("vsync", 0) != 0);
     if (getenv("BT3_GL_TRACE") != NULL) { fprintf(stderr, "gl: current, loading the functions\n"); }
     if (!load_gl()) { return 0; }
     fprintf(stderr, "bt3: GL renderer: %s (%s)\n", (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
@@ -702,7 +712,7 @@ static int gl_init(void) {
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, sUboU);
     glGenBuffers(1, &sUboParams);
     glBindBuffer(GL_UNIFORM_BUFFER, sUboParams);
-    glBufferData(GL_UNIFORM_BUFFER, 64, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_UNIFORM_BUFFER, 80, NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 1, sUboParams);
 
     for (i = 0; i < 16; i++) {
@@ -756,14 +766,15 @@ static void frame_end(void) {
     SDL_Event ev;
     int cur = -1, best = -1, i;
     uint32_t n;
-    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } fu, lastFu;
+    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; float extra[4]; } fu, lastFu;
     int haveFu = 0;
 
+    GsGpu_TitlePoll();
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) { exit(0); }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) { Ui_Toggle(); continue; }
+        if (PortInput_Hotkey(&ev)) { Ui_Toggle(); continue; }
         if (Ui_Event(&ev)) { continue; }
-        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { exit(0); }
+        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { if (!ev.key.repeat && !Ui_QuitAsk()) { exit(0); } /* (asks first) */ }
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
             extern int gsInterp;
             extern void Port_SettingSave(const char *name, int value);
@@ -928,6 +939,7 @@ static void frame_end(void) {
         memcpy(fu.misc, d->misc, sizeof(fu.misc));
         memcpy(fu.rect, d->rect, sizeof(fu.rect));
         memcpy(fu.orig, d->orig, sizeof(fu.orig));
+        fu.extra[0] = d->vu ? (gsVuUni[d->uniform].misc[2] > 0.0f ? gsVuUni[d->uniform].misc[2] : 0.0f) : gsZMax;
         if (!haveFu || memcmp(&fu, &lastFu, sizeof(fu)) != 0) {
             set_params(&fu, sizeof(fu));
             memcpy(&lastFu, &fu, sizeof(fu));
@@ -1071,6 +1083,46 @@ static void frame_end(void) {
     gsNative = 0;
 }
 
+/* Target i's picture, reduced to the GS's 512 x 448 (as the Vulkan back end's). */
+static int gl_target_read(int i, uint8_t *rgba) {
+    GLsizei w = 512 * SCALE, h = 448 * SCALE; /* (the picture's part of the target, as the screenshot's) */
+    uint8_t *px;
+    int x, y;
+
+    if (sTgFbo[i] == 0 || (px = malloc((size_t)w * h * 4)) == NULL) {
+        return 0;
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, sTgFbo[i]);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    for (y = 0; y < 448; y++) { /* (rows come back in texture order: the first is the scene's top) */
+        for (x = 0; x < 512; x++) {
+            memcpy(rgba + (y * 512 + x) * 4, px + ((size_t)(y * SCALE + SCALE / 2) * w + x * SCALE + SCALE / 2) * 4, 4);
+        }
+    }
+    free(px);
+    return 1;
+}
+
+static void gl_target_copy(int src, int dst) {
+    GLenum one[1] = {GL_COLOR_ATTACHMENT0};
+    if (sTgCol[src] == 0 || sTgCol[dst] == 0) {
+        return;
+    }
+    glDisable(GL_SCISSOR_TEST); /* (the copy must be whole; frame_end sets its own state when it runs) */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, sScratchRead);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sTgCol[src], 0);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sScratchDraw);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sTgCol[dst], 0);
+    glDrawBuffers(1, one);
+    glBlitFramebuffer(0, 0, GS_W * SCALE, GS_H * SCALE, 0, 0, GS_W * SCALE, GS_H * SCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+}
+
 GsBackend sGlBackend = {
     "opengl",
     gl_init,
@@ -1087,4 +1139,6 @@ GsBackend sGlBackend = {
     target_aux,
     target_depth,
     pipe_get,
+    gl_target_read,
+    gl_target_copy,
 };

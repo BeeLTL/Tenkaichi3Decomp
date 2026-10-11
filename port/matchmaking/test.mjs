@@ -8,8 +8,15 @@ const copy = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "worker-test-")), "
 fs.writeFileSync(copy, src);
 const { worker, network, sameNetwork } = await import(copy);
 const rooms = new Map(), used = new Map();
+let rowids = 0;
 const DB = { prepare(sql) { return { args: [], bind(...a) { this.args = a; return this; },
+    async all() { const a = this.args;
+        if (sql.startsWith("SELECT queue, COUNT")) { const m = new Map(); for (const r of rooms.values()) { if (r.queue !== null && r.version === a[0] && r.join_key === null && r.made >= a[1]) m.set(r.queue, (m.get(r.queue) ?? 0) + 1); } return { results: [...m].map(([queue, n]) => ({ queue, n })) }; }
+        throw new Error("all: " + sql); },
     async first() { const a = this.args;
+        if (sql.startsWith("SELECT COUNT(*) AS n FROM rooms WHERE queue") && sql.includes("rowid <")) { const mine = rooms.get(a[3]); return { n: [...rooms.values()].filter((r) => r.queue === a[0] && r.version === a[1] && r.join_key === null && r.made >= a[2] && mine && r.rowid < mine.rowid).length }; }
+        if (sql.startsWith("SELECT COUNT(*) AS n FROM rooms WHERE queue")) { return { n: [...rooms.values()].filter((r) => r.queue === a[0] && r.version === a[1] && r.join_key === null && r.made >= a[2]).length }; }
+        if (sql.startsWith("SELECT * FROM rooms WHERE queue")) { const l = [...rooms.values()].filter((r) => r.queue === a[0] && r.version === a[1] && r.join_key === null && r.made >= a[2]).sort((x, y) => x.rowid - y.rowid); return l[0] ?? null; }
         if (sql.startsWith("SELECT COUNT")) { return { n: [...rooms.values()].filter((r) => r.ip === a[0]).length }; }
         if (sql.startsWith("SELECT * FROM rooms")) { const r = rooms.get(a[0]); return r && r.made >= a[1] ? r : null; }
         if (sql.startsWith("SELECT n FROM used")) { const n = used.get(a[0] + "|" + a[1]); return n ? { n } : null; }
@@ -19,7 +26,9 @@ const DB = { prepare(sql) { return { args: [], bind(...a) { this.args = a; retur
         if (sql.startsWith("DELETE FROM rooms WHERE made")) { for (const [k, r] of rooms) { if (r.made < a[0]) rooms.delete(k); } return {}; }
         if (sql.startsWith("DELETE FROM used")) { return {}; }
         if (sql.startsWith("INSERT INTO used")) { used.set(a[0] + "|" + a[1], a[2]); return {}; }
-        if (sql.startsWith("INSERT INTO rooms")) { if (rooms.has(a[0])) throw new Error("taken"); rooms.set(a[0], { code: a[0], made: a[1], version: a[2], ip: a[3], host_key: a[4], join_key: null, host_name: a[5], join_name: null, host_addrs: a[6], join_addrs: null }); return {}; }
+        if (sql.startsWith("INSERT INTO rooms")) { if (rooms.has(a[0])) throw new Error("taken"); rooms.set(a[0], { code: a[0], made: a[1], version: a[2], ip: a[3], host_key: a[4], join_key: null, host_name: a[5], join_name: null, host_addrs: a[6], join_addrs: null, queue: a[7] ?? null, who: a[8] ?? null, rowid: ++rowids }); return {}; }
+        if (sql.startsWith("DELETE FROM rooms WHERE who")) { for (const [k, r] of rooms) { if (r.who === a[0] && r.queue !== null && r.join_key === null) rooms.delete(k); } return {}; }
+        if (sql.startsWith("DELETE FROM rooms WHERE code = ? AND join_key IS NULL")) { const r = rooms.get(a[0]); if (r && r.join_key === null) { rooms.delete(a[0]); return { meta: { changes: 1 } }; } return { meta: { changes: 0 } }; }
         if (sql.startsWith("UPDATE rooms SET join_key")) { const r = rooms.get(a[3]); if (!r || r.join_key !== null) return { meta: { changes: 0 } }; r.join_key = a[0]; r.join_name = a[1]; r.join_addrs = a[2]; return { meta: { changes: 1 } }; }
         if (sql.startsWith("UPDATE rooms SET host_addrs")) { rooms.get(a[1]).host_addrs = a[0]; return {}; }
         if (sql.startsWith("DELETE FROM rooms WHERE code")) { rooms.delete(a[0]); return {}; }
@@ -104,5 +113,66 @@ h = await postCap("host", "192.0.2.92", { v: 3, name: "H", addrs: ["192.0.2.92:1
 check("... and no more logins, rooms still made", typeof h.code === "string" && h.noRelay === "the month's relay allowance is used up");
 await worker.scheduled({}, cap, { waitUntil: (p) => p });
 check("the Cron Trigger's entry runs", true);
+// quick match
+rooms.clear();
+let q1 = await post("quick", "198.51.100.20", { v: 3, name: "A", addrs: ["198.51.100.20:7000"], queue: "D15", who: "aaaaaaaaaaaa" });
+check("quick match, nobody waiting: a room of one's own", q1.role === "host" && typeof q1.code === "string" && typeof q1.key === "string");
+let qs = await post("queues", "198.51.100.99", { v: 3 });
+check("the queue's count shows the one waiting", qs.waiting.D15 === 1 && qs.waiting.S === 0);
+let q2 = await post("quick", "203.0.113.30", { v: 3, name: "B", addrs: ["203.0.113.30:8000", "10.0.0.9:8000"], queue: "S", who: "bbbbbbbbbbbb" });
+check("another queue is another queue", q2.role === "host");
+let q3 = await post("quick", "203.0.113.31", { v: 3, name: "C", addrs: ["203.0.113.31:8000", "10.0.0.7:8000"], queue: "D15", who: "cccccccccccc" });
+check("the same queue: put with the one who waits", q3.role === "join" && q3.code === q1.code && q3.peer.name === "A" && JSON.stringify(q3.peer.addrs) === JSON.stringify(["198.51.100.20:7000"]));
+p = await post("poll", "198.51.100.20", { code: q1.code, key: q1.key });
+check("... who is told of it by its poll, without the stranger's local address", p.peer && p.peer.name === "C" && JSON.stringify(p.peer.addrs) === JSON.stringify(["203.0.113.31:8000", "seen=203.0.113.31"]));
+let q4 = await post("quick", "203.0.113.32", { v: 3, name: "D", addrs: ["203.0.113.32:8000"], queue: "D15", who: "dddddddddddd" });
+check("a room that has its two is not given again", q4.role === "host" && q4.code !== q1.code);
+let q5 = await post("quick", "203.0.113.32", { v: 3, name: "D", addrs: ["203.0.113.32:8000"], queue: "D15", who: "dddddddddddd" });
+check("searching again: not put with one's own room left behind", q5.role === "host" && !rooms.has(q4.code));
+let q6 = await post("quick", "203.0.113.33", { v: 4, name: "E", addrs: ["203.0.113.33:8000"], queue: "D15", who: "eeeeeeeeeeee" });
+check("another netcode version is not matched", q6.role === "host");
+check("an unknown queue is refused", (await post("quick", "203.0.113.34", { v: 3, name: "F", addrs: ["203.0.113.34:1"], queue: "X", who: "ffffffffffff" })).error === "bad request");
+check("no name for the game: refused", (await post("quick", "203.0.113.34", { v: 3, name: "F", addrs: ["203.0.113.34:1"], queue: "S" })).error === "bad request");
+// two who search in the same moment: both made a room before either looked again
+rooms.clear();
+{
+    const first = await post("quick", "198.51.100.40", { v: 3, name: "G", addrs: ["198.51.100.40:1"], queue: "T", who: "gggggggggggg" });
+    // the second one's first look finds nobody (as it would have, a moment earlier): stood in for by hiding the room
+    const kept = rooms.get(first.code); rooms.delete(first.code);
+    const realPrepare = DB.prepare;
+    let put = false;
+    DB.prepare = (sql) => { const st = realPrepare(sql); if (!put && sql.startsWith("INSERT INTO rooms")) { put = true; rooms.set(first.code, kept); } return st; };
+    const second = await post("quick", "203.0.113.41", { v: 3, name: "H", addrs: ["203.0.113.41:1"], queue: "T", who: "hhhhhhhhhhhh" });
+    DB.prepare = realPrepare;
+    check("two at once: the later one gives its room up and joins the earlier", second.role === "join" && second.code === first.code && rooms.size === 1);
+}
+// a relay login only when it is needed (0.1.29 and later)
+{
+    const later = await postCap("host", "192.0.2.120", { v: 3, rel: 129, name: "H", addrs: ["192.0.2.120:1"] });
+    check("a game that asks later gets no login with its room", typeof later.code === "string" && !later.turn && !later.noRelay);
+    check("... and none before anyone has joined", (await postCap("relay", "192.0.2.120", { code: later.code, key: later.key })).error === "bad request");
+    const jn = await postCap("join", "192.0.2.121", { v: 3, rel: 129, code: later.code, name: "J", addrs: ["192.0.2.121:1"] });
+    check("... nor for the one who joined", (await postCap("relay", "192.0.2.121", { code: later.code, key: jn.key })).error === "bad request");
+    const asked = await postCap("relay", "192.0.2.120", { code: later.code, key: later.key });
+    check("the host asks once someone has joined: answered (a login, or why not)", (asked.turn && typeof asked.turn.username === "string") || typeof asked.noRelay === "string");
+    await postCap("addrs", "192.0.2.120", { code: later.code, key: later.key, addrs: ["192.0.2.120:1", "relay=104.30.1.9:5000"] });
+    const again = await postCap("poll", "192.0.2.121", { code: later.code, key: jn.key });
+    check("the one who joined learns the relay address by its poll", again.peer.addrs.includes("relay=104.30.1.9:5000"));
+    const old = await postCap("host", "192.0.2.122", { v: 3, name: "H", addrs: ["192.0.2.122:1"] });
+    check("an older game is answered as before (a login or a reason with its room)", !!old.turn || typeof old.noRelay === "string");
+}
+// only the newest release
+{
+    const strict = { DB, MIN_RELEASE: "129" };
+    const ask = async (what, body) => (await worker.fetch(new Request("https://x/v1/" + what, { method: "POST", headers: { "cf-connecting-ip": "198.51.100.77" }, body: JSON.stringify(body) }), strict)).json();
+    check("a game that does not say its release is refused when a minimum is set", (await ask("host", { v: 3, name: "O", addrs: ["198.51.100.77:1"] })).error === "old");
+    check("an older release is refused", (await ask("quick", { v: 3, rel: 128, name: "O", addrs: ["198.51.100.77:1"], queue: "S", who: "oooooooooooo" })).error === "old");
+    const ok = await ask("host", { v: 3, rel: 129, name: "N", addrs: ["198.51.100.77:1"] });
+    check("the release named, or a newer one, is let in", typeof ok.code === "string" && typeof (await ask("host", { v: 3, rel: 130, name: "N", addrs: ["198.51.100.77:1"] })).code === "string");
+    check("a room under way is not touched (its poll is answered)", (await ask("poll", { code: ok.code, key: ok.key })).peer === null);
+    const hi = await (await worker.fetch(new Request("https://x/v1/hello", { method: "POST", headers: { "cf-connecting-ip": "198.51.100.77" }, body: JSON.stringify({ rel: 128 }) }), { DB, MIN_RELEASE: "129", LATEST_RELEASE: "131" })).json();
+    check("hello says the minimum and the newest", hi.min === 129 && hi.latest === 131 && (await post("hello", "198.51.100.78", { rel: 128 })).min === 0);
+    check("no minimum set: everyone as before", typeof (await post("host", "198.51.100.78", { v: 3, name: "O", addrs: ["198.51.100.78:1"] })).code === "string");
+}
 console.log(fails === 0 ? "all passed" : fails + " failed");
 process.exit(fails === 0 ? 0 : 1);

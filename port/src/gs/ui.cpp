@@ -1,4 +1,5 @@
-// The settings window of the PC build: Dear ImGui over the finished picture. F1 opens and closes it.
+// The settings window of the PC build: Dear ImGui over the finished picture. F1 opens and closes it, or START + SELECT
+// of a controller, or the key and button of its Controls list (gs_input.c: PortInput_Hotkey).
 // Everything it shows lives elsewhere (ui.h): the renderer's settings in gs_gpu.c, the bindings in gs_input.c.
 // It runs on the render thread, which owns the window and its events.
 #include <stdio.h>
@@ -21,6 +22,7 @@ extern "C" {
 extern volatile int gPortNetMenuRequest;
 void Port_NetOptions(int rollback, int delay); // gs/net.c
 void Port_NetRulesSet(int type, int dp, int time); // gs/net.c: the host's battle type, DP limit row, time limit
+void Port_NetSpeedSet(int fast);                   // ... and the match's speed: 1 = 120% (set before the rules)
 void Port_NetNameSet(const char *name);         // gs/net.c: this player's name for the match
 const char *Port_NetName(int player);          // the name of the player of side 0 or 1 ("" outside a match)
 int Port_HudSwap(void);                        // the two sides of the HUD are in each other's places on this copy
@@ -49,6 +51,11 @@ extern int gsInterp;                           // gs_draw.c: in-between pictures
 void Port_SettingsWrite(void);
 int Port_LobbyStart(int host, const char *address, int port); // gs/net.c
 int Port_LobbyStartCode(int host, const char *code);         // the same with a room code (the matchmaking service)
+int Port_LobbyStartQuick(int queue);                         // a quick match: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20
+void Port_LobbyQueuesAsk(void);                              // asks the service how many wait in each queue
+void Port_LobbyHelloAsk(void);                               // asks it whether this release is new enough
+int Port_LobbyRelease(int *min, int *latest);                // this release's number; the oldest let in and the newest (0: not known)
+int Port_LobbyQueueWaiting(int queue);                       // ... as last heard, -1 if not known
 const char *Port_LobbyCode(void);                            // the host's room code, "" until it is known
 const char *Port_LobbyError(void);                           // why the matchmaking failed (state -3)
 int Port_LobbyRelayed(void);                                 // the other player was reached through the relay
@@ -60,6 +67,12 @@ static bool sReady, sOpen;
 static bool sNet;                              // the open window is the online screen (Dragon Net Battle), not the settings
 static int sForceTab = -1;                     // BT3_UI_OPEN=<tab>: open at start on that tab (testing)
 static int sCapKind, sCapPlayer, sCapAction;   // waiting for a key (1) or a controller button (2) to bind
+static Uint64 sCapUntil;                       // ... until then: a controller has no button that is not a binding, so the wait ends by itself
+static bool sQuit;                             // the question before the game closes is up
+static bool sQuitNo;                           // ... and Esc answered it: no
+static bool sPadHold;                          // the controller does not work the window: a binding is waited for, or its button is still down
+static int sTab;                               // the settings tab that is open (the shoulder buttons go to its neighbours)
+static bool sPadTab;                           // the shoulder buttons changed the tab this frame
 static SDL_GPUDevice *sDevice;
 
 /* Name strips (gamedata/stages/names.rgba and gamedata/songs/names.rgba): the names of the stages and tracks added
@@ -239,7 +252,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL; // no window-layout file next to the game
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad; // (a controller opens it too: START + SELECT)
     style();
     for (size_t i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
         FILE *fp = fopen(fonts[i], "rb");
@@ -265,6 +278,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
             return 0;
         }
     }
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll, NULL, 0); // any connected controller works the window
     sDevice = device;
     sReady = true;
     load_strips(); /* the stage- and song-name overlays; the ready flags stay 0 if there is no strip */
@@ -274,10 +288,24 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
             sForceTab = -1;
             gPortNetMenuRequest = 1;
         }
+        if (sForceTab == 8) { // testing: the exit question over the settings
+            sForceTab = -1;
+            sQuit = true;
+        }
         sOpen = true;
         gPortOverlayOpen = 1;
     }
     return 1;
+}
+
+// The game gets nothing from keyboard or controller while the window or the exit question is up; and the button
+// that closed either is not the game's.
+static void input_owner(void) {
+    int up = sOpen || sQuit;
+    if (gPortOverlayOpen && !up) {
+        PortInput_Swallow();
+    }
+    gPortOverlayOpen = up;
 }
 
 static void set_open(bool open) {
@@ -285,7 +313,67 @@ static void set_open(bool open) {
     sNet = false;
     sCapKind = 0;
     gPortInputCapture = 0;
-    gPortOverlayOpen = open;
+    input_owner();
+}
+
+static void capture(int kind, int player, int action) {
+    sCapKind = kind; sCapPlayer = player; sCapAction = action; gPortInputCapture = 1;
+    sCapUntil = SDL_GetTicks() + 5000;
+    sPadHold = true;
+}
+
+// A controller button pressed in the window (not while it waits for a binding, a list is open or a field is edited).
+static bool pad_pressed(ImGuiKey key) {
+    return sCapKind == 0 && !sPadHold && !sQuit && !ImGui::IsAnyItemActive() &&
+           !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) && ImGui::IsKeyPressed(key, false);
+}
+
+int Ui_QuitAsk(void) {
+    if (!sReady) {
+        return 0;
+    }
+    sQuit = true;
+    input_owner();
+    return 1;
+}
+
+static void build_quit(void) {
+    ImGuiIO &io = ImGui::GetIO();
+    bool stay = sQuitNo;
+
+    sQuitNo = false;
+    if (!ImGui::IsPopupOpen("Exit game")) {
+        ImGui::OpenPopup("Exit game");
+    }
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Exit game", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+        static const char *const kAsk = "Close the game? Progress that was not saved is lost.";
+        // the two buttons under the middle of the question (the window is as wide as its text)
+        float line = ImGui::CalcTextSize(kAsk).x, pair = 140.0f * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::TextUnformatted(kAsk);
+        ImGui::Spacing();
+        if (line > pair) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (line - pair) * 0.5f);
+        }
+        if (ImGui::Button("Exit", ImVec2(140.0f, 0.0f))) {
+            exit(0);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(140.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            stay = true;
+        }
+        if (ImGui::IsWindowAppearing()) {
+            ImGui::SetItemDefaultFocus(); // (on Cancel: a second press of the same button does not close the game)
+        }
+        if (stay) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (stay) {
+        sQuit = false;
+        input_owner();
+    }
 }
 
 // Dragon Net Battle: the screen behind the main menu's entry. For now only its shape: what a player fills in to
@@ -298,12 +386,64 @@ extern volatile int gPortNetWindowClose; // gs/state.c
 static void net_open(void) {
     set_open(true);
     sNet = true;
+    Port_LobbyHelloAsk(); // (once per opening: is there a newer release, and is this one still let in)
     gPortInputCapture = 1; // the game takes no input at all while this is open (it sits on the main menu behind it)
+}
+
+// Quick match (the third tab of the online screen): what stands under the queues.
+static bool sNetBusy;   // the lobby is waiting or connecting
+static int sQueue = -1; // the queue chosen: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20 DP
+
+static void quick_status(int state, int &lastState, const char *name) {
+    // A search ends by itself after three minutes: a window left open does not go on asking the service for hours,
+    // and the player is told that nobody was there instead of being left to wonder. One press searches again.
+    static const Uint64 kSearchMs = 180000;
+    static Uint64 since;
+    if (state == 3 && since != 0 && SDL_GetTicks() - since > kSearchMs) {
+        Port_LobbyCancel();
+        lastState = -5;
+        state = 0;
+    }
+    if (state == 3 || state == 1) {
+        ImGui::TextUnformatted(state == 1 ? "Found a player. Connecting..." : "Searching for a player in this queue...");
+        if (state == 3 && since != 0) {
+            Uint64 left = kSearchMs - (SDL_GetTicks() - since);
+            ImGui::TextDisabled("Searching for %d:%02d more. Leave the window open.", (int)(left / 60000), (int)(left / 1000 % 60));
+        }
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+            Port_LobbyCancel();
+            lastState = 0;
+        }
+        return;
+    }
+    if (lastState == -3) {
+        ImGui::TextWrapped("%s", Port_LobbyError());
+    } else if (lastState == -4) {
+        ImGui::TextWrapped("The two games could not reach each other, directly or through the relay. Search again for another player.");
+    } else if (lastState == -2) {
+        ImGui::TextWrapped("The other player's game is a different version. Search again.");
+    } else if (lastState == -5) {
+        ImGui::TextWrapped("Nobody was searching this queue in the last three minutes. Search again, or try another queue.");
+    }
+    if (ImGui::Button(lastState == -5 ? "Search again" : "Search for a match", ImVec2(200.0f, 0.0f))) {
+        since = SDL_GetTicks() + 1;
+        // The same for everyone in a quick match, whoever turns out to be the host: rollback of up to 8 frames and
+        // the input delay measured from the connection. (The Host tab's own choices are for matches with someone
+        // you can agree them with; a stranger's saved ones were not to be inherited unseen.)
+        Port_NetOptions(Port_RollCan() ? 8 : 0, -2);
+        Port_NetSpeedSet(1); // (every quick match: 120%, the competitive standard)
+        Port_NetRulesSet(sQueue == 0 ? 0 : sQueue == 1 ? 1 : 2, sQueue >= 2 ? sQueue - 2 : 0, 4);
+        Port_NetNameSet(name);
+        Port_SettingSave("net_queue", sQueue);
+        Port_SettingsWrite();
+        lastState = 0;
+        Port_LobbyStartQuick(sQueue);
+    }
 }
 
 static void build_net(void) {
     static char name[17] = "Player", address[64] = "", port[8] = "7000";
-    static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3;
+    static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3, speed = -1;
     static bool useCode = true;       // host with a room code (no port forwarding) or on a port
     static char roomCode[8] = "";     // the code to join with
     static int lastState = 0;         // what the lobby said last (for its messages after a failure)
@@ -312,7 +452,24 @@ static void build_net(void) {
 
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+    if (pad_pressed(ImGuiKey_GamepadFaceRight)) { // Circle / B: out of the window, as its close button
+        open = false;
+    }
     if (ImGui::Begin("Dragon Net Battle", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        {
+            int min = 0, latest = 0, mine = Port_LobbyRelease(&min, &latest);
+            if (min > mine) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
+                ImGui::TextWrapped("Update available. Online servers are unreachable until you update.");
+                ImGui::PopStyleColor();
+                ImGui::TextDisabled("You have 0.%d.%d; 0.%d.%d or newer is needed. github.com/z3xox/Tenkaichi3Decomp/releases", mine / 100, mine % 100, min / 100, min % 100);
+                ImGui::Separator();
+            } else if (latest > mine) {
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: release 0.%d.%d.", latest / 100, latest % 100);
+                ImGui::TextDisabled("github.com/z3xox/Tenkaichi3Decomp/releases");
+                ImGui::Separator();
+            }
+        }
         ImGui::TextWrapped("Fight a player on another computer. One of you hosts, the other joins with the host's address.");
         ImGui::Spacing();
         ImGui::SetNextItemWidth(260.0f);
@@ -371,8 +528,62 @@ static void build_net(void) {
                     ImGui::Combo("Battle", &battle, kBattle, 5);
                     ImGui::SetNextItemWidth(260.0f);
                     ImGui::Combo("Time limit", &timeLimit, kTime, 5);
+                    {
+                        static const char *const kSpeed[] = {"100% (the game's own)", "120% (competitive standard)"};
+                        if (speed < 0) {
+                            speed = Port_Setting("net_speed", 1) != 0;
+                        }
+                        ImGui::SetNextItemWidth(260.0f);
+                        ImGui::Combo("Game speed", &speed, kSpeed, 2);
+                        ImGui::SetItemTooltip("120%% is what competitive play of this game uses: the whole match runs a fifth\n"
+                                              "faster, sound included. If the other player's release does not know it\n"
+                                              "(0.1.28 or earlier), the match runs at 100%%.");
+                    }
                 }
                 ImGui::TextDisabled("The host's choices apply to both players.");
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Quick match")) {
+                static const char *const kQueue[] = {"Single battle", "Team battle", "DP battle (10 DP)", "DP battle (15 DP)", "DP battle (20 DP)"};
+                static Uint64 asked;
+                bool busy = sNetBusy; // (a search is under way: the queue is not changed under it)
+                tab = 2;
+                if (sQueue < 0) {
+                    sQueue = Port_Setting("net_queue", 0);
+                    if (sQueue < 0 || sQueue > 4) { sQueue = 0; }
+                }
+                {
+                    // How many wait: asked when the tab is opened and then every thirty seconds, but only while the
+                    // player is doing something here (a window left open all day asks nothing after two minutes),
+                    // and not during a search (the search hears from the service anyway).
+                    static Uint64 active;
+                    bool moved = io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f || ImGui::IsAnyItemActive();
+                    for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END && !moved; k++) {
+                        moved = ImGui::IsKeyDown((ImGuiKey)k);
+                    }
+                    if (moved || active == 0) {
+                        active = SDL_GetTicks() + 1;
+                    }
+                    if (!sNetBusy && (asked == 0 || (SDL_GetTicks() - asked > 30000 && SDL_GetTicks() - active < 120000))) {
+                        asked = SDL_GetTicks() + 1;
+                        Port_LobbyQueuesAsk();
+                    }
+                }
+                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit and run at 120%% speed, the competitive standard.");
+                ImGui::BeginDisabled(busy);
+                for (int i = 0; i < 5; i++) {
+                    char label[80];
+                    int n = Port_LobbyQueueWaiting(i);
+                    if (n < 0) {
+                        snprintf(label, sizeof(label), "%s", kQueue[i]);
+                    } else {
+                        snprintf(label, sizeof(label), "%s   (%d searching)###q%d", kQueue[i], n, i);
+                    }
+                    ImGui::RadioButton(label, &sQueue, i);
+                }
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("The two games connect to each other directly when they can, as in most online fighting");
+                ImGui::TextDisabled("games: a player who inspects their own network traffic can see the other's address.");
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Join")) {
@@ -393,6 +604,7 @@ static void build_net(void) {
         ImGui::Spacing();
         {
             int state = Port_LobbyPoll();
+            sNetBusy = state == 1 || state == 3;
             if (state == 2) {
                 Port_LobbyLaunch(); // the other player is there: the game turns into the session at its next blank
                 set_open(false);
@@ -402,7 +614,9 @@ static void build_net(void) {
             if (state != 0) {
                 lastState = state;
             }
-            if (state == 3 || (state == 1 && byCode)) { // a room code: asking the service, then reaching the other player
+            if (tab == 2) {
+                quick_status(state, lastState, name);
+            } else if (state == 3 || (state == 1 && byCode)) { // a room code: asking the service, then reaching the other player
                 if (tab == 0 && Port_LobbyCode()[0] != '\0') {
                     ImGui::TextUnformatted("Room code:");
                     ImGui::SameLine();
@@ -442,6 +656,8 @@ static void build_net(void) {
                     if (tab == 0 && roll >= 0) {
                         Port_NetOptions(roll * 2, delay == 0 ? -2 : delay - 1);
                         if (battle >= 0) {
+                            Port_NetSpeedSet(speed != 0);
+                            Port_SettingSave("net_speed", speed != 0);
                             Port_NetRulesSet(battle == 0 ? 0 : battle == 1 ? 1 : 2, battle >= 2 ? battle - 2 : 0, timeLimit);
                             Port_SettingSave("net_battle", battle);
                             Port_SettingSave("net_time", timeLimit);
@@ -491,7 +707,13 @@ void Ui_Toggle(void) {
 }
 
 static void bind(int value) {
-    if (sCapKind == 1) {
+    if (sCapAction == PORT_ACTIONS) { // the row "Open this window"
+        if (sCapKind == 1) {
+            *PortInput_OverlayKey() = value > 0 ? value : SDL_SCANCODE_F1; // (cleared = F1 again: a keyboard always has a way in)
+        } else if (value < PORT_PAD_LT) { // (a button, not a trigger)
+            *PortInput_OverlayPad() = value;
+        }
+    } else if (sCapKind == 1) {
         PortInput_Keys(sCapPlayer)[sCapAction] = value;
     } else {
         PortInput_PadButtons(sCapPlayer)[sCapAction] = value;
@@ -500,7 +722,23 @@ static void bind(int value) {
 }
 
 int Ui_Event(const SDL_Event *ev) {
-    if (!sReady || !sOpen) {
+    if (!sReady) {
+        return 0;
+    }
+    if (ev->type == SDL_EVENT_GAMEPAD_ADDED || ev->type == SDL_EVENT_GAMEPAD_REMOVED) { // (also while it is closed: its list of controllers)
+        ImGui_ImplSDL3_ProcessEvent(ev);
+        return 0;
+    }
+    if (sQuit) { // the exit question: Esc again takes it away; the rest is the question's
+        if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode == SDL_SCANCODE_ESCAPE) {
+            sQuitNo = sQuitNo || !ev->key.repeat; // (taken away where it is drawn)
+            return 1;
+        }
+        ImGui_ImplSDL3_ProcessEvent(ev);
+        return ev->type == SDL_EVENT_KEY_DOWN || ev->type == SDL_EVENT_KEY_UP || ev->type == SDL_EVENT_TEXT_INPUT ||
+               ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP || ev->type == SDL_EVENT_MOUSE_WHEEL;
+    }
+    if (!sOpen) {
         return 0;
     }
     if (sCapKind != 0) { // the next key or button is the binding; Esc leaves it as it was, Delete clears it
@@ -553,7 +791,11 @@ static const char *pad_source_name(int src) {
 
 static bool tab(const char *label, int index) {
     ImGuiTabItemFlags flags = sForceTab == index ? ImGuiTabItemFlags_SetSelected : 0;
-    return ImGui::BeginTabItem(label, NULL, flags);
+    bool on = ImGui::BeginTabItem(label, NULL, flags);
+    if (on && sForceTab < 0) {
+        sTab = index;
+    }
+    return on;
 }
 
 static void video_tab(PortVideo &v) {
@@ -580,10 +822,28 @@ static void video_tab(PortVideo &v) {
         ImGui::EndCombo();
     }
     ImGui::SetItemTooltip("Wider than 4:3 shows more of the fight to the sides. Menus are stretched.");
+    if (ImGui::BeginCombo("2D filtering", v.smooth2d ? "Smooth" : "Sharp (console)")) {
+        if (ImGui::Selectable("Sharp (console)", !v.smooth2d)) { v.smooth2d = 0; }
+        if (ImGui::Selectable("Smooth", v.smooth2d != 0)) { v.smooth2d = 1; }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("How the display of a fight, the menus and text are drawn above 1x internal resolution.\n"
+                          "Sharp: each of the PlayStation 2's pixels is a block. Smooth: as an emulator shows them.\n"
+                          "No difference at 1x.");
     bool full = v.fullscreen != 0;
     if (ImGui::Checkbox("Full screen", &full)) { v.fullscreen = full; }
     ImGui::SameLine();
     ImGui::TextDisabled("(F11)");
+    {
+        bool vs = v.vsync != 0, fs = v.frameSkip != 0;
+        if (ImGui::Checkbox("V-sync", &vs)) { v.vsync = vs; }
+        ImGui::SetItemTooltip("Each picture waits for the display's refresh. Turn it on if the picture tears.\n"
+                              "Off is the default: it adds a little delay.");
+        if (ImGui::Checkbox("Skip pictures instead of slowing down", &fs)) { v.frameSkip = fs; }
+        ImGui::SetItemTooltip("When this machine cannot show a picture in time, the game normally runs slower.\n"
+                              "With this on it stays at full speed and leaves pictures out instead (choppier,\n"
+                              "not slower). It helps where the graphics chip is the slow part. On by default.");
+    }
     SDL_DisplayID *displays = SDL_GetDisplays(&count);
     if (v.display > count) { v.display = 0; }
     snprintf(label, sizeof(label), "%s", v.display == 0 ? "Chosen by the desktop" : SDL_GetDisplayName(displays[v.display - 1]));
@@ -653,14 +913,15 @@ static void video_tab(PortVideo &v) {
 }
 
 static void effects_tab(PortVideo &v) {
-    static const struct { const char *name, *tip; } fx[5] = {
+    static const struct { const char *name, *tip; } fx[6] = {
         {"Outline", "The black line around the fighters."},
         {"See-through tint", "The tint that shows a fighter behind scenery."},
         {"Depth tint", "The haze that colours distant things."},
         {"Glare and glow", "The bloom around bright things and the sky's glare."},
         {"Distance blur", "The soft focus on distant scenery."},
+        {"Movement blur", "The blur of the scenery while the view turns or moves fast."},
     };
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         bool on = !((v.fxOff >> i) & 1);
         if (ImGui::Checkbox(fx[i].name, &on)) { v.fxOff = (v.fxOff & ~(1 << i)) | (on ? 0 : 1 << i); }
         ImGui::SetItemTooltip("%s", fx[i].tip);
@@ -673,7 +934,7 @@ static void effects_tab(PortVideo &v) {
 static void audio_tab(PortVideo &v) {
     ImGui::SliderInt("Music", &v.music, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
     ImGui::SliderInt("Sound effects and voices", &v.effects, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
-    ImGui::SetItemTooltip("Takes effect with the next sound that starts.");
+    ImGui::SetItemTooltip("Voices and stage sounds follow at once; a sound effect with the next one that starts.");
 }
 
 // Cheats. "Unlock everything" is the game's own leftover debug function (Save_UnlockAll, which nothing in the game
@@ -747,7 +1008,8 @@ static void controls_tab(void) {
         PortInput_ResetDefaults(player);
         PortInput_Save();
     }
-    ImGui::TextDisabled("Click a binding, then press the new key or button. Esc keeps it, Delete clears it.");
+    ImGui::TextDisabled("Choose a binding, then press the new key or button. Esc keeps it, Delete clears it;");
+    ImGui::TextDisabled("with a controller, press nothing for five seconds to keep it.");
     if (ImGui::BeginTable("bindings", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV,
                           ImVec2(0.0f, ImGui::GetContentRegionAvail().y))) {
         ImGui::TableSetupScrollFreeze(0, 1);
@@ -755,6 +1017,25 @@ static void controls_tab(void) {
         ImGui::TableSetupColumn("Keyboard");
         ImGui::TableSetupColumn("Controller");
         ImGui::TableHeadersRow();
+        {   // what opens and closes this window (not a player's: one for the program)
+            const int a = PORT_ACTIONS;
+            bool waitKey = sCapKind == 1 && sCapAction == a, waitPad = sCapKind == 2 && sCapAction == a;
+            int key = *PortInput_OverlayKey(), pad = *PortInput_OverlayPad();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Open this window");
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : key > 0 ? SDL_GetScancodeName((SDL_Scancode)key) : "-", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                capture(1, player, a);
+            }
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##p%d", waitPad ? "press a button..." : pad >= 0 ? pad_source_name(pad) : "START + SELECT", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                capture(2, player, a);
+            }
+        }
         for (int a = 0; a < PORT_ACTIONS; a++) {
             bool waitKey = sCapKind == 1 && sCapPlayer == player && sCapAction == a;
             bool waitPad = sCapKind == 2 && sCapPlayer == player && sCapAction == a;
@@ -765,13 +1046,13 @@ static void controls_tab(void) {
             ImGui::TableNextColumn();
             snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : keys[a] > 0 ? SDL_GetScancodeName((SDL_Scancode)keys[a]) : "-", a);
             if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
-                sCapKind = 1; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+                capture(1, player, a);
             }
             ImGui::TableNextColumn();
             if (a < PORT_PAD_BUTTONS) {
                 snprintf(label, sizeof(label), "%s##p%d", waitPad ? "press a button..." : pad_source_name(pads[a]), a);
                 if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
-                    sCapKind = 2; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+                    capture(2, player, a);
                 }
             } else {
                 ImGui::AlignTextToFramePadding();
@@ -808,9 +1089,22 @@ static void build(void) {
     bool open = true;
     GsGpu_GetSettings(&v);
     was = v;
+    if (sCapKind == 2 && SDL_GetTicks() > sCapUntil) { // nothing was pressed: the binding stays
+        sCapKind = 0;
+        gPortInputCapture = 0;
+    }
+    if (pad_pressed(ImGuiKey_GamepadFaceRight)) { // Circle / B: out of the window
+        open = false;
+    }
+    if (sForceTab < 0 && (pad_pressed(ImGuiKey_GamepadL1) || pad_pressed(ImGuiKey_GamepadR1))) {
+        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 4 : 1)) % 5;
+        sPadTab = true;
+    }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640.0f, 560.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(640.0f, 600.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Settings", &open, ImGuiWindowFlags_NoCollapse)) {
+        // the tabs in a region of their own, above a last line that is always there
+        ImGui::BeginChild("body", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y), ImGuiChildFlags_NavFlattened);
         if (ImGui::BeginTabBar("tabs")) {
             if (tab("QoL", 1)) { qol_tab(); ImGui::EndTabItem(); }
             if (tab("Video", 1)) { video_tab(v); ImGui::EndTabItem(); }
@@ -850,8 +1144,21 @@ static void build(void) {
             if (tab("Cheats", 5)) { cheats_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
-        if (ImGui::GetFrameCount() > 3) {
+        ImGui::EndChild();
+        if (sPadTab) { // (a tab chosen with the shoulder buttons)
+            sPadTab = false;
+            sTab = sForceTab;
             sForceTab = -1;
+        } else if (ImGui::GetFrameCount() > 3) {
+            sForceTab = -1;
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Exit game")) {
+            sQuit = true;
+        }
+        if ((io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("D-pad: move   Cross / A: choose   Circle / B: back   L1 / R1: tab");
         }
     }
     ImGui::End();
@@ -1039,8 +1346,26 @@ static bool frame_build(void) {
     bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !notice && !overlay && !meter && !names)) {
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names)) {
         return false;
+    }
+    if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
+        int count = 0;
+        SDL_JoystickID *ids = SDL_GetGamepads(&count);
+        bool held = false;
+        for (int i = 0; i < count; i++) {
+            SDL_Gamepad *g = SDL_GetGamepadFromID(ids[i]);
+            for (int b = 0; g != NULL && b < SDL_GAMEPAD_BUTTON_COUNT; b++) {
+                held = held || SDL_GetGamepadButton(g, (SDL_GamepadButton)b);
+            }
+        }
+        SDL_free(ids);
+        sPadHold = held;
+    }
+    if (sPadHold) { // (the button that becomes the binding would also press the row it is bound in)
+        ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+    } else {
+        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     }
     sBuilt = true;
     if (sGL) {
@@ -1056,6 +1381,9 @@ static bool frame_build(void) {
         } else {
             build();
         }
+    }
+    if (sQuit) {
+        build_quit();
     }
     if (meter) {
         meter_draw();

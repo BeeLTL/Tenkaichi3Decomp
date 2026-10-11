@@ -103,3 +103,50 @@ later on Linux). The others are in registers, where a 32-bit write clears the up
 The reporting player, for whom it crashed with every character every time, confirmed that a build with the fix
 starts the match (2026-10-09). Released in 0.1.17.
 
+
+## The replay list stopped the game (found 2026-10-10, reported by a player)
+
+Opening the replay list (to save a replay after a fight, or in the Data Center) ended the game with an arithmetic
+fault in `ReplayMenu_Draw`. The list works out its slot number's digits with `pow(10.0, i)`, the game's only call of
+a `double` maths function. The game code is built with software floating point (doubles as 64-bit patterns in the
+integer registers) and every `float` function goes through a bridge (port/include/port_libm.h); `pow` had none and
+went to the host's, which reads its arguments from the float unit. What came back was whatever the integer register
+held, often 0, and the list divided by it. In every release up to 0.1.19, on Linux and Windows.
+Fixed: `Port_pow` (port/src/plat_libm.c). The other calls of the host's `pow` are the port's own code (the settings
+window, the sound), which is built for the float unit. Checked: the program's code calls the bridge at all four
+places; the replay check. Seen fixed by the user (2026-10-10).
+
+## Two reports of 2026-10-10 (both in every release up to 0.1.20)
+
+**The picture was stretched after the shape was changed during a fight.** A view's projection is worked out when
+the view is set up (`View_InitLayout`: the start of a fight or of a scene), and the port widened it there. Changed
+in the settings window during a fight, the picture was shown at the new shape with the old projection until the
+next fight. `View_UpdateMatrices` now holds every view to the shape of now (src/battle/btl_cam.c). Checked without
+a window: a run that changes from 4:3 to 16:9 partway (`BT3_ASPECT_AT=<frame>:16:9`) gives, after the change, the
+same pictures as a run at 16:9 throughout.
+
+**The cross-fade between the shots of a fight's intro was missing.** The game reads the frame being shown back
+from the GS (`ScrXfade_Capture`, `sceGsExecStoreImage`), uploads it again as a texture and draws it over the new
+shot with a falling alpha, for a second. The port answered the read-back with nothing (docs/port/README.md listed
+the cross-fade among the effects still dropped). It is answered now (`Gs_StoreImage`, port/src/gs/gs_core.c): from
+GS memory in the software renderer, and in the GPU back ends by reading the frame buffer's picture from the card
+(`GsBackend.targetRead`), reduced to 512 x 448; black with the back end on a thread of its own (`BT3_GS_THREAD`).
+`ScrXfade_StoreHalf` is the decompilation's matched version now (the port's copy was an earlier draft; it was
+compiled all the same). Checked without a window, in the software renderer: with the cross-fade asked for in a
+fight (`BT3_XFADE_AT=<frame>`) the frame taken shows over the following ones and fades out.
+With that alone the GPU back ends still showed no cross-fade (seen by the user): the game uploads the frame it read
+over the DEPTH page (0x1C00) and draws it from there, and gs_draw.c dropped every draw that samples the depth page
+(the passes that read it as depth). A 24-bit picture drawn from there as a sprite is let through now.
+Checked: the OpenGL back end without a window (`SDL_VIDEODRIVER=offscreen BT3_GS=gpu`: the Vulkan one cannot
+start there, OpenGL takes over, and `BT3_SHOT` writes its pictures) shows the frame taken fading out over the next
+ones, the right way up and in its colours. Seen by the user in an intro (the Vulkan back end).
+In a wide picture the old shot was then drawn at three quarters of the width (seen by the user): it is drawn back
+in strips, each narrower than the screen, and the rule that keeps 2D art in proportion took the strips for art. The
+cross-fade's picture is left at full width (`sWholeFrame`, gs_draw.c). Checked at 16:9 without a window (OpenGL).
+The old shot was still shown at the PS2's 512 x 448, blocky over the new one (seen by the user as pixelated
+outlines in an intro): that is what a read-back and an upload leave of a picture drawn at several times that. The
+GPU back ends now keep the frame on the card as it was drawn (`GsGpu_Snapshot`: a copy into a target of its own,
+`GsBackend.targetCopy`) and the cross-fade's draws take that as their texture; the game is handed black, which it
+uploads and never shows. `BT3_XFADE_READ=1` is the read-back again. Checked without a window (OpenGL, 4x, 16:9):
+the old shot fades out at the picture's own resolution. Seen by the user in an intro under both back ends
+(Vulkan and OpenGL).

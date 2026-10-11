@@ -4,6 +4,21 @@
 #include "sys/pad.h"
 #include "sys/save.h"
 #ifdef PORT
+#include "battle/col_c.h" /* FontStyle / FONT_ALIGN_* / FONT_SHADOW_*, for the names of added songs */
+#include "plat_songs.h"   /* the songs added from outside the disc (the music select) */
+/* The port's song-name overlay (port/src/gs/ui.cpp / gs_draw.c), as the duel's select uses it (menu_c_e.c). */
+extern volatile int gUiSongX, gUiSongY, gUiSongW, gUiSongH;
+extern volatile int gUiSongIdx, gUiSongReady, gUiSongLit;
+static s32 sPortSongNameHidden;
+#include "plat_stages.h" /* the stages added from outside the disc: their ids and names */
+/* The port's stage-name overlay, as the duel's select uses it. */
+extern volatile int gUiNameX, gUiNameY, gUiNameW, gUiNameH;
+extern volatile int gUiNameIdx, gUiNameReady;
+static s32 sPortStageNameHidden;
+static s32 sPortStageRows = TS_STAGE_COLS; /* rows of the stage reel: the game's 6, more with stages added */
+/* The picture behind the reel: a disc stage's own (0x39D + id); an added stage borrows one (its id past 0x23
+   would fall on the loading screens' files), as in the duel's select. */
+#define TS_STAGE_PICTURE(id) (TS_STAGE_FILE + ((id) < 0x24 ? (id) : (id) - 0x24))
 /* include/battle/view_a.h holds these; repeated here (pulling it in clashes with the menu headers). The PC build
    moves the locked / empty markers up so added stages keep their own ids. */
 #define STGGRID_ID_LOCKED 0x3E
@@ -126,7 +141,8 @@ void TeamSel_SetStageChips(void) {
 #ifdef PORT
         /* PC build: the markers moved up, so they keep the locked / empty icons (37, 38). */
         {
-            s32 icon = id == STGGRID_ID_LOCKED ? 37 : (id == STGGRID_ID_EMPTY ? 38 : id + 1);
+            /* (a stage added from outside the disc, id 0x24 on, borrows an icon as in the duel's select) */
+            s32 icon = id == STGGRID_ID_LOCKED ? 37 : (id == STGGRID_ID_EMPTY ? 38 : (id >= 0x24 ? 1 + (id - 0x24) % 36 : id + 1));
             res = (MTexRes *)MPACK_AT(gTeamSel->stagePack, icon);
         }
 #else
@@ -343,7 +359,11 @@ void TeamSel_UpdateStageLoad(void) {
         break;
     case TEAMSEL_LOAD_REQUEST:
         File_CancelRequests();
+#ifdef PORT
+        File_Request(TS_STAGE_PICTURE(gTeamSel->stage->stage), gTeamSel->stageFile, 0x3B800);
+#else
         File_Request(gTeamSel->stage->stage + TS_STAGE_FILE, gTeamSel->stageFile, 0x3B800);
+#endif
         gTeamSel->stageState = TEAMSEL_LOAD_READ;
         break;
     case TEAMSEL_LOAD_READ:
@@ -618,12 +638,84 @@ void TeamSel_Init(s32 section) {
     gTeamSel->stageIds = (s32 *)(MPACK_AT(gTeamSel->res, 39) + 0x10);
     gTeamSel->stageCount = TS_PACK_WORD(gTeamSel->res, 39);
     StgGrid_ApplyUnlocks(&gTeamSel->stageCount, gTeamSel->stageIds);
+#ifdef PORT
+    {
+        /* PC build: the stages added from outside the disc, after the disc's, as in the duel's select (menu_c_e.c,
+           which has the notes; this screen's list had been left without them: they were not offered in team and
+           DP battles). After the save's unlocks; nothing of them is looked up in the save or written to it. Not in
+           an online session. The list is ours, with whole rows: the reel reads rows of six. */
+        extern int gPortStageReplaceCount, gPortReplaceOld[16], gPortReplaceNew[16];
+        extern int Port_NetSession(void); /* port/src/gs/net.c */
+        static s32 sAllIds[96];
+        s32 extra = Port_NetSession() ? 0 : gPortExtraStageCount;
+        s32 swaps = Port_NetSession() ? 0 : gPortStageReplaceCount;
+        s32 n = gTeamSel->stageCount, k, r;
+        sPortStageRows = TS_STAGE_COLS;
+        if (extra > 0 || swaps > 0) {
+            if (n > 64) {
+                n = 64;
+            }
+            for (k = 0; k < 96; k++) {
+                sAllIds[k] = k < n ? gTeamSel->stageIds[k] : STGGRID_ID_EMPTY;
+            }
+            for (k = 0; k < extra && n < 90; k++) {
+                sAllIds[n++] = (s32)gPortExtraStages[k];
+            }
+            for (r = 0; r < swaps; r++) {
+                for (k = 0; k < n; k++) {
+                    if (sAllIds[k] == gPortReplaceOld[r]) {
+                        sAllIds[k] = (s32)gPortReplaceNew[r];
+                        break;
+                    }
+                }
+            }
+            gTeamSel->stageIds = sAllIds;
+            gTeamSel->stageCount = n;
+            sPortStageRows = (n + TS_STAGE_COLS - 1) / TS_STAGE_COLS;
+            if (sPortStageRows < TS_STAGE_COLS) {
+                sPortStageRows = TS_STAGE_COLS;
+            }
+        }
+    }
+#endif
     gTeamSel->bgmIds = (s32 *)(MPACK_AT(gTeamSel->res, 56) + 0x10);
     gTeamSel->bgmCount = TS_PACK_WORD(gTeamSel->res, 56);
     BgmList_ApplyUnlocks(&gTeamSel->bgmCount, gTeamSel->bgmIds);
     /* the last four entries of the list are not offered; the last one kept becomes "random" */
     gTeamSel->bgmCount -= 4;
     gTeamSel->bgmIds[gTeamSel->bgmCount - 1] = TS_BGM_RANDOM;
+#ifdef PORT
+    {
+        /* PC build: the tracks added from outside the disc, after the disc's and before the "random" entry, as in
+           the duel's select (menu_c_e.c; this screen's list had been left without them: they were not offered in
+           team and DP battles). After the save's unlocks have been applied to the disc's list; nothing is looked up
+           in the save or written to it. Not in an online session: both players must have the same list. */
+        extern int Port_NetSession(void); /* port/src/gs/net.c */
+        extern void Port_NameFontSheets(int stage, int song, int songLit);
+        s32 added = Port_NetSession() ? 0 : gPortSongCount;
+        Port_NameFontSheets((int)(u32)gTeamSel->tex[39], (int)(u32)gTeamSel->tex[19], (int)(u32)gTeamSel->tex[20]);
+        if (added > 0) {
+            static s32 sBgmIds[72];
+            s32 n = gTeamSel->bgmCount, k, last = gTeamSel->bgmIds[n - 1];
+            if (n > 30) {
+                n = 30;
+            }
+            if (added > PORT_SONG_MAX) {
+                added = PORT_SONG_MAX;
+            }
+            for (k = 0; k < n - 1; k++) {
+                sBgmIds[k] = gTeamSel->bgmIds[k];
+            }
+            for (k = 0; k < added; k++) {
+                sBgmIds[n - 1 + k] = gPortSongOffsets[k];
+            }
+            n = n - 1 + added + 1;
+            sBgmIds[n - 1] = last; /* the "random" entry stays last */
+            gTeamSel->bgmIds = sBgmIds;
+            gTeamSel->bgmCount = n;
+        }
+    }
+#endif
     gTeamSel->cells[0] = (TsCell *)(MPACK_AT(gTeamSel->res, 42) + 0x10);
     gTeamSel->masterCount[0] = TS_PACK_WORD(gTeamSel->res, 42);
     gTeamSel->cells[1] = gTeamSel->cells[0];
@@ -718,7 +810,11 @@ void TeamSel_Init(s32 section) {
         gTeamSel->tex[i ? 22 : 23] = MTEX(res, 0);
         gTeamSel->side[i]->flags |= TEAMSEL_SIDE_FACE_READY;
     }
+#ifdef PORT
+    File_LoadSync(TS_STAGE_PICTURE(gTeamSel->stage->stage), gTeamSel->stageFile, 0x3B800);
+#else
     File_LoadSync(gTeamSel->stage->stage + TS_STAGE_FILE, gTeamSel->stageFile, 0x3B800);
+#endif
     Sprite_Unpack(gTeamSel->stageFile, gTeamSel->stageRes[gTeamSel->stageBuf], NULL);
     res = gTeamSel->stageRes[gTeamSel->stageBuf];
     Res_RelocateOffsets(&res, res, res);
@@ -732,7 +828,11 @@ void TeamSel_Init(s32 section) {
     if (gTeamSel->bgmIds[gTeamSel->stage->bgm] == TS_BGM_RANDOM) {
         Bgm_Play(Rand_Range(9) + 0x10B1E);
     } else {
+#ifdef PORT /* (a song added from outside the disc has a file id of its own) */
+        Bgm_Play(PORT_BGM_FILE(gTeamSel->bgmIds[gTeamSel->stage->bgm]));
+#else
         Bgm_Play(gTeamSel->bgmIds[gTeamSel->stage->bgm] + 0x10B16);
+#endif
     }
     for (i = 0; i < TEAMSEL_SIDES; i++) {
         TextBox_Init(&gTeamSel->nameBox[i], gTeamSel->nameText, i + 1);
@@ -746,6 +846,10 @@ void TeamSel_Init(s32 section) {
 void TeamSel_Term(void) {
     s32 i;
 
+#ifdef PORT
+    gUiSongIdx = -1; /* drop the port's song-name and stage-name overlays */
+    gUiNameIdx = -1;
+#endif
     IconWin_Term();
     ItemHelp_Term();
     ItemPanel_Term(1);
@@ -856,12 +960,62 @@ void TeamSel_Draw(void) {
     }
     uv.x0 = 0;
     uv.x1 = 0x200;
+#ifdef PORT
+    gUiNameIdx = -1; /* set below only for a stage added from outside the disc */
+    Flash_FindLabel(flash, NULL, "mc_map_name", &ref);
+    {
+        /* PC build: an added stage has no picture of its name on the disc: the port draws it at the clip's place
+           (as in menu_c_e.c, which has the notes). */
+        extern void Flash_ClipGetPos(MFlash *flash, MFlashRef *ref, s32 *x, s32 *y);
+        s32 nameId = gTeamSel->stage->stage;
+
+        if (nameId >= 0x24) {
+            s32 nx = 0, ny = 0, idx = nameId - 0x24;
+            Flash_ClipSetFlags(flash, &ref, 2, 0);
+            sPortStageNameHidden = 1;
+            Flash_ClipGetPos(flash, &ref, &nx, &ny);
+            if (ref.id >= 0 && idx >= 0 && idx < gPortExtraStageCount) {
+                if (gUiNameReady) {
+                    gUiNameX = nx + 64;
+                    gUiNameY = ny + 14;
+                    gUiNameW = 0x180;
+                    gUiNameH = 0x30;
+                    gUiNameIdx = idx;
+                } else {
+                    extern void Font_PrintAsciiAt(s32 x, s32 y, char *str);
+                    extern s32 Font_GetGlyphHeight(void);
+                    extern FontStyle gFontStyle;
+                    FontStyle saved = gFontStyle;
+                    gFontStyle.align = FONT_ALIGN_CENTER;
+                    gFontStyle.color = 0xFFFFFFFF;
+                    gFontStyle.shadowMode = FONT_SHADOW_DROP;
+                    gFontStyle.shadowColor = 0xC0000000;
+                    gFontStyle.shadowDx = 1;
+                    gFontStyle.shadowDy = 1;
+                    Font_PrintAsciiAt(nx + 0x100, ny + (0x40 - Font_GetGlyphHeight()) / 2, gPortStageNames[idx]);
+                    gFontStyle = saved;
+                }
+            }
+        } else {
+            uv.y0 = (nameId % 4) * 0x40;
+            uv.y1 = uv.y0 + 0x40;
+            uv.unk10 = nameId / 4;
+            Flash_ClipSetUv(flash, &ref, &uv);
+            Flash_ClipSetTex(flash, &ref, uv.unk10);
+            if (sPortStageNameHidden) {
+                Flash_ClipSetFlags(flash, &ref, 2, 1);
+                sPortStageNameHidden = 0;
+            }
+        }
+    }
+#else
     uv.y0 = (gTeamSel->stage->stage % 4) * 0x40;
     uv.y1 = uv.y0 + 0x40;
     uv.unk10 = gTeamSel->stage->stage / 4;
     Flash_FindLabel(flash, NULL, "mc_map_name", &ref);
     Flash_ClipSetUv(flash, &ref, &uv);
     Flash_ClipSetTex(flash, &ref, uv.unk10);
+#endif
     if (gTeamSel->battleType == 2) {
         for (i = 0; i < TEAMSEL_SIDES; i++) {
             uv.x0 = (gTeamSel->dpLevel % 2) * 0x40;
@@ -895,6 +1049,74 @@ void TeamSel_Draw(void) {
     }
     uv.x0 = 0;
     uv.x1 = 0x200;
+#ifdef PORT
+    gUiSongIdx = -1; /* set below only for a song added from outside the disc */
+    {
+        /* PC build: an added song has no picture of its name on the disc: the port draws it (as in menu_c_e.c,
+           which has the notes on the two name clips and their places). */
+        extern void Flash_ClipGetPos(MFlash *flash, MFlashRef *ref, s32 *x, s32 *y);
+        s32 bgm = gTeamSel->bgmIds[gTeamSel->stage->bgmCursor];
+
+        if (bgm >= PORT_SONG_FIRST_OFFSET) {
+            s32 idx = bgm - PORT_SONG_FIRST_OFFSET;
+            s32 cx = 0, cy = 0, px, py, have = 0, shown = 0;
+            Flash_FindLabel(flash, "mc_bgm_now", "mc_bgm_now_text_off", &ref);
+            if (ref.id >= 0) {
+                Flash_ClipGetPos(flash, &ref, &cx, &cy);
+                have = 1;
+            }
+            Flash_ClipSetFlags(flash, &ref, 2, 0);
+            Flash_FindLabel(flash, "mc_bgm_now", "mc_bgm_now_text_on", &ref);
+            if (!have && ref.id >= 0) {
+                Flash_ClipGetPos(flash, &ref, &cx, &cy);
+                shown = 1;
+            }
+            shown |= have;
+            Flash_ClipSetFlags(flash, &ref, 2, 0);
+            sPortSongNameHidden = 1;
+            Flash_FindLabel(flash, NULL, "mc_bgm_now", &ref);
+            Flash_ClipGetPos(flash, &ref, &px, &py);
+            if (!shown) {
+                /* (no music line on this screen of the menu) */
+            } else if (gUiSongReady) {
+                gUiSongX = px + cx;
+                gUiSongY = py + cy;
+                gUiSongW = 0x200;
+                gUiSongH = 0x20;
+                gUiSongLit = !have;
+                gUiSongIdx = idx;
+            } else if (idx >= 0 && idx < gPortSongCount) {
+                extern void Font_PrintAsciiAt(s32 x, s32 y, char *str);
+                extern s32 Font_GetGlyphHeight(void);
+                extern FontStyle gFontStyle;
+                FontStyle saved = gFontStyle;
+                gFontStyle.align = FONT_ALIGN_LEFT;
+                gFontStyle.color = 0xFFFFFFFF;
+                gFontStyle.shadowMode = FONT_SHADOW_DROP;
+                gFontStyle.shadowColor = 0xC0000000;
+                Font_PrintAsciiAt(px + cx, py + cy + (0x20 - Font_GetGlyphHeight()) / 2, gPortSongNames[idx]);
+                gFontStyle = saved;
+            }
+        } else {
+            uv.y0 = (bgm % 8) * 0x20;
+            uv.y1 = uv.y0 + 0x20;
+            uv.unk10 = bgm / 8;
+            Flash_FindLabel(flash, "mc_bgm_now", "mc_bgm_now_text_off", &ref);
+            Flash_ClipSetUv(flash, &ref, &uv);
+            Flash_ClipSetTex(flash, &ref, uv.unk10);
+            if (sPortSongNameHidden) {
+                Flash_ClipSetFlags(flash, &ref, 2, 1);
+            }
+            Flash_FindLabel(flash, "mc_bgm_now", "mc_bgm_now_text_on", &ref);
+            Flash_ClipSetUv(flash, &ref, &uv);
+            Flash_ClipSetTex(flash, &ref, uv.unk10);
+            if (sPortSongNameHidden) {
+                Flash_ClipSetFlags(flash, &ref, 2, 1);
+                sPortSongNameHidden = 0;
+            }
+        }
+    }
+#else
     uv.y0 = (gTeamSel->bgmIds[gTeamSel->stage->bgmCursor] % 8) * 0x20;
     uv.y1 = uv.y0 + 0x20;
     uv.unk10 = gTeamSel->bgmIds[gTeamSel->stage->bgmCursor] / 8;
@@ -904,6 +1126,7 @@ void TeamSel_Draw(void) {
     Flash_FindLabel(flash, "mc_bgm_now", "mc_bgm_now_text_on", &ref);
     Flash_ClipSetUv(flash, &ref, &uv);
     Flash_ClipSetTex(flash, &ref, uv.unk10);
+#endif
     for (i = 0; i < TEAMSEL_SIDES; i++) {
         flash = &gTeamSel->flash[5 + i];
         uv.x0 = (i ^ 1) * 0x20;
@@ -1249,7 +1472,11 @@ f32 TeamSel_Input(s32 *result) {
                 Flash_GotoLabel(&gTeamSel->flash[0], "fl_reel_down", 1);
                 gTeamSel->stage->mask = 1;
                 TeamSel_ClipGoto(0, 0, TEAMSEL_CLIP_STAGE_CHIP, "fl_off_start");
+#ifdef PORT
+                StgGrid_MoveUp(gTeamSel->stageIds, &gTeamSel->stage->col, &gTeamSel->stage->row, sPortStageRows);
+#else
                 StgGrid_MoveUp(gTeamSel->stageIds, &gTeamSel->stage->col, &gTeamSel->stage->row, TS_STAGE_COLS);
+#endif
                 TeamSel_ClipGoto(0, 0, TEAMSEL_CLIP_STAGE_CHIP, "fl_on_start");
                 TeamSel_SetStageChips();
                 gTeamSel->stage->stage = gTeamSel->stageIds[gTeamSel->stage->row * TS_STAGE_COLS + gTeamSel->stage->col];
@@ -1259,7 +1486,11 @@ f32 TeamSel_Input(s32 *result) {
                 Flash_GotoLabel(&gTeamSel->flash[0], "fl_reel_up", 1);
                 gTeamSel->stage->mask = 1;
                 TeamSel_ClipGoto(0, 0, TEAMSEL_CLIP_STAGE_CHIP, "fl_off_start");
+#ifdef PORT
+                StgGrid_MoveDown(gTeamSel->stageIds, &gTeamSel->stage->col, &gTeamSel->stage->row, sPortStageRows);
+#else
                 StgGrid_MoveDown(gTeamSel->stageIds, &gTeamSel->stage->col, &gTeamSel->stage->row, TS_STAGE_COLS);
+#endif
                 TeamSel_ClipGoto(0, 0, TEAMSEL_CLIP_STAGE_CHIP, "fl_on_start");
                 TeamSel_SetStageChips();
                 gTeamSel->stage->stage = gTeamSel->stageIds[gTeamSel->stage->row * TS_STAGE_COLS + gTeamSel->stage->col];
@@ -1328,7 +1559,11 @@ f32 TeamSel_Input(s32 *result) {
                     TeamSel_ClipGoto(0, 0, TEAMSEL_CLIP_STAGE_CHIP, "fl_on_start");
                     gTeamSel->stage->bgm = gTeamSel->stage->bgmCursor;
                     if (gTeamSel->bgmIds[gTeamSel->stage->bgm] != TS_BGM_RANDOM) {
+#ifdef PORT /* (a song added from outside the disc has a file id of its own) */
+                        Bgm_Play(PORT_BGM_FILE(gTeamSel->bgmIds[gTeamSel->stage->bgm]));
+#else
                         Bgm_Play(gTeamSel->bgmIds[gTeamSel->stage->bgm] + TS_BGM_FILE);
+#endif
                     }
                     gTeamSel->stage->state = TEAMSEL_STAGE_GRID;
                     Snd_PlaySe(1, 1);
