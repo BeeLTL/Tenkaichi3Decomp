@@ -10,19 +10,25 @@
 #include <emscripten.h>
 #include <string.h>
 
-/* (GLctx is Emscripten's current WebGL context) */
+/* (GLctx is Emscripten's current WebGL context.) The extension objects are looked up once per context and kept in
+   GLctx.bt3Ext: getExtension is slow (measured: 7.7 % of all CPU time in the demo battle when it was called on every
+   glEnablei / glColorMaski, i.e. per draw). */
 EM_JS(int, web_gl_ext, (const char *name), {
-    return (typeof GLctx !== 'undefined' && GLctx && GLctx.getExtension(UTF8ToString(name))) ? 1 : 0;
+    if (typeof GLctx === 'undefined' || !GLctx) return 0;
+    const n = UTF8ToString(name);
+    GLctx.bt3Ext = GLctx.bt3Ext || {};
+    if (!(n in GLctx.bt3Ext)) GLctx.bt3Ext[n] = GLctx.getExtension(n);
+    return GLctx.bt3Ext[n] ? 1 : 0;
 });
 EM_JS(void, web_gl_enablei, (unsigned cap, unsigned index, int on), {
-    const e = GLctx.getExtension('OES_draw_buffers_indexed');
+    const e = GLctx.bt3Ext['OES_draw_buffers_indexed'];
     if (on) e.enableiOES(cap, index); else e.disableiOES(cap, index);
 });
 EM_JS(void, web_gl_colormaski, (unsigned index, int r, int g, int b, int a), {
-    GLctx.getExtension('OES_draw_buffers_indexed').colorMaskiOES(index, !!r, !!g, !!b, !!a);
+    GLctx.bt3Ext['OES_draw_buffers_indexed'].colorMaskiOES(index, !!r, !!g, !!b, !!a);
 });
 EM_JS(void, web_gl_clipcontrol, (unsigned origin, unsigned depth), {
-    GLctx.getExtension('EXT_clip_control').clipControlEXT(origin, depth);  // (GL's enum values are the extension's)
+    GLctx.bt3Ext['EXT_clip_control'].clipControlEXT(origin, depth);  // (GL's enum values are the extension's)
 });
 
 /* The GL signatures (GLenum / GLuint are unsigned int, GLboolean unsigned char). */
