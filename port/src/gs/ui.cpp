@@ -1106,7 +1106,7 @@ static void build(void) {
         // the tabs in a region of their own, above a last line that is always there
         ImGui::BeginChild("body", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y), ImGuiChildFlags_NavFlattened);
         if (ImGui::BeginTabBar("tabs")) {
-            if (tab("QoL", 1)) { qol_tab(); ImGui::EndTabItem(); }
+            if (tab("QoL", 0)) { qol_tab(); ImGui::EndTabItem(); }
             if (tab("Video", 1)) { video_tab(v); ImGui::EndTabItem(); }
             if (tab("Effects", 2)) { effects_tab(v); ImGui::EndTabItem(); }
             if (tab("Audio", 3)) { audio_tab(v); ImGui::EndTabItem(); }
