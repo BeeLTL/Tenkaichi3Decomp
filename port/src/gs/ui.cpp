@@ -589,6 +589,18 @@ static void build_net(void) {
                 tab = 1;
                 ImGui::SetNextItemWidth(120.0f);
                 ImGui::InputText("Room code", roomCode, sizeof(roomCode), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::SameLine();
+                if (ImGui::Button("Paste")) { // the letters and digits of what was copied, as capitals
+                    char *clip = SDL_GetClipboardText();
+                    size_t n = 0;
+                    for (const char *c = clip; c != NULL && *c != '\0' && n + 1 < sizeof(roomCode); c++) {
+                        if ((*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z')) {
+                            roomCode[n++] = (char)(*c >= 'a' ? *c - 32 : *c);
+                        }
+                    }
+                    roomCode[n] = '\0';
+                    SDL_free(clip);
+                }
                 ImGui::TextDisabled("or, without a code, the host's address and port:");
                 ImGui::BeginDisabled(roomCode[0] != '\0');
                 ImGui::SetNextItemWidth(260.0f);
@@ -622,6 +634,18 @@ static void build_net(void) {
                     ImGui::SetWindowFontScale(1.8f);
                     ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", Port_LobbyCode());
                     ImGui::SetWindowFontScale(1.0f);
+                    {
+                        static Uint64 copiedAt;
+                        ImGui::SameLine();
+                        if (ImGui::Button("Copy")) {
+                            copiedAt = SDL_SetClipboardText(Port_LobbyCode()) ? SDL_GetTicks() : 0;
+                        }
+                        ImGui::SetItemTooltip("Copy the code, to paste it to the other player.");
+                        if (copiedAt != 0 && SDL_GetTicks() - copiedAt < 2000) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("Copied");
+                        }
+                    }
                     ImGui::TextUnformatted(state == 3 ? "Tell the other player this code. Waiting for them to join..." : "The other player has joined. Connecting...");
                 } else {
                     ImGui::TextUnformatted(state == 1 ? "Found the room. Connecting to the host..." : tab == 0 ? "Getting a room code..." : "Looking for the room...");
