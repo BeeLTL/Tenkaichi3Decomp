@@ -181,6 +181,80 @@ python port/web/devserver.py --port 8080            # serves port/build/web on 1
   single report the native notes give for 32-bit x86 with `-malign-double`), 8 errors from `eft_z.h` (the tool
   asserts on a type declared later in that header; not a layout result).
 
+### Platform code, data tables, link (Priority 4, part 2): the whole program links — 2026-10-11
+Commands (Git Bash, `source /c/project/Tenkaichi3Web/env.sh`, in `Tenkaichi3Decomp/`):
+```
+python port/tools/wasm_build.py game     # 269 game sources
+python port/tools/wasm_build.py port     # 62 port files (port/src, gs/, web/, newlib maths, ImGui)
+python port/tools/wasm_build.py data     # 72 data tables + the list of their disc runs
+python port/tools/wasm_build.py link     # stubs, wasm_sig.py, link -> port/build/web/{bt3.js,bt3.wasm,index.html,bt3_data.js}
+```
+Results: game 269/269, port 62/62 (584 float operations lowered there), data 73/73, **link OK**: `bt3.wasm`
+4.7 MB, `bt3.js` 428 KB; 0 signature mismatches left; 103 stubs (`port/build/wasm_stubs.txt`).
+
+- **Not built for the browser** (kept for the native builds): `gs/net.c`, `net_match.c`, `net_relay.c` (online play:
+  UDP sockets, threads, matchmaking), `gs/gs_gpu.c` + `imgui_impl_sdlgpu3.cpp` (Vulkan through SDL GPU: SDL3 has no
+  browser back end for it). `port/src/web/net_off.c` is the online-play interface in the state the native builds are in
+  with no match (inactive, no names; `Port_NetView` / `Port_HudSwap` keep their non-network logic); `Port_NetInput`
+  aborts with a message if ever reached (natively only called during a match).
+- **SDL3**: Emscripten's port, SDL 3.4.2 (native builds use 3.4.12). Renderer: the GL back end on WebGL 2
+  (`gs_draw.c` browser branch); ImGui's OpenGL3 back end with `#version 300 es` (`ui.cpp` browser branches).
+- **Every file goes through LLVM IR** (soft-float files additionally through `wasm_sf.py`).
+- **Data tables** (`port/tools/wasm_data.py`): one wasm data section per table file (contiguous, in order, 16-byte
+  aligned, every label with its size), `.space`/`.zero` -> `.skip`, `.long sym+k` -> `.int32`, `D_3BE71C` -> the
+  constant 0x3BE71C (natively `--defsym`). Function addresses in tables carry a placeholder `.functype`; checked with
+  two objects in both link orders that wasm-ld still puts the real function's table slot there. The list of disc runs
+  is generated as C (`port/build/gen_wasm/data_list.c`, offsets only) and linked; `plat_mem.c` (browser branch) turns
+  it into the bytes of `<program>.dat` and runs the native loader code on it. 2,388 runs, 210,773 bytes, 1,872
+  addresses: the figures of the native notes.
+- **Signature mismatches** (`port/tools/wasm_obj.py`, `wasm_sig.py`): the game declares functions locally, not
+  always as defined (`void f()` for `int f(int)`, one argument too many, ...). Harmless on the PS2 and x86; on wasm,
+  wasm-ld replaces each such direct call by a trap. 171 functions, **813 call sites in 116 objects** repaired in the
+  caller's IR to the definition's type (result dropped or read as 0, missing arguments 0, extra ones dropped, int/float
+  bit-for-bit as the native software-float build passes them). Every repair is listed in `port/build/wasm_sig.txt`.
+  Calls through function pointers are not covered: a mismatch there traps at run time (the page shows where).
+- Other fixes: `main.c` compiled with `MainMenu_StartBallLoops` (a function used as the overlay's load address;
+  the port's `sceRead` never writes there) mapped to a byte array; `heap.c` with `D_3BE71C` mapped to a pointer to an
+  array at 0x3BE71C; `headless.c` with `__data_start`/`_end` mapped to wasm-ld's `__global_base`/`__data_end`;
+  `plat_crash.c` browser branch (`Port_CrashContext` for the page); `newlib_shim.h`: `Port_scalbnf` prototype for the
+  browser build.
+- **Probable native bug, recorded, not changed natively**: `newlib_shim.h` includes `<math.h>` before renaming
+  `scalbnf`, so `ef_pow.c` and `kf_rem_pio2.c` call `Port_scalbnf` without a prototype (implicit `int f()`: the float
+  argument is passed as a double and the result read as an int). Affects `powf`'s subnormal path and `sinf`/`cosf` of
+  large arguments in the native builds. The browser build declares the prototype.
+- **Stubs**: 103 symbols nobody defines (98 SDK / CRI library functions in the game's address range, CRI's
+  `dvCi*`/`htCi*`/`mfCi*` file-system drivers, `sceCdSearchFile`), most referenced only by library data tables. As
+  natively (`link.py`), each stub prints `bt3: not implemented yet: <name>` and aborts: reaching one stops the game
+  visibly, it cannot make start-up look successful.
+
+### Game data in the browser (Priority 6/7, first part) — implemented, tested without game data
+- All game-data reads in the port go through `fopen` (plat_fcache.c, snd_adx.c, snd_se.c, plat_mpeg2.c, plat_mem.c).
+  The program is linked with `--wrap=fopen` (`port/src/web/web_fs.c`): a file in Emscripten's file system (saves,
+  settings, prefetched files) opens as always; a read-only file under the data root that is not there opens as a
+  stream (`fopencookie`) whose reads call the page's loader and WAIT for it (JSPI) without blocking the page.
+- Why not the alternatives: synchronous XHR blocks the main thread; Emscripten's lazy files work only in workers;
+  WasmFS's fetch backend needs pthreads (shared memory) for everything. JSPI cannot suspend before `main` (the
+  constructor `Port_MapMemory` reads `disc/SLUS_216.78` and `disc/BIN/DBZP.BIN`): the page fetches those two first and
+  writes them to the in-memory file system. Every other data read happens on the game's thread (the sound players
+  load a whole file when they start; the audio callbacks only decode from memory).
+- `port/web/bt3_data.js`: Range requests in 256 KB blocks, LRU cache (256 MB), sizes from `manifest.json` or `HEAD`.
+  `node port/tests/web_data/test_data.js` (own HTTP server with scripted faults): **16 of 16 pass** — sizes by HEAD,
+  URL encoding, 404 -> missing, 500 -> error, reads inside / across blocks / at and past the end, cache hit, LRU
+  eviction and refetch, cache limit, concurrent reads sharing one request, server without Range (200, sliced),
+  short body (error, not wrong data), 500 during a read.
+- `port/web/devserver.py` serves the build and mounts the private data folder (`--mount gamedata=<folder>`; in Git
+  Bash write it without a leading `/`, which MSYS would rewrite into a Windows path). It binds to 127.0.0.1 only.
+- `plat_stub.c` browser branch: the vertical-blank wait is `emscripten_sleep` (a zero sleep when late), so the page
+  gets control every blank: the frame is shown, input and sound are handled.
+
+### Runtime test without game data (2026-10-11, built-in Chromium 152)
+With a fake data folder (a 4 KB ELF header and 2 MB of zeros, nothing from the game) served at /gamedata:
+checks pass (WebAssembly, JSPI, WebGL 2.0, data reachable), the two files are fetched, the module instantiates with
+384 MB, the constructors run: memory map accepted, the two files read through the C library, all 2,388 runs copied,
+and the engine's own check stops with its native message ("the game's programs in your game data are not the
+unmodified USA release (SLUS-21678)"). With no data folder at all, the page says so before starting.
+**Not yet run: `main`.** That needs the real data.
+
 ## 5. Log
 
 - 2026-10-11 (1): repository identified, audit above, Emscripten installed. Blocked by the session folder's long path.
@@ -188,13 +262,22 @@ python port/web/devserver.py --port 8080            # serves port/build/web on 1
   all game sources compile; memory model tested in four runtimes; struct layouts checked. Commits 8cd6f9e, 2593069,
   5527e58.
 
-## 6. Next, in order (nothing below is done)
+- 2026-10-11 (3): platform code, data tables, signature repair, link, data on demand, page; tested without game
+  data. Commits e9cc31c, 2e5805c, 79be83e, 14b9b22.
 
-1. Port code for wasm: `port/src/*.c` and `gs/*.c` through the same pipeline (software-float files) or plainly
-   (renderer, plat_libm.c, plat_fastvec.c); netplay (`net*.c`) and the verification thread left out; plat_mem.c:
-   no mmap on wasm (the regions are plain memory in layout B), no game-thread stack switch.
-2. Data tables (`port/data/*.s`, GNU as x86 syntax) converted to wasm assembly or LLVM IR; `make_dat.py` needs a
-   linker map (wasm-ld `-Map`).
-3. Link with wasm-ld; generated stubs as in link.py; then the first milestone: the engine initialises in the
-   browser with the user's data (needs `gamedata/` from the user's disc image, not supplied yet).
-4. `vblank_wait` yielding to the browser (JSPI or Asyncify), file reads on demand, WebGL2 back end, input, audio.
+## 6. Blockers and next milestone
+
+**Blocker for the initialisation milestone: the game data.** The next test runs `main`, which needs the real
+`gamedata/` (the native integrity check refuses anything else, as it should). Plan once the ISO is supplied:
+`7z` (installed via scoop) + `port/tools/extract_disc.py <iso> C:\project\Tenkaichi3Web\gamedata` (outside the
+repository, never committed), then `devserver.py --mount gamedata=C:/project/Tenkaichi3Web/gamedata` and the page.
+
+Next milestone: **the engine initialises in the browser** — `Game_Main`'s initialisation list completes and the
+first frames run (the native notes list it: heap, graphics, sound, files, movie, common data, save, jobs, vector
+unit, DMA buffers, pad, memory card, fonts, fade), shown by the engine's own log and `gPortStage`. Expected next
+problems, in the order they would appear: a trap in a call through a mismatched function pointer; a library stub
+reached; something the engine reads before the page's data loader is attached; the scratchpad snapshot in
+`gs/state.c` (0x70000000 is outside memory on purpose).
+
+Not started: saves and settings persistence (IndexedDB), canvas resizing / fullscreen, input and audio checks in the
+browser, movie playback check, manifest generation, persistent cache, WebGPU evaluation, performance.
