@@ -1,0 +1,464 @@
+// The browser build's settings panel: the page's own HTML, beside the game (the canvas shows the game alone). Every
+// value lives in the engine (port/src/web/web_ui.c, the Bt3Ui_* exports); nothing here keeps its own copy. A change is
+// sent to the engine, which applies it between two frames and answers with `changed`, after which the panel reads the
+// values again. The engine's settings key (F1, START + SELECT, or the bound one) opens and closes the panel too.
+'use strict';
+
+// What a PS2 frame is drawn at (GsGpu_ReadFrame, gs_draw.h GS_DISPLAY_W / _H): the internal resolution's 1x.
+const GS_DISPLAY = { w: 512, h: 448 };
+// SDL_GamepadButton values (SDL3) and the engine's two trigger sources (ui.h PORT_PAD_LT / PORT_PAD_RT).
+const PAD_LABELS = ['A / Cross', 'B / Circle', 'X / Square', 'Y / Triangle', 'Back / Select', 'Guide', 'Start',
+  'Left stick click', 'Right stick click', 'Left shoulder', 'Right shoulder', 'D-pad up', 'D-pad down', 'D-pad left',
+  'D-pad right', 'Misc 1', 'Right paddle 1', 'Left paddle 1', 'Right paddle 2', 'Left paddle 2', 'Touchpad'];
+const PAD_TRIGGERS = { 100: 'Left trigger', 101: 'Right trigger' };
+const CAPTURE_KEY = 1, CAPTURE_PAD = 2;
+const STATS_EVERY_MS = 500;
+const NOTICE_MS = 6000;
+// The unlock is carried out by the game at its next vertical blank (headless.c): the panel looks for the result this long.
+const UNLOCK_WAIT_MS = 2000, UNLOCK_POLL_MS = 100;
+// The vertical blanks a second the game is made for (the PS2's 59.94 Hz): the developer panel's "game speed" is the
+// share of them the game reaches (ui.cpp's meter counts 60).
+const PS2_VBLANKS_PER_S = 59.94;
+// The renderers the browser build has (gs_draw.c: BT3_GPU_API), chosen with the page's ?gpu=.
+const RENDERERS = [['gl', 'WebGL 2'], ['webgpu', 'WebGPU']];
+// The engine's start-up switches the developer panel can restart with (each read once at start).
+const DEBUG_SWITCHES = [
+  { env: 'BT3_GS_VERBOSE', label: 'Renderer counts in the log every 30 frames (with WebGL 2 this checks GL errors each frame: slower)' },
+  { env: 'BT3_FX_DEBUG', label: 'Outline pass debug view' },
+  { env: 'BT3_GPU_MAGENTA', label: 'Clear render targets to magenta (shows what is never drawn)' },
+  { query: 'gldebug', label: 'Check every WebGL call for errors (WebGL 2 only; very slow)' },
+];
+
+// The settings, by tab. key: the engine's name (web_ui.c kSettings). A control is one of select / checkbox / range;
+// `bit` makes a checkbox one bit of the value (shown as on when the bit is clear: "fx_off" counts what is off).
+const PANEL = [
+  { tab: 'Video', items: [
+    { key: 'scale', label: 'Internal resolution', type: 'select',
+      options: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, `${n}× (${GS_DISPLAY.w * n} × ${GS_DISPLAY.h * n})`]),
+      help: 'How finely the game is drawn. 1× is the PlayStation 2\'s own resolution; higher is sharper and uses more video memory.' },
+    { key: 'aspect_milli', label: 'Aspect ratio', type: 'select',
+      options: [[1333, '4:3 (original)'], [1600, '16:10'], [1778, '16:9'], [2389, '21:9'], [3556, '32:9']],
+      help: 'Wider than 4:3 shows more of the fight to the sides. Menus are stretched.' },
+    { key: 'smooth_2d', label: '2D filtering', type: 'select', options: [[0, 'Sharp (console)'], [1, 'Smooth']],
+      help: 'Above 1×: sharp keeps each PlayStation 2 pixel a block, smooth samples it per screen pixel.' },
+    { key: 'texture_pack', label: 'Texture pack', type: 'checkbox', when: (s) => s.get('texture_pack_count') > 0,
+      help: 'Replacement textures found next to the game.' },
+  ] },
+  { tab: 'Effects', items: [
+    ...[['Outline', 'The black line around the fighters.'], ['See-through tint', 'The tint that shows a fighter behind scenery.'],
+      ['Depth tint', 'The haze that colours distant things.'], ['Glare and glow', 'The bloom around bright things and the sky\'s glare.'],
+      ['Distance blur', 'The soft focus on distant scenery.'], ['Movement blur', 'The blur of the scenery while the view turns or moves fast.']]
+      .map(([label, help], bit) => ({ key: 'fx_off', bit, label, help, type: 'checkbox' })),
+    { key: 'glow', label: 'Glow strength', type: 'range', min: 0, max: 200, unit: '%',
+      help: '100% is what the PlayStation 2 draws; the default is 60%.' },
+  ] },
+  { tab: 'Audio', items: [
+    { key: 'music', label: 'Music', type: 'range', min: 0, max: 200, unit: '%' },
+    { key: 'effects', label: 'Sound effects and voices', type: 'range', min: 0, max: 200, unit: '%',
+      help: 'Takes effect with the next sound that starts.' },
+  ] },
+  { tab: 'Controls', items: [
+    { key: 'clash_square', label: 'Clashes: Square counts as a direction', type: 'checkbox',
+      help: 'In a clash of beams or rushes, each press of Square counts as a new direction, as a tap of the d-pad does. Only your own pad: usable online.' },
+    { key: 'clash_square_x', label: 'Worth of one press', type: 'select', when: (s) => s.get('clash_square') === 1,
+      options: [[4, '1'], [6, '1.5'], [7, '1.75'], [8, '2']] },
+    { bindings: true },
+  ] },
+  { tab: 'Extras', items: [{ unlock: true }] },
+];
+
+class Bt3Settings {
+  constructor({ canvas, stage, renderer, query, log }) {
+    this.canvas = canvas;
+    this.stage = stage;
+    this.renderer = renderer;
+    this.query = query;
+    this.log = log;
+    this.mod = null;
+    this.player = 0;
+    this.capturing = null;  // the button waiting for a key or controller button
+    this.opener = null;     // what had the focus before the panel opened (it gets it back)
+    this.refreshers = [];   // one per control: shows the engine's value again
+    this.statsTimer = 0;
+    this.statsLast = null;
+    this.dialog = document.getElementById('settings');
+    this.openButton = document.getElementById('settings-open');
+    this.noticeEl = document.getElementById('notice');
+    this.build();
+    this.openButton.addEventListener('click', () => this.toggle());
+    document.getElementById('settings-close').addEventListener('click', () => this.close());
+    document.getElementById('fullscreen').addEventListener('click', () => this.fullscreen());
+    document.addEventListener('keydown', (e) => this.onKey(e));
+    document.addEventListener('fullscreenchange', () => this.fitStage());
+  }
+
+  // The handlers the engine calls (web_ui.c page_call / page_notice / page_screenshot): Module.bt3Ui.
+  handlers() {
+    return {
+      ready: () => { this.openButton.disabled = false; this.refresh(); this.fitStage(); },
+      changed: () => { this.persist(); this.refresh(); this.fitStage(); },
+      toggle: () => this.toggle(),
+      captureDone: () => this.captureDone(),
+      notice: (text) => this.notice(text),
+      screenshot: (rgba, w, h) => this.saveScreenshot(rgba, w, h),
+    };
+  }
+
+  attach(mod) {
+    this.mod = mod;
+  }
+
+  // ---- the engine's interface ------------------------------------------------------------------------------------
+  get(name) { return this.mod.ccall('Bt3Ui_Get', 'number', ['string'], [name]); }
+  set(name, value) {
+    if (!this.mod.ccall('Bt3Ui_Set', 'number', ['string', 'number'], [name, value])) this.notice(`The setting "${name}" was not changed (see the log).`);
+  }
+  action(name, arg = 0) {
+    if (!this.mod.ccall('Bt3Ui_Action', 'number', ['string', 'number'], [name, arg])) this.notice(`"${name}" could not be done (see the log).`);
+  }
+  call(name, ret, args) { return this.mod.ccall(name, ret, args.map((a) => typeof a === 'string' ? 'string' : 'number'), args); }
+
+  // The engine's settings file (plat_settings.c writes bt3_settings.txt in its file system) kept in the browser between
+  // visits: written back into the file system before the engine starts (restore), saved after every change.
+  static restore(fs) {
+    try {
+      const text = localStorage.getItem('bt3.settings');
+      if (text) fs.writeFile('bt3_settings.txt', text);
+    } catch (e) { /* storage blocked: the engine starts with its defaults */ }
+  }
+  persist() {
+    try {
+      if (this.mod.FS.analyzePath('bt3_settings.txt').exists) localStorage.setItem('bt3.settings', this.mod.FS.readFile('bt3_settings.txt', { encoding: 'utf8' }));
+    } catch (e) { this.log(`settings: not kept for the next visit (${e.message})`); }
+  }
+
+  // ---- building the panel ----------------------------------------------------------------------------------------
+  build() {
+    const tabs = document.getElementById('settings-tabs'), pages = document.getElementById('settings-pages');
+    PANEL.forEach((t, i) => {
+      const id = `tab-${t.tab.toLowerCase()}`;
+      const tab = el('button', { role: 'tab', id, type: 'button', 'aria-controls': `${id}-page`, tabindex: i ? '-1' : '0',
+                                'aria-selected': String(!i) }, t.tab);
+      const page = el('div', { role: 'tabpanel', id: `${id}-page`, 'aria-labelledby': id, class: 'page' });
+      page.hidden = i !== 0;
+      tab.addEventListener('click', () => this.selectTab(tab));
+      tabs.appendChild(tab);
+      for (const item of t.items) {
+        page.appendChild(item.bindings ? this.buildBindings() : item.unlock ? this.buildUnlock() : this.buildControl(item));
+      }
+      if (t.tab === 'Video') page.appendChild(this.buildRenderer());
+      pages.appendChild(page);
+    });
+    tabs.addEventListener('keydown', (e) => {
+      const list = [...tabs.children], at = list.indexOf(document.activeElement);
+      const next = e.key === 'ArrowRight' ? at + 1 : e.key === 'ArrowLeft' ? at - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1 : null;
+      if (next === null || at < 0) return;
+      e.preventDefault();
+      this.selectTab(list[(next + list.length) % list.length]);
+    });
+    document.getElementById('dev').appendChild(this.buildDeveloper());
+    document.getElementById('dev').addEventListener('toggle', (e) => this.statsRun(e.target.open));
+  }
+
+  selectTab(tab) {
+    for (const t of tab.parentElement.children) {
+      const on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    }
+    tab.focus();
+  }
+
+  buildControl(item) {
+    const id = `set-${item.key}${item.bit !== undefined ? '-' + item.bit : ''}`;
+    const row = el('div', { class: 'row' });
+    let input;
+    if (item.type === 'select') {
+      input = el('select', { id });
+      for (const [v, text] of item.options) input.appendChild(el('option', { value: String(v) }, text));
+      input.addEventListener('change', () => this.set(item.key, Number(input.value)));
+      row.append(el('label', { for: id }, item.label), input);
+    } else if (item.type === 'checkbox') {
+      input = el('input', { id, type: 'checkbox' });
+      input.addEventListener('change', () => {
+        if (item.bit === undefined) { this.set(item.key, input.checked ? 1 : 0); return; }
+        const off = this.get(item.key), mask = 1 << item.bit;
+        this.set(item.key, input.checked ? off & ~mask : off | mask);
+      });
+      row.classList.add('check');
+      row.append(input, el('label', { for: id }, item.label));
+    } else {
+      input = el('input', { id, type: 'range', min: String(item.min), max: String(item.max), step: '1' });
+      const out = el('output', { for: id });
+      input.addEventListener('input', () => { out.textContent = `${input.value}${item.unit}`; });
+      input.addEventListener('change', () => this.set(item.key, Number(input.value)));
+      row.append(el('label', { for: id }, item.label), input, out);
+      this.refreshers.push(() => { out.textContent = `${input.value}${item.unit}`; });
+    }
+    if (item.help) {
+      const help = el('p', { class: 'help', id: `${id}-help` }, item.help);
+      input.setAttribute('aria-describedby', help.id);
+      row.appendChild(help);
+    }
+    this.refreshers.unshift(() => {
+      const v = this.get(item.key);
+      if (item.type === 'checkbox') input.checked = item.bit === undefined ? v !== 0 : !((v >> item.bit) & 1);
+      else input.value = String(v);
+      row.hidden = item.when ? !item.when(this) : false;
+    });
+    return row;
+  }
+
+  // Which renderer: the page's ?gpu= (the game starts again).
+  buildRenderer() {
+    const row = el('div', { class: 'row' });
+    const select = el('select', { id: 'set-renderer' });
+    for (const [v, text] of RENDERERS) select.appendChild(el('option', { value: v }, text));
+    select.value = this.renderer;
+    const restart = el('button', { type: 'button', class: 'secondary' }, 'Restart with this renderer');
+    restart.hidden = true;
+    select.addEventListener('change', () => { restart.hidden = select.value === this.renderer; });
+    restart.addEventListener('click', () => {
+      const q = new URLSearchParams(this.query);
+      q.set('gpu', select.value);
+      location.search = q.toString();
+    });
+    row.append(el('label', { for: 'set-renderer' }, 'Renderer'), select, restart,
+      el('p', { class: 'help' }, 'Both draw the same picture. Changing it restarts the game: progress since the last save is lost.'));
+    return row;
+  }
+
+  buildBindings() {
+    const box = el('div', { class: 'bindings' });
+    const players = el('div', { class: 'row inline', role: 'radiogroup', 'aria-label': 'Player' });
+    for (const p of [0, 1]) {
+      const id = `bind-player-${p}`;
+      const radio = el('input', { type: 'radio', name: 'bind-player', id, value: String(p) });
+      radio.checked = p === 0;
+      radio.addEventListener('change', () => { this.player = p; this.refresh(); });
+      players.append(radio, el('label', { for: id }, `Player ${p + 1}`));
+    }
+    const slot = el('select', { id: 'bind-slot' });
+    slot.addEventListener('change', () => { this.call('Bt3Ui_PadSlotSet', null, [this.player, Number(slot.value)]); this.persist(); });
+    const reset = el('button', { type: 'button', class: 'secondary' }, 'Reset to defaults');
+    reset.addEventListener('click', () => this.action('reset_controls', this.player));
+    const slotRow = el('div', { class: 'row inline' }, el('label', { for: 'bind-slot' }, 'Controller'), slot, reset);
+    const hint = el('p', { class: 'help' }, 'Choose a binding, then press the new key or controller button. Esc keeps it, Delete clears it.');
+    const table = el('table');
+    table.appendChild(el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Action'), el('th', { scope: 'col' }, 'Keyboard'),
+      el('th', { scope: 'col' }, 'Controller'))));
+    const body = el('tbody');
+    table.appendChild(body);
+    box.append(players, slotRow, hint, table);
+    this.refreshers.push(() => {
+      const count = this.call('Bt3Ui_GamepadCount', 'number', []), current = this.call('Bt3Ui_PadSlot', 'number', [this.player]);
+      slot.replaceChildren(el('option', { value: '-1' }, 'None'));
+      for (let i = 0; i < Math.max(count, 4); i++) {
+        const name = i < count ? this.call('Bt3Ui_GamepadName', 'string', [i]) : '';
+        slot.appendChild(el('option', { value: String(i) }, name ? `${i + 1}: ${name}` : `Controller ${i + 1} (not connected)`));
+      }
+      slot.value = String(current);
+      if (this.capturing) return;  // (the row being bound keeps its "press a key" until the engine answers)
+      const actions = this.get('actions'), padButtons = this.get('pad_buttons');
+      body.replaceChildren();
+      for (const a of [actions, ...Array.from({ length: actions }, (_, i) => i)]) {  // the settings key first, then the pad
+        const cells = [el('th', { scope: 'row' }, this.call('Bt3Ui_ActionLabel', 'string', [a]))];
+        cells.push(el('td', {}, this.bindButton(CAPTURE_KEY, a)));
+        cells.push(el('td', {}, a < padButtons || a === actions ? this.bindButton(CAPTURE_PAD, a)
+                                                                 : el('span', { class: 'dim' }, a < padButtons + 4 ? 'Left stick' : 'Right stick')));
+        body.appendChild(el('tr', {}, ...cells));
+      }
+    });
+    return box;
+  }
+
+  bindingName(kind, action) {
+    const v = this.call('Bt3Ui_Binding', 'number', [kind, this.player, action]);
+    if (kind === CAPTURE_KEY) return v > 0 ? this.call('Bt3Ui_KeyName', 'string', [v]) : '—';
+    if (v < 0) return action === this.get('actions') ? 'START + SELECT' : '—';
+    return PAD_TRIGGERS[v] || PAD_LABELS[v] || `Button ${v}`;
+  }
+
+  bindButton(kind, action) {
+    const b = el('button', { type: 'button', class: 'bind', 'data-kind': String(kind), 'data-action': String(action) },
+      this.bindingName(kind, action));
+    b.addEventListener('click', () => {
+      this.capturing = { kind, action };
+      b.textContent = kind === CAPTURE_KEY ? 'Press a key…' : 'Press a button…';
+      b.classList.add('waiting');
+      this.call('Bt3Ui_CaptureBegin', null, [kind, this.player, action]);
+      // the key goes to the engine, which hears the keyboard on the canvas (SDL_EMSCRIPTEN_KEYBOARD_ELEMENT)
+      if (kind === CAPTURE_KEY) this.canvas.focus();
+    });
+    return b;
+  }
+
+  captureDone() {
+    const c = this.capturing;
+    this.capturing = null;
+    this.persist();
+    this.refresh();
+    if (c && this.dialog.open) {  // the same binding in the rebuilt table gets the focus back
+      this.dialog.querySelector(`button.bind[data-kind="${c.kind}"][data-action="${c.action}"]`).focus();
+    }
+  }
+
+  buildUnlock() {
+    const box = el('div', { class: 'row' });
+    const confirm = document.getElementById('unlock-confirm');
+    const button = el('button', { type: 'button', class: 'secondary' }, 'Unlock everything…');
+    const done = el('span', { class: 'ok-text', role: 'status' });
+    button.addEventListener('click', () => confirm.showModal());
+    confirm.addEventListener('close', async () => {
+      if (confirm.returnValue !== 'unlock') return;
+      this.action('unlock_all');
+      for (let waited = 0; waited < UNLOCK_WAIT_MS && !this.get('unlock_done'); waited += UNLOCK_POLL_MS) {
+        await new Promise((r) => setTimeout(r, UNLOCK_POLL_MS));
+      }
+      if (!this.get('unlock_done')) this.notice('Nothing was unlocked: the game has no save loaded.');
+      this.refresh();
+    });
+    box.append(el('h3', {}, 'Unlock everything'),
+      el('p', { class: 'help' }, 'All characters, stages, music and items, and the most Zenni: a debug function the game\'s developers left in. ' +
+        'It also empties your records list, and becomes permanent the next time the game saves. Use it once your save is loaded (from the main menu on).'),
+      button, done);
+    const why = el('p', { class: 'help' }, 'Available once the game has loaded a save (from the main menu on).');
+    box.appendChild(why);
+    this.refreshers.push(() => {
+      const loaded = this.get('save_loaded') === 1;
+      button.disabled = !loaded;
+      why.hidden = loaded;
+      done.textContent = this.get('unlock_done') ? 'Done.' : '';
+    });
+    return box;
+  }
+
+  buildDeveloper() {
+    const stats = el('dl', { class: 'stats', id: 'dev-stats' });
+    const shot = el('button', { type: 'button', class: 'secondary' }, `Save a screenshot (${GS_DISPLAY.w} × ${GS_DISPLAY.h} PNG)`);
+    shot.addEventListener('click', () => this.action('screenshot'));
+    const env = new Set((new URLSearchParams(this.query).get('env') || '').split(',').filter(Boolean).map((kv) => kv.split('=')[0]));
+    const switches = DEBUG_SWITCHES.map((s, i) => {
+      const id = `dev-switch-${i}`;
+      const box = el('input', { type: 'checkbox', id });
+      box.checked = s.env ? env.has(s.env) : new URLSearchParams(this.query).has(s.query);
+      box.dataset.index = String(i);
+      return el('div', { class: 'row check' }, box, el('label', { for: id }, s.label));
+    });
+    const restart = el('button', { type: 'button', class: 'secondary' }, 'Restart with these switches');
+    restart.addEventListener('click', () => {
+      const q = new URLSearchParams(this.query);
+      const kept = (q.get('env') || '').split(',').filter((kv) => kv && !DEBUG_SWITCHES.some((s) => s.env && kv.startsWith(s.env + '=')));
+      switches.forEach((row) => {
+        const box = row.querySelector('input'), s = DEBUG_SWITCHES[Number(box.dataset.index)];
+        if (s.env && box.checked) kept.push(`${s.env}=1`);
+        if (s.query) { if (box.checked) q.set(s.query, '1'); else q.delete(s.query); }
+      });
+      if (kept.length) q.set('env', kept.join(',')); else q.delete('env');
+      location.search = q.toString();
+    });
+    return el('div', {}, stats, shot, el('h3', {}, 'Start-up switches'),
+      el('p', { class: 'help' }, 'The engine reads these once, at start: applying them restarts the game.'), ...switches, restart);
+  }
+
+  // The developer numbers, twice a second while that section is open (nothing is polled otherwise).
+  statsRun(on) {
+    clearInterval(this.statsTimer);
+    this.statsTimer = 0;
+    this.statsLast = null;
+    if (on && this.mod) { this.stats(); this.statsTimer = setInterval(() => this.stats(), STATS_EVERY_MS); }
+  }
+
+  stats() {
+    const now = performance.now(), frame = this.get('frame'), vblanks = this.get('vblanks');
+    const rows = [['Renderer', RENDERERS.find(([v]) => v === this.renderer)[1]], ['GPU', this.gpuName || '—'],
+      ['Internal resolution', `${this.get('scale')}× (${GS_DISPLAY.w * this.get('scale')} × ${GS_DISPLAY.h * this.get('scale')})`],
+      ['Frame', String(frame)]];
+    if (this.statsLast) {
+      const s = (now - this.statsLast.t) / 1000;
+      rows.push(['Pictures per second', ((frame - this.statsLast.frame) / s).toFixed(1)]);
+      rows.push(['Game speed', `${((vblanks - this.statsLast.vblanks) / s / PS2_VBLANKS_PER_S * 100).toFixed(0)}%`]);
+    }
+    if (this.renderer === 'webgpu') rows.push(['WebGPU device errors', String(this.get('webgpu_errors'))]);
+    this.statsLast = { t: now, frame, vblanks };
+    document.getElementById('dev-stats').replaceChildren(...rows.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)]));
+  }
+
+  // ---- opening, closing, keys ------------------------------------------------------------------------------------
+  toggle() { if (this.dialog.open) this.close(); else this.open(); }
+
+  open() {
+    if (!this.mod || this.dialog.open) return;
+    this.opener = document.activeElement;
+    this.call('Bt3Ui_SetOpen', null, [1]);
+    this.refresh();
+    this.dialog.show();
+    this.openButton.setAttribute('aria-expanded', 'true');
+    const tab = this.dialog.querySelector('[role=tab][aria-selected=true]');
+    tab.focus();
+    if (document.getElementById('dev').open) this.statsRun(true);
+  }
+
+  close() {
+    if (!this.dialog.open) return;
+    if (this.capturing) { this.call('Bt3Ui_CaptureCancel', null, []); }
+    this.call('Bt3Ui_SetOpen', null, [0]);
+    this.dialog.close();
+    this.statsRun(false);
+    this.openButton.setAttribute('aria-expanded', 'false');
+    // back to the game (its keyboard is the canvas's), unless the panel was opened from another control of the page
+    (this.opener && this.opener !== document.body && this.opener !== this.openButton ? this.opener : this.canvas).focus();
+  }
+
+  // Only while the panel is open: Escape closes it (unless the engine is waiting for a key: Esc is then its "keep").
+  onKey(e) {
+    if (!this.dialog.open || e.key !== 'Escape' || this.capturing) return;
+    e.preventDefault();
+    this.close();
+  }
+
+  refresh() {
+    if (!this.mod) return;
+    for (const r of this.refreshers) r();
+  }
+
+  // The stage's shape follows the picture's (the engine sizes the canvas to the aspect ratio: GsDraw_WindowShape).
+  fitStage() {
+    if (!this.mod) return;
+    this.stage.style.setProperty('--aspect', String(this.get('aspect_milli') / 1000));
+  }
+
+  fullscreen() {
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    this.stage.requestFullscreen().then(() => this.canvas.focus(), (e) => this.notice(`Full screen was refused: ${e.message}`));
+  }
+
+  notice(text) {
+    this.log(`notice: ${text}`);
+    this.noticeEl.textContent = text;
+    this.noticeEl.hidden = false;
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => { this.noticeEl.hidden = true; }, NOTICE_MS);
+  }
+
+  saveScreenshot(rgba, w, h) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength), w, h), 0, 0);
+    c.toBlob((blob) => {
+      const a = el('a', { href: URL.createObjectURL(blob), download: `bt3_frame_${this.get('frame')}.png` });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 0);
+    }, 'image/png');
+  }
+}
+
+// A DOM element with attributes and children (strings become text).
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  for (const c of children) e.append(c);
+  return e;
+}
