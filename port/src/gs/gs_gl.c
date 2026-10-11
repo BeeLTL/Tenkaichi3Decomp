@@ -193,16 +193,35 @@ GL_FUNCS(GL_DECL)
 static void (*glClipControl)(GLenum, GLenum); /* optional: GL 4.5 / ARB_clip_control */
 static int sHasClipControl;
 
+#ifdef __EMSCRIPTEN__
+/* port/src/web/web_gl.c: functions WebGL 2 has only as extensions (indexed blend / mask, clip control) */
+extern void *Port_WebGLProc(const char *name);
+extern int Port_WebGLExtension(const char *name);
+#define WEB_PROC(name, ret, args) if (!name) { name = (ret (*) args)Port_WebGLProc(#name); }
+/* without OES_draw_buffers_indexed the back end takes its fallback (sHasIndexed 0) */
+#define WEB_OPTIONAL(name) (!strcmp(#name, "glEnablei") || !strcmp(#name, "glDisablei") || !strcmp(#name, "glColorMaski"))
+#else
+#define WEB_PROC(name, ret, args)
+#define WEB_OPTIONAL(name) 0
+#endif
+
 static int load_gl(void) {
 #define LOAD(name, ret, args, callargs) \
     name = (ret (*) args)SDL_GL_GetProcAddress(#name); \
-    if (!name) { fprintf(stderr, "bt3: gl: missing GL entry point %s\n", #name); return 0; }
+    WEB_PROC(name, ret, args) \
+    if (!name && !WEB_OPTIONAL(name)) { fprintf(stderr, "bt3: gl: missing GL entry point %s\n", #name); return 0; }
     GL_FUNCS(LOAD)
 #undef LOAD
     return 1;
 }
 
 /* ---- shader translation: Vulkan GLSL 450 -> GL 3.3 core ------------------------------------------ */
+#ifdef __EMSCRIPTEN__
+/* WebGL 2: GLSL ES 3.00, which has no default precision for floats in fragment shaders */
+#define GLSL_HEADER "#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\n"
+#else
+#define GLSL_HEADER "#version 330 core"
+#endif
 /* The rules port/tools/glprobe.c proved on hardware: #version, strip layout(set/binding) on uniforms and
    samplers, gl_VertexIndex -> gl_VertexID, and layout(location) kept only where GL 3.3 core allows it
    (vertex inputs and fragment outputs). */
@@ -214,11 +233,19 @@ static char *translate(const char *src, int is_vertex) {
 #define PUSH(str) PUSHN((str), strlen(str))
     const char *p = src;
     while (*p) {
-        if (!strncmp(p, "#version 450", 12)) { PUSH("#version 330 core"); p += 12; continue; }
+        if (!strncmp(p, "#version 450", 12)) { PUSH(GLSL_HEADER); p += 12; continue; }
         if (!strncmp(p, "gl_VertexIndex", 14)) { PUSH("gl_VertexID"); p += 14; continue; }
         if (!strncmp(p, "layout(set", 10)) {
             const char *e = strchr(p, ')');
-            if (e) { p = e + 1; if (*p == ' ') p++; continue; }
+            if (e) {
+                p = e + 1;
+                if (*p == ' ') p++;
+#ifdef __EMSCRIPTEN__
+                /* a uniform BLOCK: std140, the layout the back end fills (without a qualifier GLSL ES's is "shared") */
+                if (!strncmp(p, "uniform ", 8) && strncmp(p + 8, "sampler", 7) != 0) { PUSH("layout(std140) "); }
+#endif
+                continue;
+            }
         }
         if (!strncmp(p, "layout(location", 15)) {
             const char *e = strchr(p, ')');
@@ -263,9 +290,25 @@ static char *translate(const char *src, int is_vertex) {
 static GLuint compile(GLenum stage, const char *src, const char *tag) {
     GLuint sh = glCreateShader(stage);
     GLint ok = 0;
+#ifdef __EMSCRIPTEN__
+    char *es = NULL; /* the hand-written shaders (present) carry "#version 330 core": the same header as the rest */
+    if (!strncmp(src, "#version 330 core", 17)) {
+        es = malloc(strlen(src) + sizeof(GLSL_HEADER));
+        strcpy(es, GLSL_HEADER);
+        strcat(es, src + 17);
+        src = es;
+    }
+#endif
     glShaderSource(sh, 1, &src, NULL);
     glCompileShader(sh);
     glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+#ifdef __EMSCRIPTEN__
+    if (!ok) {
+        fprintf(stderr, "bt3: gl: %s source:\n%s\n", tag, src);
+    }
+    free(es);
+    src = NULL;
+#endif
     if (!ok) {
         GLint n = 0;
         glGetShaderiv(sh, GL_INFO_LOG_LENGTH, &n);
@@ -633,9 +676,15 @@ static int gl_init(void) {
     sWindow = GsDraw_WindowCreate(1);
     if (sWindow == NULL) { return 0; }
     if (getenv("BT3_GL_TRACE") != NULL) { fprintf(stderr, "gl: the window is there\n"); }
+#ifdef __EMSCRIPTEN__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); /* WebGL 2 */
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
     if (getenv("BT3_GPU_DEBUG") != NULL) { SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); }
     if (getenv("BT3_GL_TRACE") != NULL) { fprintf(stderr, "gl: window made, creating the context\n"); }
     sCtx = SDL_GL_CreateContext(sWindow);
@@ -651,12 +700,28 @@ static int gl_init(void) {
     sHasIndexed = glEnablei != NULL && glColorMaski != NULL;
     /* Depth as the Vulkan back end has it: clip-space z in 0..w stored as z / w, and (SDL GPU's default, depth
        clip off) nothing cut at the near and far planes, the depth clamped to 0..1 instead. */
+#ifdef __EMSCRIPTEN__
+    if (getenv("BT3_GL_NOCLIPCONTROL") == NULL) {
+        glClipControl = (void (*)(GLenum, GLenum))Port_WebGLProc("glClipControl"); /* EXT_clip_control */
+    }
+#else
     if (getenv("BT3_GL_NOCLIPCONTROL") == NULL && SDL_GL_ExtensionSupported("GL_ARB_clip_control")) {
         glClipControl = (void (*)(GLenum, GLenum))SDL_GL_GetProcAddress("glClipControl");
     }
+#endif
     sHasClipControl = glClipControl != NULL;
     if (sHasClipControl) { glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE); }
+#ifdef __EMSCRIPTEN__
+    if (Port_WebGLExtension("EXT_depth_clamp")) {
+        glEnable(GL_DEPTH_CLAMP);
+    } else {
+        fprintf(stderr, "bt3: gl: no EXT_depth_clamp: geometry beyond the far plane is cut instead of clamped\n");
+    }
+    fprintf(stderr, "bt3: gl: WebGL extensions: indexed blend/mask %s, clip control %s, depth clamp %s\n",
+            glEnablei != NULL ? "yes" : "NO", sHasClipControl ? "yes" : "NO", Port_WebGLExtension("EXT_depth_clamp") ? "yes" : "NO");
+#else
     glEnable(GL_DEPTH_CLAMP);
+#endif
     if (!sHasIndexed) { fprintf(stderr, "bt3: gl: no per-attachment blend/mask (GL 3.0 indexed): the aux byte may be wrong\n"); }
 
     sMainProg[0] = make_program(kGsVertGlsl, kGsFragGlsl, "gs", sGsSamplers, 2);

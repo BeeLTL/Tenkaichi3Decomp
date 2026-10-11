@@ -174,7 +174,11 @@ WEB = ROOT / "port/build/web"
 LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000), "-sALLOW_MEMORY_GROWTH=1",
         "-sMAXIMUM_MEMORY=" + str(0x70000000), "-sSTACK_SIZE=16MB", "-sABORTING_MALLOC=0",
         "-sUSE_SDL=3", "-sMIN_WEBGL_VERSION=2", "-sMAX_WEBGL_VERSION=2",
-        "-sJSPI=1",  # the game's own loop waits for the vertical blank and for files: those waits suspend (plat_stub.c)
+        "-sJSPI=1",
+        # calls through function pointers of another type than the function (the game's callbacks, e.g.
+        # McFlow_CallDone calls every "done" callback as void(s32)): as on the PS2, missing arguments are 0, extra ones
+        # ignored, a result that is not there reads 0. Without it such a call traps (call_indirect checks the type).
+        "-sEMULATE_FUNCTION_POINTER_CASTS=1",  # the game's own loop waits for the vertical blank and for files: those waits suspend (plat_stub.c)
         "-sMODULARIZE=1", "-sEXPORT_NAME=createBt3", "-sENVIRONMENT=web",
         "-sFORCE_FILESYSTEM=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV,HEAPU8,UTF8ToString,callMain",
         "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext", "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
