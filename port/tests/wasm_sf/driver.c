@@ -18,9 +18,11 @@ uint32_t op_add(uint32_t, uint32_t), op_sub(uint32_t, uint32_t), op_mul(uint32_t
 uint32_t op_madd(uint32_t, uint32_t), op_neg(uint32_t), op_fabs(uint32_t), op_cmp(uint32_t, uint32_t), op_min(uint32_t, uint32_t);
 int32_t op_ftoi(uint32_t), op_ftos16(uint32_t), op_ftou8(uint32_t);
 uint32_t op_ftou(uint32_t), op_itof(int32_t), op_utof(uint32_t), op_s16tof(int32_t), op_u8tof(int32_t), op_pass(uint32_t, int);
+uint32_t op_kadd(uint32_t), op_ksub(uint32_t), op_kmul(uint32_t), op_kdiv(uint32_t), op_kcmp(uint32_t);
+int32_t op_kftoi(uint32_t);
 
 static const char *const kName[] = {"add", "sub", "mul", "div", "madd", "neg", "fabs", "cmp", "min", "ftoi", "ftou",
-                                    "ftos16", "ftou8", "itof", "utof", "s16tof", "u8tof", "pass"};
+                                    "ftos16", "ftou8", "itof", "utof", "s16tof", "u8tof", "pass", "const"};
 enum { N_OPS = sizeof(kName) / sizeof(kName[0]) };
 static unsigned long sTests[N_OPS], sBad[N_OPS];
 
@@ -59,6 +61,15 @@ static void single(uint32_t a) {
     check(14, a, 0, op_utof(a), __floatunsisf(a));
     check(15, a, 0, op_s16tof(v), __floatsisf((int16_t)v));
     check(16, a, 0, op_u8tof(v), __floatsisf((uint8_t)v));
+    {
+        int c1 = __ltsf2(0x3A83124Eu, a), c2 = __ltsf2(a, 0xC0C90FDAu);
+        check(18, a, 0, op_kadd(a), __addsf3(a, 0x3DCCCCCDu));
+        check(18, a, 1, op_ksub(a), __subsf3(0x41200000u, a));
+        check(18, a, 2, op_kmul(a), __mulsf3(a, 0x3FC90FDAu));
+        check(18, a, 3, op_kdiv(a), __divsf3(a, 0x40400000u));
+        check(18, a, 4, op_kcmp(a), (c1 < 0) | (c2 == 0) << 1 | (c2 > 0) << 2);
+        check(18, a, 5, (uint32_t)op_kftoi(a), (uint32_t)__fixsfsi(__mulsf3(a, 0x41200000u)));
+    }
     check(17, a, 0, op_pass(a, 1), a);
     check(17, a, 0, op_pass(a, 0), a ^ 1);
 }

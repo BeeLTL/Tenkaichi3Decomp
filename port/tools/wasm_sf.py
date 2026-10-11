@@ -28,7 +28,10 @@ BIN = {"fadd": "__addsf3", "fsub": "__subsf3", "fmul": "__mulsf3", "fdiv": "__di
 CMP = {"oeq": "eq", "ueq": "eq", "one": "ne", "une": "ne", "olt": "slt", "ult": "slt", "ole": "sle", "ule": "sle",
        "ogt": "sgt", "ugt": "sgt", "oge": "sge", "uge": "sge", "ord": True, "uno": False, "true": True, "false": False}
 FMF = r"(?:(?:fast|nnan|ninf|nsz|arcp|contract|afn|reassoc)\s+)*"
-VAL = r"(%[-\w.$]+|%\"[^\"]*\"|[-+0-9.eE]+|0x[0-9A-Fa-f]+|undef|poison|zeroinitializer)"
+# an operand: a value name or any constant spelling (1.0e+00, 0x3FF0000000000000, f0x3F800000 in newer LLVM, ...)
+VAL = r"(%[-\w.$]+|%\"[^\"]*\"|[^\s,%][^\s,]*)"
+# after the rewrite no float instruction may be left: one that is was not understood by the rules
+RE_LEFT = re.compile(r"= (fadd|fsub|fmul|fdiv|frem|fcmp)\b[^=]*\bfloat\b|= (fptosi|fptoui) [^=]*\bfloat\b|= (sitofp|uitofp) .* to float\b")
 RE_BIN = re.compile(rf"^(\s*)(%[-\w.$]+) = (fadd|fsub|fmul|fdiv) {FMF}float {VAL}, {VAL}(.*)$")
 RE_CMP = re.compile(rf"^(\s*)(%[-\w.$]+) = fcmp {FMF}(\w+) float {VAL}, {VAL}(.*)$")
 RE_F2I = re.compile(rf"^(\s*)(%[-\w.$]+) = (fptosi|fptoui) float {VAL} to i(\d+)(.*)$")
@@ -104,6 +107,9 @@ def fix(text):
         if RE_BAD.search(line):
             bad.append((no, line.strip()))
         out.append(line)
+    for no, line in enumerate(out, 1):  # the safety net (line numbers of the output)
+        if RE_LEFT.search(line):
+            bad.append((no, line.strip()))
     text = "\n".join(out)
     for fn in sorted(used):  # declarations, unless the module declares or defines the routine itself
         if not re.search(rf"^(declare|define)\b[^\n]*@{fn}\(", text, re.M):

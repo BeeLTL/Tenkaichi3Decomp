@@ -24,6 +24,17 @@ uint32_t op_cmp(uint32_t a, uint32_t b) {
 }
 uint32_t op_min(uint32_t a, uint32_t b) { return U(F(a) < F(b) ? F(a) : F(b)); } /* select on a comparison */
 
+/* constant operands (the game's code is full of them; LLVM spells them differently from values) */
+uint32_t op_kadd(uint32_t a) { return U(F(a) + 0x1.99999ap-4f); }  /* 0x3DCCCCCD */
+uint32_t op_ksub(uint32_t a) { return U(0x1.4p+3f - F(a)); }       /* 0x41200000 - a */
+uint32_t op_kmul(uint32_t a) { return U(F(a) * 0x1.921fb4p+0f); }  /* 0x3FC90FDA */
+uint32_t op_kdiv(uint32_t a) { return U(F(a) / 0x1.8p+1f); }       /* 0x40400000 */
+uint32_t op_kcmp(uint32_t a) {
+    float x = F(a);
+    return (0x1.06249cp-10f < x) | (x == -0x1.921fb4p+2f) << 1 | (x > -0x1.921fb4p+2f) << 2; /* 0x3A83124E, 0xC0C90FDA */
+}
+int32_t op_kftoi(uint32_t a) { return (int32_t)(F(a) * 0x1.4p+3f); }
+
 /* conversions */
 int32_t op_ftoi(uint32_t a) { return (int32_t)F(a); }
 uint32_t op_ftou(uint32_t a) { return (uint32_t)F(a); }

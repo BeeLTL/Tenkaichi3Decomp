@@ -6,7 +6,9 @@
     BT3_CC=win64     64-bit Windows                             -> port/build/bt3.exe
                      On Linux: cross-compiled (mingw-w64: x86_64-w64-mingw32-gcc, clang with the mingw target; SDL3's
                      mingw development package unpacked under port/build/win or named by BT3_SDL3).
-                     On Windows: in the MSYS2 CLANG64 or UCRT64/MINGW64 shell, with that shell's own tools."""
+                     On Windows: in the MSYS2 CLANG64 or UCRT64/MINGW64 shell, with that shell's own tools.
+    BT3_CC=wasm      WebAssembly (Emscripten) for the browser       -> port/build/web/bt3.js
+                     Built by port/tools/wasm_build.py, not by undefined.py / link.py; see BROWSER_PORT_STATUS.md."""
 import os, pathlib, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -18,7 +20,8 @@ PREFIX = "x86_64-w64-mingw32-" if WIN and not ON_WINDOWS else ""
 CLANG_TARGET = ["--target=x86_64-w64-mingw32"] if WIN else []
 OBJ = ROOT / ("port/build/obj" if VARIANT == "gcc" else "port/build/obj_" + VARIANT)
 DATA = ROOT / ("port/build/obj_data" if not BITS64 else "port/build/obj_data64" if not WIN else "port/build/obj_data_win64")
-EXE = ROOT / "port/build" / {"gcc": "bt3", "clang64": "bt3_64", "win64": "bt3.exe"}.get(VARIANT, "bt3_" + VARIANT)
+EXE = ROOT / "port/build" / {"gcc": "bt3", "clang64": "bt3_64", "win64": "bt3.exe", "wasm": "web/bt3.js"}.get(VARIANT, "bt3_" + VARIANT)
+WASM = VARIANT == "wasm"
 
 def sdl3():
     """The folder with SDL3's include/ and lib/ for the Windows build, or None when the compiler finds it itself."""
