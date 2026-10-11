@@ -1736,3 +1736,11 @@ seen on screen by me.
 **Quick match between two networks, seen once** (2026-10-11, the user, 0.1.27's code): while trying the search timer
 he was put with another player who was searching; the match "felt fine at 180 ping" (rollback of up to 8 frames,
 the measured input delay). Not known: whether that connection was direct or through the relay, and the delay chosen.
+
+**The log printed the other player's address** (asked by the user: "does the log leak ip?"). The copy that joins
+wrote "net: joining <address>:<port>" for every match, also when the address was the host's as the matchmaking
+service gave it (a room code, a quick match): a stranger's public address in a log that gets pasted into bug
+reports. In releases 0.1.11 to 0.1.27. Now the address is printed only when the player typed it (Join by
+address); otherwise the line says the host was found by the service. Checked: both logs of a room-code match
+between two copies hold no address at all. The crash report has none either (it never had). Not printed anywhere:
+the player's own address.

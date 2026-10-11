@@ -602,7 +602,13 @@ static void net_start(int role, const char *host, const char *join) {
             local.sin_port = htons((uint16_t)sCodeLocalPort);
             bind(sSock, (struct sockaddr *)&local, sizeof(local));
         }
-        fprintf(stderr, "bt3: net: joining %s (player 2)...\n", join);
+        /* The address is only printed when the player typed it. One that came from the matchmaking service (a
+           room code, a quick match) is the other player's, and logs get pasted into bug reports. */
+        if (sCodeLocalPort != 0) {
+            fprintf(stderr, "bt3: net: joining the host found by the matchmaking service (player 2)...\n");
+        } else {
+            fprintf(stderr, "bt3: net: joining %s (player 2)...\n", join);
+        }
     }
     t0 = SDL_GetTicksNS();
     while (!sConnected) {
