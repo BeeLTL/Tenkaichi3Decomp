@@ -3648,6 +3648,15 @@ static void interp_cost(uint64_t ns) {
     static int said;
     int was = sInterpCap;
 
+    {   /* Not the first pictures of a run: they create the pipelines and load what the first screens need, and
+           took long enough on any machine to switch the in-between pictures off for a moment and say so (seen in
+           the user's log on a fast graphics card: "shows a picture in 12.0 ms" at the logos). */
+        static unsigned seen;
+        if (seen < 300) {
+            seen++;
+            return;
+        }
+    }
     if (ns > 100000000ull) { /* (one long pause, a load or a stall, does not count for more than this) */
         ns = 100000000ull;
     }

@@ -103,6 +103,7 @@ static int sCodeLocalPort, sCodePunchSet;
    closed port, the system answers "unreachable", and a relay stops passing that player's packets on (seen with
    Cloudflare's: the match's greeting never arrived). It also keeps the routers' view of the conversation whole. */
 static int sHandSock = -1, sFromLobby;
+int Port_LobbyRelayed(void);
 static struct sockaddr_in sCodePunch;
 
 /* The match's rules, chosen by the host in the lobby window (the game's own versus menu is not shown in a session):
@@ -688,7 +689,8 @@ static void net_start(int role, const char *host, const char *join) {
         memcpy(sIn[1][i], kIdle, PAD);
     }
     sHave[0] = sHave[1] = (uint32_t)sDelay + 1;
-    fprintf(stderr, "bt3: net: connected; input delay %d blanks, %s\n", sDelay, sRollMax > 0 ? "rollback" : "waiting for each other");
+    fprintf(stderr, "bt3: net: connected%s; input delay %d blanks, %s\n", sFromLobby && Port_LobbyRelayed() ? " through the relay" : sFromLobby ? " directly" : "", sDelay,
+            sRollMax > 0 ? "rollback" : "waiting for each other");
     if (sOpts[0] != 0 && sOpts[1] != 0) {
         fprintf(stderr, "bt3: net: each player's own options: player 1 camera %u shake %u, player 2 camera %u shake %u\n", (unsigned)(sOpts[0] & 0xFF),
                 (unsigned)(sOpts[0] >> 8 & 0xFF), (unsigned)(sOpts[1] & 0xFF), (unsigned)(sOpts[1] >> 8 & 0xFF));
