@@ -255,6 +255,44 @@ and the engine's own check stops with its native message ("the game's programs i
 unmodified USA release (SLUS-21678)"). With no data folder at all, the page says so before starting.
 **Not yet run: `main`.** That needs the real data.
 
+### FIRST BOOT IN THE BROWSER (2026-10-11): the engine initialises and runs the boot sequence — VERIFIED
+Data: the user's own ISO (`C:\project\Tenkaichi3Web\bt3.iso`, volume SLUS_21678), unpacked outside the repository
+with the repository's tool: `python Tenkaichi3Decomp/port/tools/extract_disc.py bt3.iso gamedata` (21 s; PZS3US0 1
+file, PZS3US1 3,399, PZS3US2 65,201; 68,611 files in all, as the native notes count). `DBZP.BIN` SHA-1
+4f910969e05d9b25c83af7642b60da9949a4348b and `SLUS_216.78` as the installer's flat image caee6c2269bba89fc51eea9e7beac3adbec9dc52:
+both equal `config/*.yaml`.
+
+```
+python port/web/devserver.py --port 8080 --mount gamedata=C:/project/Tenkaichi3Web/gamedata
+#   http://127.0.0.1:8080/index.html   (?autostart=1, ?report=<name>, ?env=BT3_...=...)
+```
+Run 1 (`boot1`): `main` ran, `Game_Main`'s initialisation went through into `Progress_Main -> FirstRun_Main ->
+BootCard_Run`; two failures, both of the expected kinds:
+- `bt3: gl: missing GL entry point glEnablei`: WebGL 2 has the per-attachment functions only as
+  `OES_draw_buffers_indexed`. Fixed: `port/src/web/web_gl.c` + browser branches in `gs_gl.c` (ES 3.0 context, GLSL ES
+  3.00 header with precisions, `std140` on uniform blocks, `EXT_clip_control`, `EXT_depth_clamp`).
+- `RuntimeError: function signature mismatch` in `McFlow_CallDone` (every "done" callback called as `void(s32)`): a
+  call through a pointer of another type. Fixed for all such calls: `-sEMULATE_FUNCTION_POINTER_CASTS=1` (missing
+  arguments 0, extra ignored, absent result 0: the PS2's behaviour). Its speed cost is not measured yet.
+
+Run 2 (`boot2`, built-in Chromium 152, this machine): log
+```
+bt3: display 1: 1, 1920 x 1080
+bt3: internal resolution 2x (1024 x 896)
+bt3: GL renderer: WebKit WebGL (OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium)))
+bt3: gl: WebGL extensions: indexed blend/mask yes, clip control yes, depth clamp yes
+bt3: sound: emscripten
+```
+All shaders compiled. Seen on the canvas (screenshots): the Funimation logo, the Spike logo, the game's logo, then
+the opening movie (MPEG-2 through `plat_mpeg2.c`, read on demand). Module instantiation 29 ms; memory 384 MB at start,
+553 MB during the movie. Data after ~30 s: 10 files, 89 requests, 17.9 MB fetched, 5,570 cache hits / 66 misses,
+0 errors.
+
+**Milestone reached:** the real engine initialises in the browser from the user's data and runs its boot sequence
+(no ISO picker; the data is served by the local server). Not verified yet: sound actually audible (the page was
+started without a click, so the browser may keep audio suspended), input, the title screen and menus, a battle,
+frame rate, saves.
+
 ## 5. Log
 
 - 2026-10-11 (1): repository identified, audit above, Emscripten installed. Blocked by the session folder's long path.
@@ -265,19 +303,12 @@ unmodified USA release (SLUS-21678)"). With no data folder at all, the page says
 - 2026-10-11 (3): platform code, data tables, signature repair, link, data on demand, page; tested without game
   data. Commits e9cc31c, 2e5805c, 79be83e, 14b9b22.
 
-## 6. Blockers and next milestone
+- 2026-10-11 (4): the user's ISO unpacked and verified; first boot in the browser: logos and opening movie.
+  Commit b101a5e.
 
-**Blocker for the initialisation milestone: the game data.** The next test runs `main`, which needs the real
-`gamedata/` (the native integrity check refuses anything else, as it should). Plan once the ISO is supplied:
-`7z` (installed via scoop) + `port/tools/extract_disc.py <iso> C:\project\Tenkaichi3Web\gamedata` (outside the
-repository, never committed), then `devserver.py --mount gamedata=C:/project/Tenkaichi3Web/gamedata` and the page.
+## 6. Next milestone
 
-Next milestone: **the engine initialises in the browser** — `Game_Main`'s initialisation list completes and the
-first frames run (the native notes list it: heap, graphics, sound, files, movie, common data, save, jobs, vector
-unit, DMA buffers, pad, memory card, fonts, fade), shown by the engine's own log and `gPortStage`. Expected next
-problems, in the order they would appear: a trap in a call through a mismatched function pointer; a library stub
-reached; something the engine reads before the page's data loader is attached; the scratchpad snapshot in
-`gs/state.c` (0x70000000 is outside memory on purpose).
-
-Not started: saves and settings persistence (IndexedDB), canvas resizing / fullscreen, input and audio checks in the
-browser, movie playback check, manifest generation, persistent cache, WebGPU evaluation, performance.
+**Title screen and menus with input and sound**: press START at the title (keyboard, then a gamepad), reach the main
+menu, confirm audio after a click, measure the frame rate (`BT3_GS_VERBOSE=1` prints work per frame and pacing).
+Then character select and a battle. Still not started: saves and settings persistence (IndexedDB), canvas resizing /
+fullscreen, manifest generation, persistent cache, the speed cost of the pointer-cast emulation, WebGPU evaluation.
