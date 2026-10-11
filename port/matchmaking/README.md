@@ -18,6 +18,29 @@ The table `rooms`, one row per room (rows older than ten minutes are removed whe
 | `host_name`, `join_name` | the players' names |
 | `host_addrs`, `join_addrs` | JSON: the addresses each game can be reached at ("ip:port"), best first |
 
+| `queue` | a quick-match room: which queue it waits in (`S`, `T`, `D10`, `D15`, `D20`); empty for a room with a code to hand on |
+| `who` | a quick-match room: a random text the host's game made up for this run, so that a room it left behind is not given back to it |
+
+## Quick match (from 0.1.27)
+
+A player who searches a queue is put with whoever waits longest in it, or, if nobody does, gets a room of their own
+in that queue and waits there exactly as a host with a room code does (the same `poll`, `addrs`, `leave`; the same
+relay rules and ceilings). Five queues: single battle, team battle, DP battle of 10, 15 and 20 DP; the game gives
+all of them no time limit. A room lasts ten minutes; the game searches again by itself when it runs out. Limits:
+60 searches an hour from one address, and the four open rooms per address that hosting has. One relay login is
+asked for per search, not per room: a search that starts again says it holds a relay address already.
+
+**Updating a Worker that is already set up** (in this order, so that nothing is refused in between):
+
+1. D1 -> `bt3-rooms` -> Console. Run these two lines, one at a time:
+   `ALTER TABLE rooms ADD COLUMN queue TEXT;`
+   `ALTER TABLE rooms ADD COLUMN who TEXT;`
+2. The Worker -> Edit code: replace everything with the new `worker.js`, Deploy.
+
+Older releases of the game are not affected: they do not send the new request, and rooms with codes work as before.
+Until the Worker is updated, a game that has the Quick match tab says "The matchmaking service does not know quick
+match yet." when a search is started.
+
 ## What it keeps
 
 For at most ten minutes per room: the room code, the two player names, the addresses each game reported about

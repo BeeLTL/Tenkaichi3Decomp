@@ -1249,6 +1249,8 @@ int Port_LobbyStart(int host, const char *address, int port) {
     return sLobby;
 }
 
+static int sQuickQueue = -1; /* Port_LobbyStartQuick: the search that Port_LobbyStartCode starts is a quick match in this queue */
+
 int Port_LobbyStartCode(int host, const char *code) {
     struct sockaddr_in local;
     socklen_t len = sizeof(local);
@@ -1270,9 +1272,24 @@ int Port_LobbyStartCode(int host, const char *code) {
     sLobby = 3;
     Relay_Close(-1);
     sCodeVia = 0;
-    Match_Begin(sLobbyRole, sSock, sCodeLocalPort, code, sMyName, NET_VERSION);
+    Match_Begin(sQuickQueue >= 0 ? 3 : sLobbyRole, sSock, sCodeLocalPort, sQuickQueue >= 0 ? kMatchQueues[sQuickQueue] : code, sMyName, NET_VERSION);
     return sLobby;
 }
+
+/* A quick match in one of the queues (net_match.h: kMatchQueues). Whether this player hosts or joins is the
+   service's choice, known when it answers (Port_LobbyPoll takes it from there). */
+int Port_LobbyStartQuick(int queue) {
+    if (queue < 0 || queue >= MATCH_QUEUES) {
+        return -1;
+    }
+    sQuickQueue = queue;
+    Port_LobbyStartCode(1, "");
+    sQuickQueue = -1;
+    return sLobby;
+}
+
+void Port_LobbyQueuesAsk(void) { Match_QueuesAsk(NET_VERSION); }
+int Port_LobbyQueueWaiting(int queue) { return Match_QueueWaiting(queue); }
 
 void Port_LobbyCancel(void) {
     if (sCodeMode) {
@@ -1302,6 +1319,9 @@ int Port_LobbyPoll(void) {
             Relay_Tick(sSock); /* (the relay address is kept while the room waits; the thread is done with the socket) */
         }
         snprintf(sCodeText, sizeof(sCodeText), "%s", st.code);
+        if (st.role != 0) {
+            sLobbyRole = st.role; /* (a quick match: host or joiner, as the service decided) */
+        }
         if (st.state == -1) {
             snprintf(sCodeError, sizeof(sCodeError), "%s", st.error);
             sLobby = -3;
@@ -1417,7 +1437,17 @@ void Port_LobbyAuto(void) {
     }
     if (!begun) {
         begun = 1;
-        Port_LobbyStartCode(strncmp(what, "join:", 5) != 0, strncmp(what, "join:", 5) == 0 ? what + 5 : "");
+        if (strncmp(what, "quick:", 6) == 0) { /* BT3_LOBBY=quick:<queue>: a quick match (S, T, D10, D15, D20) */
+            int q, type, dp;
+            for (q = 0; q < MATCH_QUEUES && strcmp(what + 6, kMatchQueues[q]) != 0; q++) {
+            }
+            type = q == 0 ? 0 : q == 1 ? 1 : 2;
+            dp = q >= 2 ? q - 2 : 0;
+            Port_NetRulesSet(type, dp, 4); /* (a queue's rules: its battle type, no time limit) */
+            Port_LobbyStartQuick(q);
+        } else {
+            Port_LobbyStartCode(strncmp(what, "join:", 5) != 0, strncmp(what, "join:", 5) == 0 ? what + 5 : "");
+        }
     }
     now = Port_LobbyPoll();
     if (now != state || (!coded && Port_LobbyCode()[0] != '\0')) {

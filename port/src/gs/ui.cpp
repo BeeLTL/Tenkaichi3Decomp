@@ -49,6 +49,9 @@ extern int gsInterp;                           // gs_draw.c: in-between pictures
 void Port_SettingsWrite(void);
 int Port_LobbyStart(int host, const char *address, int port); // gs/net.c
 int Port_LobbyStartCode(int host, const char *code);         // the same with a room code (the matchmaking service)
+int Port_LobbyStartQuick(int queue);                         // a quick match: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20
+void Port_LobbyQueuesAsk(void);                              // asks the service how many wait in each queue
+int Port_LobbyQueueWaiting(int queue);                       // ... as last heard, -1 if not known
 const char *Port_LobbyCode(void);                            // the host's room code, "" until it is known
 const char *Port_LobbyError(void);                           // why the matchmaking failed (state -3)
 int Port_LobbyRelayed(void);                                 // the other player was reached through the relay
@@ -382,6 +385,42 @@ static void net_open(void) {
     gPortInputCapture = 1; // the game takes no input at all while this is open (it sits on the main menu behind it)
 }
 
+// Quick match (the third tab of the online screen): what stands under the queues.
+static bool sNetBusy;   // the lobby is waiting or connecting
+static int sQueue = -1; // the queue chosen: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20 DP
+
+static void quick_status(int state, int &lastState, const char *name) {
+    if (state == 3 || state == 1) {
+        ImGui::TextUnformatted(state == 1 ? "Found a player. Connecting..." : "Searching for a player in this queue...");
+        if (state == 3) {
+            ImGui::TextDisabled("This waits for as long as you do. Leave the window open.");
+        }
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+            Port_LobbyCancel();
+            lastState = 0;
+        }
+        return;
+    }
+    if (lastState == -3) {
+        ImGui::TextWrapped("%s", Port_LobbyError());
+    } else if (lastState == -4) {
+        ImGui::TextWrapped("The two games could not reach each other, directly or through the relay. Search again for another player.");
+    } else if (lastState == -2) {
+        ImGui::TextWrapped("The other player's game is a different version. Search again.");
+    }
+    if (ImGui::Button("Search for a match", ImVec2(200.0f, 0.0f))) {
+        int delay = Port_Setting("net_delay2", -1);
+        // (whoever turns out to be the host: its saved rollback and input delay; the queue's rules, no time limit)
+        Port_NetOptions(Port_RollCan() ? Port_Setting("net_rollback2", 8) : 0, delay < 0 ? -2 : delay);
+        Port_NetRulesSet(sQueue == 0 ? 0 : sQueue == 1 ? 1 : 2, sQueue >= 2 ? sQueue - 2 : 0, 4);
+        Port_NetNameSet(name);
+        Port_SettingSave("net_queue", sQueue);
+        Port_SettingsWrite();
+        lastState = 0;
+        Port_LobbyStartQuick(sQueue);
+    }
+}
+
 static void build_net(void) {
     static char name[17] = "Player", address[64] = "", port[8] = "7000";
     static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3;
@@ -459,6 +498,36 @@ static void build_net(void) {
                 ImGui::TextDisabled("The host's choices apply to both players.");
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Quick match")) {
+                static const char *const kQueue[] = {"Single battle", "Team battle", "DP battle (10 DP)", "DP battle (15 DP)", "DP battle (20 DP)"};
+                static Uint64 asked;
+                bool busy = sNetBusy; // (a search is under way: the queue is not changed under it)
+                tab = 2;
+                if (sQueue < 0) {
+                    sQueue = Port_Setting("net_queue", 0);
+                    if (sQueue < 0 || sQueue > 4) { sQueue = 0; }
+                }
+                if (asked == 0 || SDL_GetTicks() - asked > 10000) { // how many wait: asked every ten seconds while this is shown
+                    asked = SDL_GetTicks() + 1;
+                    Port_LobbyQueuesAsk();
+                }
+                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit.");
+                ImGui::BeginDisabled(busy);
+                for (int i = 0; i < 5; i++) {
+                    char label[80];
+                    int n = Port_LobbyQueueWaiting(i);
+                    if (n < 0) {
+                        snprintf(label, sizeof(label), "%s", kQueue[i]);
+                    } else {
+                        snprintf(label, sizeof(label), "%s   (%d searching)###q%d", kQueue[i], n, i);
+                    }
+                    ImGui::RadioButton(label, &sQueue, i);
+                }
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("The two games connect to each other directly when they can, as in most online fighting");
+                ImGui::TextDisabled("games: a player who inspects their own network traffic can see the other's address.");
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Join")) {
                 tab = 1;
                 ImGui::SetNextItemWidth(120.0f);
@@ -477,6 +546,7 @@ static void build_net(void) {
         ImGui::Spacing();
         {
             int state = Port_LobbyPoll();
+            sNetBusy = state == 1 || state == 3;
             if (state == 2) {
                 Port_LobbyLaunch(); // the other player is there: the game turns into the session at its next blank
                 set_open(false);
@@ -486,7 +556,9 @@ static void build_net(void) {
             if (state != 0) {
                 lastState = state;
             }
-            if (state == 3 || (state == 1 && byCode)) { // a room code: asking the service, then reaching the other player
+            if (tab == 2) {
+                quick_status(state, lastState, name);
+            } else if (state == 3 || (state == 1 && byCode)) { // a room code: asking the service, then reaching the other player
                 if (tab == 0 && Port_LobbyCode()[0] != '\0') {
                     ImGui::TextUnformatted("Room code:");
                     ImGui::SameLine();

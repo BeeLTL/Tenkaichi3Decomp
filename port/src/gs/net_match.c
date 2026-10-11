@@ -38,8 +38,24 @@ static struct {
     SDL_AtomicInt cancel, gen; /* gen: which search is the current one (a thread of an earlier one writes nothing) */
     MatchStatus st;
     int role, sock, localPort, version;
-    char code[8], name[20];
+    char code[8], name[20]; /* (role 3, a quick match: `code` is the queue's name until the service gives a room) */
+    char queue[8];
 } sM;
+
+/* Quick match: what this game calls itself to the service (so that a room it left behind is not given back to
+   it): sixteen letters made up once per run. */
+static const char *match_who(void) {
+    static char who[20];
+    if (who[0] == '\0') {
+        int i;
+        SDL_srand(SDL_GetTicksNS() ^ (Uint64)(uintptr_t)&who);
+        for (i = 0; i < 16; i++) {
+            who[i] = (char)('a' + SDL_rand(26));
+        }
+        who[16] = '\0';
+    }
+    return who;
+}
 
 static SDL_TLSID sMine; /* the thread's own search number */
 #define STOPPED() (SDL_GetAtomicInt(&sM.cancel) || (int)(intptr_t)SDL_GetTLS(&sMine) != SDL_GetAtomicInt(&sM.gen))
@@ -349,8 +365,8 @@ static int lan_address(int localPort, char *out, size_t size) {
 /* ---- the thread ---- */
 
 static int SDLCALL match_thread(void *arg) {
-    char pub[64] = "", lan[64] = "", addrs[160], body[512], answer[1024], key[40] = "", you[64] = "", name[20];
-    int i, n = 0;
+    char pub[64] = "", lan[64] = "", addrs[160], body[512], answer[1024], key[40] = "", you[64] = "", name[20], relayAddr[64] = "";
+    int i, n = 0, hosting, searches = 0;
 
     SDL_SetTLS(&sMine, arg, NULL);
     for (i = 0; sM.name[i] != '\0' && n < (int)sizeof(name) - 1; i++) { /* (a name that needs no escaping) */
@@ -375,20 +391,61 @@ static int SDLCALL match_thread(void *arg) {
         set_state(-1, "This computer's address could not be found (no network?).");
         return 0;
     }
-    if (sM.role == 1) {
-        SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"name\":\"%s\",\"addrs\":[%s]}", sM.version, name, addrs);
-        if (!http_post("host", body, answer, sizeof(answer))) {
+again:
+    hosting = sM.role == 1;
+    if (sM.role == 3) {
+        /* A quick match: the service puts this player with whoever waits longest in the queue (then this is the
+           one who joins), or gives it a room of its own in the queue to wait in (then it is the host). A room
+           lasts ten minutes; when it runs out the search simply starts again. */
+        MatchStatus st;
+        SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"name\":\"%s\",\"addrs\":[%s],\"queue\":\"%s\",\"who\":\"%s\"%s}", sM.version, name, addrs, sM.queue,
+                     match_who(), relayAddr[0] != '\0' ? ",\"relay\":false" : "");
+        if (!http_post("quick", body, answer, sizeof(answer))) {
             set_state(-1, "The matchmaking service could not be reached (is the network up?).");
             return 0;
         }
         if (STOPPED()) {
             return 0;
         }
+        searches++;
+        SDL_memset(&st, 0, sizeof(st));
+        if (SDL_strstr(answer, "\"role\":\"join\"") != NULL && json_peer(answer, &st)) {
+            SDL_LockMutex(sM.lock);
+            SDL_strlcpy(sM.st.peerName, st.peerName, sizeof(sM.st.peerName));
+            SDL_memcpy(sM.st.peerAddr, st.peerAddr, sizeof(st.peerAddr));
+            sM.st.peerCount = st.peerCount;
+            sM.st.role = 2;
+            sM.st.state = 3;
+            SDL_UnlockMutex(sM.lock);
+            return 0;
+        }
+        if (SDL_strstr(answer, "\"role\":\"host\"") == NULL) {
+            set_state(-1, SDL_strstr(answer, "busy") != NULL ? "Too many searches from this address; try again in a few minutes." :
+                          SDL_strstr(answer, "bad request") != NULL || SDL_strstr(answer, "error") != NULL ? "The matchmaking service does not know quick match yet." :
+                          "The matchmaking service gave no answer.");
+            return 0;
+        }
+        hosting = 1;
+    }
+    if (hosting) {
+        if (sM.role == 1) {
+            SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"name\":\"%s\",\"addrs\":[%s]}", sM.version, name, addrs);
+            if (!http_post("host", body, answer, sizeof(answer))) {
+                set_state(-1, "The matchmaking service could not be reached (is the network up?).");
+                return 0;
+            }
+            if (STOPPED()) {
+                return 0;
+            }
+        }
         if (!json_str(answer, "code", sM.code, sizeof(sM.code)) || !json_str(answer, "key", key, sizeof(key))) {
             set_state(-1, SDL_strstr(answer, "busy") != NULL ? "Too many rooms from this address; try again in a few minutes." : "The matchmaking service gave no room.");
             return 0;
         }
-        {
+        if (relayAddr[0] != '\0') { /* (a search begun again: the relay address it holds already goes with the new room) */
+            SDL_snprintf(body, sizeof(body), "{\"code\":\"%s\",\"key\":\"%s\",\"addrs\":[%s,\"relay=%s\"]}", sM.code, key, addrs, relayAddr);
+            http_post("addrs", body, answer, sizeof(answer));
+        } else {
             /* A relay address, if the service gives access to one: published with the others, for a player who
                cannot reach this one directly. The code is shown only after this, so nobody joins before. */
             char server[128], user[160], pass[160], relay[64];
@@ -401,6 +458,7 @@ static int SDLCALL match_thread(void *arg) {
                 json_str(answer, "credential", pass, sizeof(pass)) && Relay_Allocate(sM.sock, server, user, pass, relay, sizeof(relay)) && !STOPPED()) {
                 SDL_snprintf(body, sizeof(body), "{\"code\":\"%s\",\"key\":\"%s\",\"addrs\":[%s,\"relay=%s\"]}", sM.code, key, addrs, relay);
                 http_post("addrs", body, answer, sizeof(answer));
+                SDL_strlcpy(relayAddr, relay, sizeof(relayAddr));
             }
         }
         if (STOPPED()) {
@@ -410,6 +468,8 @@ static int SDLCALL match_thread(void *arg) {
         }
         SDL_LockMutex(sM.lock);
         SDL_strlcpy(sM.st.code, sM.code, sizeof(sM.st.code)); /* (shown from here on) */
+        sM.st.role = 1;
+        sM.st.searches = searches;
         sM.st.state = 2;
         SDL_UnlockMutex(sM.lock);
         SDL_snprintf(body, sizeof(body), "{\"code\":\"%s\",\"key\":\"%s\"}", sM.code, key);
@@ -446,6 +506,10 @@ static int SDLCALL match_thread(void *arg) {
         if (STOPPED()) {
             http_post("leave", body, answer, sizeof(answer));
             return 0;
+        }
+        if (sM.role == 3) { /* (a quick match waits for as long as the player does) */
+            http_post("leave", body, answer, sizeof(answer));
+            goto again;
         }
         set_state(-1, "Nobody joined: the room code has run out. Host again for a new one.");
     } else {
@@ -510,11 +574,57 @@ void Match_Begin(int role, int sock, int localPort, const char *code, const char
         }
     }
     sM.code[n] = '\0';
+    SDL_strlcpy(sM.queue, role == 3 ? sM.code : "", sizeof(sM.queue));
     SDL_strlcpy(sM.name, name != NULL ? name : "Player", sizeof(sM.name));
     sM.thread = SDL_CreateThread(match_thread, "bt3-match", (void *)(intptr_t)SDL_GetAtomicInt(&sM.gen));
     if (sM.thread == NULL) {
         set_state(-1, "The matchmaking could not be started.");
     }
+}
+
+/* ---- how many wait in each quick-match queue (for the window): asked in a thread of its own, now and then ---- */
+static SDL_AtomicInt sQueueCount[MATCH_QUEUES], sQueueBusy;
+static int sQueueVersion;
+const char *const kMatchQueues[MATCH_QUEUES] = {"S", "T", "D10", "D15", "D20"};
+
+static int SDLCALL queues_thread(void *arg) {
+    char body[64], answer[512];
+    int i;
+
+    (void)arg;
+    SDL_snprintf(body, sizeof(body), "{\"v\":%d}", sQueueVersion);
+    if (http_post("queues", body, answer, sizeof(answer)) && SDL_strstr(answer, "\"waiting\"") != NULL) {
+        for (i = 0; i < MATCH_QUEUES; i++) {
+            char key[16];
+            const char *p;
+            SDL_snprintf(key, sizeof(key), "\"%s\":", kMatchQueues[i]);
+            p = SDL_strstr(answer, key);
+            SDL_SetAtomicInt(&sQueueCount[i], p != NULL ? SDL_atoi(p + SDL_strlen(key)) + 1 : 0);
+        }
+    }
+    SDL_SetAtomicInt(&sQueueBusy, 0);
+    return 0;
+}
+
+/* Asks the service (nothing happens if an answer is still on its way). */
+void Match_QueuesAsk(int version) {
+    SDL_Thread *t;
+    if (SDL_GetAtomicInt(&sQueueBusy)) {
+        return;
+    }
+    SDL_SetAtomicInt(&sQueueBusy, 1);
+    sQueueVersion = version;
+    t = SDL_CreateThread(queues_thread, "bt3-queues", NULL);
+    if (t == NULL) {
+        SDL_SetAtomicInt(&sQueueBusy, 0);
+    } else {
+        SDL_DetachThread(t);
+    }
+}
+
+/* Players waiting in queue i as last heard, -1 if not known. */
+int Match_QueueWaiting(int i) {
+    return i >= 0 && i < MATCH_QUEUES ? SDL_GetAtomicInt(&sQueueCount[i]) - 1 : -1;
 }
 
 /* Where it stands. */

@@ -1696,3 +1696,28 @@ picture and has no other clock; a machine that needs longer than a tick to show 
 - It only helps where showing is what takes the time. Where computing the tick is too slow, nothing is gained.
   Not checked: on a display by anyone, in an online match, with Smooth motion on, on Windows.
 - (Also: the "(F11)" beside "Full screen" had ended up beside "V-sync" in 0.1.25; put back.)
+
+## Quick match: queues by battle type (2026-10-11)
+
+Asked for by the user: "matchmaking where it searches for people queuing". Decided with him: five queues (single,
+team, DP battle of 10 / 15 / 20 DP), all without a time limit; the longest-waiting player first; connected as rooms
+with codes are (directly when the two can reach each other, through the relay when not), with a line in the window
+saying that a direct connection lets the other player see one's address.
+
+- **Service** (port/matchmaking/worker.js): `/v1/quick {v, name, addrs, queue, who}` joins the caller to the
+  oldest unjoined room of that queue and netcode version, or makes it a room there; `/v1/queues` counts who waits.
+  Two who search in the same moment both find nobody and both make a room: the one whose room came second (by
+  rowid) sees the first, gives its own up and joins. The room table has two more columns (`queue`, `who`); the
+  README there says how a Worker that runs is updated. Its tests (test.mjs, 11 new) pass under Node 24.
+- **Game**: `Match_Begin(3, ...)` in net_match.c (the thread goes on as a host or reports the peer as a joiner; a
+  room that runs out is given up and the search starts again, keeping its relay address), `Port_LobbyStartQuick`
+  in net.c (the lobby takes host or joiner from the service's answer), the tab "Quick match" in the online
+  screen (ui.cpp): the queues with how many search each, Search / Cancel. Whoever becomes the host uses its saved
+  rollback and input delay; the rules are the queue's. BT3_LOBBY=quick:<queue> for tests.
+- Checked on this machine with the Worker behind a local server and its test database (BT3_MATCH_URL): one copy
+  searches DP 15 and waits, a second searching the same queue eight seconds later is put with it, they connect
+  directly with rollback and both log "DP battle (15), time limit none". Against the Worker as deployed today
+  (not updated yet): rooms with codes work as before, a search says the service does not know quick match yet.
+- Not checked: the Worker on Cloudflare with its real database (the `rowid` tie-break and the two ALTER TABLE
+  lines among it), the window itself (nobody has looked at the tab), two players on two networks, the relay path
+  of a quick match, Windows.
