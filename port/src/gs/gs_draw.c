@@ -381,7 +381,8 @@ static uint32_t blend_key(uint64_t alpha, int abe) {
 /* The pipeline a draw uses: everything a pipeline depends on is in the key (the back end makes and caches
    one pipeline per key, so this is pure GS state -> an index):
    bits 0..8 blend, 10..11 depth test, 12 depth write, 13..14 topology, 16..19 colour write mask,
-   20..21 vertices: 0 GS vertices, 1 program 0, 2 program 4, 3 program 6, 22 full-screen table pass. */
+   20..21 vertices: 0 GS vertices, 1 program 0, 2 program 4, 3 program 6, 22 full-screen table pass,
+   23 the fragment shader without its own depth output. */
 static int pipeline_get(int ctx, int topo, int vu) {
     uint64_t test = gGs.test[ctx], zb = gGs.zbuf[ctx];
     int zte = (test >> 16) & 1, ztst = (test >> 17) & 3, zwrite = !((zb >> 32) & 1);
@@ -396,6 +397,20 @@ static int pipeline_get(int ctx, int topo, int vu) {
     wmask = ((m & 0xFF) != 0xFF ? GS_CC_R : 0) | ((m & 0xFF00) != 0xFF00 ? GS_CC_G : 0) |
             ((m & 0xFF0000) != 0xFF0000 ? GS_CC_B : 0) | ((m & 0xFF000000u) != 0xFF000000u ? GS_CC_A : 0);
     key = bkey | (uint32_t)ztst << 10 | (uint32_t)zwrite << 12 | (uint32_t)topo << 13 | wmask << 16 | (uint32_t)vu << 20;
+    {   /* Bit 23: the fragment shader without its own depth output (gsnz.frag; see the end of gs.frag for why
+           writing depth in the shader costs). Taken where it changes nothing: a draw that does not write depth
+           and tests with "greater or equal" (or not at all). What is in the depth buffer was written through
+           the other shader, so it is whole numbers; and z >= N is the same as floor(z) >= N for a whole N.
+           ("Greater" is not the same: N + 0.5 > N but floor(N + 0.5) > N is not. Those keep the full shader, and
+           so does everything that writes depth.) Measured on an integrated chip at 2x in a fight: 112 pictures a
+           second before the depth output existed (0.1.24), 82 with it on every draw (0.1.25 to 0.1.30), and
+           with this rule see docs/port/README.md. BT3_NZ=0: every draw with the full shader again (to compare). */
+        static int nz = -1;
+        if (nz < 0) { nz = getenv("BT3_NZ") != NULL ? atoi(getenv("BT3_NZ")) : 1; }
+        if (nz && !zwrite && ztst != 3 && vu != 4) {
+            key |= 1u << 23;
+        }
+    }
     if (vu == 4) { /* asked for by depth_clut: the table pass, which only depends on blending and the write mask */
         key = bkey | wmask << 16 | 1u << 22;
     }

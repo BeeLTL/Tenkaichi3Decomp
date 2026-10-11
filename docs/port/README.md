@@ -1944,3 +1944,25 @@ slider starts from (its setting has a new name, `net_speed_host`, so that a 120 
 Checked with connected pairs, without a window: a host at 114% with the new build or the published 0.1.30
 joining: both run blanks 14.63 ms apart; with 0.1.29 joining: both 100%. A quick match hosted by a 0.1.30 still
 runs at its 120% on both sides, so the standard is only uniform once the service asks for this release.
+
+## The depth fix of 0.1.25 cost a quarter of the frame rate (2026-10-12)
+
+Reported: "huge performance drop from 0.1.24 compared to 0.1.30". Measured with the published builds on an
+integrated chip (offscreen, uncapped, 2x, 16:9, the same recorded fight): 0.1.24 draws 112 pictures a second,
+0.1.30 draws 82. Taking the `gl_FragDepth` line out of gs.frag gives 112 again: a fragment shader that writes
+depth keeps the chip from leaving out hidden pixels before it runs the shader, `layout(depth_less)` or not.
+
+Which draws pay: the GS's own primitives (2D, effects, the full-screen passes: 82 -> 108 with only those spared),
+not the vertex programs' (82 -> 84), which are the ones the fix was for.
+
+**The fix:** a second fragment shader, gs.frag compiled with NO_FRAG_DEPTH (the build writes gsnz.frag; key bit
+23; `sFsNz` in gs_gpu.c, `sMainProg[4..7]` in gs_gl.c). pipeline_get gives it to every draw that **does not write
+depth and tests with "greater or equal" or not at all**. For those nothing changes: what is in the depth buffer
+was written through the full shader, so it is whole numbers, and z >= N is floor(z) >= N for a whole N. Draws
+that write depth, and the few that test with "greater", keep the full shader. BT3_NZ=0 turns the rule off.
+
+Result: 103 pictures a second (82 before, 112 in 0.1.24). The pictures are the same bit for bit with the rule on
+and off: three frames of a fight, three of the waterfall recording (the scene the depth fix was made for), on the
+integrated chip's Vulkan, and one of the waterfall on an Nvidia card's OpenGL. Not done: the remaining 8%, which
+is the draws that do write depth (sparing all of the GS's own primitives gives 110, but those then store
+fractions, which is the state the waterfall fault came from); a run on a display; Windows.
