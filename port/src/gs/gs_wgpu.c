@@ -1080,9 +1080,13 @@ static int wg_init(void) {
     }
     fprintf(stderr, "bt3: webgpu: surface %ux%u, depth clamp %s, BC textures %s, uniform offset alignment %u\n", sSurfaceW,
             sSurfaceH, sUnclippedDepth ? "yes" : "NO", sBcTextures ? "yes" : "no", sLimits.minUniformBufferOffsetAlignment);
-    /* (the overlay draws through ImGui's back end for the renderer; the WebGPU one is not part of the build yet) */
-    fprintf(stderr, "bt3: webgpu: the settings window (F1) is not available with the WebGPU renderer yet\n");
-    return 1;
+    /* the settings are the page's (port/src/web/web_ui.c): nothing is drawn over the game */
+    return Ui_Init(sWindow, NULL, NULL);
+}
+
+/* Validation, out-of-memory and internal errors the device has reported (the page's developer panel shows them). */
+unsigned GsWgpu_DeviceErrors(void) {
+    return sDeviceErrors;
 }
 
 /* ---- the replay ----------------------------------------------------------------------------------------------- */

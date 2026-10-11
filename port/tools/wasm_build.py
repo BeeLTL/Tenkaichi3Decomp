@@ -108,11 +108,13 @@ def game_object(f):
 # ---- the port's own code (the rules of undefined.py, for this target) -------------------------------------------
 # Online play (gs/net*.c) is not part of the first browser build: sockets, threads and the matchmaking service do not
 # exist there in this form. The Vulkan back end (gs/gs_gpu.c) has no browser back end in SDL3: the GL back end is used.
-# The setup window (port/setup) is not needed: the browser build has no installer.
-WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c", "imgui_impl_sdlgpu3.cpp"}
+# The setup window (port/setup) is not needed: the browser build has no installer. The settings window (gs/ui.cpp, Dear
+# ImGui) is not built either: the page has its own settings panel, and port/src/web/web_ui.c is the engine's side of
+# ui.h for it. With that the browser build has no C++ at all.
+WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c"}
 HARD = {"plat_libm.c", "plat_fastvec.c"}  # host floats on purpose (undefined.py)
 SDL = ["-sUSE_SDL=3"]
-# Dawn's webgpu.h for Emscripten (the WebGPU back end, gs_wgpu.c; ImGui's WebGPU renderer): compile and link flag
+# Dawn's webgpu.h for Emscripten (the WebGPU back end, gs_wgpu.c): compile and link flag
 WEBGPU = ["--use-port=emdawnwebgpu"]
 PC = ["-std=gnu99", "-fno-strict-aliasing", "-ffp-contract=off", "-fno-builtin", "-w", "-Iinclude", "-Iport/include", "-Iport/src"]
 SOFT_FORCED = ["-DSF_FAST_CALLS", "-include", "math.h", "-include", "stdlib.h", "-include", "port_libm.h"]
@@ -129,6 +131,10 @@ def shaders_header():
             arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in src.read_bytes() + b"\0") + "};\n")
     (GEN / "shaders.h").write_text("/* generated from port/src/gs/shaders by port/tools/wasm_build.py */\n" + "".join(arrays))
 
+# The names port_jobs gives the port's objects start with these (the game's own objects are named after their folders
+# under src/: battle_, menu_, sys_, main).
+PORT_OBJ_PREFIXES = {"nl", "pc", "gs", "web", "cxx"}
+
 def port_jobs():
     """(kind, source, object) for every file of the port's side."""
     jobs = []
@@ -141,11 +147,7 @@ def port_jobs():
         if f.name not in WASM_SKIP:
             jobs.append(("gs", f, OBJ / ("gs_" + f.stem + ".o")))
     for f in sorted((ROOT / "port/src/web").glob("*.c")):  # the browser build's own files
-        jobs.append(("hard", f, OBJ / ("web_" + f.stem + ".o")))
-    imgui = ROOT / "port/third_party/imgui"
-    for f in sorted(imgui.glob("*.cpp")) + sorted((ROOT / "port/src/gs").glob("*.cpp")):
-        if f.name not in WASM_SKIP:
-            jobs.append(("cxx", f, OBJ / ("cxx_" + f.stem + ".o")))
+        jobs.append(("web", f, OBJ / ("web_" + f.stem + ".o")))
     return jobs
 
 def port_object(job):
@@ -164,12 +166,11 @@ def port_object(job):
         n = 0
         if kind == "hard":
             cmd = [EMCC, "-c"] + OPT + PC
-        elif kind == "gs":
+        elif kind == "web":
+            cmd = [EMCC, "-c"] + OPT + SDL + PC
+        else:  # gs
             cmd = [EMCC, "-c"] + OPT + SDL + WEBGPU + ["-std=gnu99", "-fno-strict-aliasing", "-Wall", "-Wno-unused",
                                              "-Wno-misleading-indentation", f"-I{GEN}"]
-        else:
-            cmd = ["em++", "-c"] + OPT + SDL + WEBGPU + ["-std=c++17", "-fno-exceptions", "-fno-rtti", "-w", "-DIMGUI_IMPL_OPENGL_ES3",
-                                               f"-I{ROOT / 'port/third_party/imgui'}", f"-I{ROOT / 'port/src/gs'}"]
         # through LLVM IR like every other file, so that wasm_sig.py can repair calls in it (see there)
         ll = o.with_suffix(".ll")
         r = run([c for c in cmd if c != "-c"] + ["-S", "-emit-llvm", f, "-o", ll])
@@ -194,7 +195,7 @@ LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000
         # ignored, a result that is not there reads 0. Without it such a call traps (call_indirect checks the type).
         "-sEMULATE_FUNCTION_POINTER_CASTS=1",
         "-sMODULARIZE=1", "-sEXPORT_NAME=createBt3", "-sENVIRONMENT=web",
-        "-sFORCE_FILESYSTEM=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV,HEAPU8,UTF8ToString,callMain",
+        "-sFORCE_FILESYSTEM=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV,HEAPU8,UTF8ToString,callMain,ccall",
         "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext", "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
         "-Wl,--wrap=Progress_Main", "-Wl,--wrap=fopen",  # fopen: the data folder over HTTP (port/src/web/web_fs.c)
         "-Wl,--error-limit=0", "--profiling-funcs", "-sASSERTIONS=1"]
@@ -266,7 +267,7 @@ def link():
             break
         need |= more
         write_stubs()
-    for f in ("index.html", "bt3_data.js"):  # the page (port/web)
+    for f in ("index.html", "bt3_data.js", "settings.js"):  # the page (port/web)
         (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
     mism = re.findall(r"signature mismatch: (\S+)", r.stderr)
     errs = [l for l in r.stderr.splitlines() if "error" in l]
@@ -291,6 +292,13 @@ def main():
         if r.returncode:
             print(r.stderr.strip())
             sys.exit(1)
+        # The link takes every object in OBJ: a port object no source makes any more (a file left out of the browser
+        # build, such as the C++ settings window) is removed, or it would still be linked.
+        made = {j[2].name for j in port_jobs()}
+        for old in OBJ.glob("*.o"):
+            if old.name.split("_")[0] in PORT_OBJ_PREFIXES and old.name not in made:
+                print(f"port: removed {old.name} (no longer built)")
+                old.unlink()
         jobs = [j for j in port_jobs() if len(sys.argv) == 2 or j[1].name in sys.argv[2:]]
         with concurrent.futures.ProcessPoolExecutor(min(16, os.cpu_count() or 4)) as ex:
             res = list(ex.map(port_object, jobs))
