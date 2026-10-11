@@ -105,6 +105,11 @@ async function checks() {
     'JSPI is not available in this browser (needed: the game waits for files and frames). Use a current Chrome or Edge.');
   const gl = document.createElement('canvas').getContext('webgl2');
   c(!!gl, `WebGL 2 available (${gl ? gl.getParameter(gl.VERSION) : ''})`, 'WebGL 2 is not available');
+  if (gl) {  // the real GPU, for the record of every measurement
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    log(`gpu: ${dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '(renderer string not available)'}`);
+  }
+  log(`user agent: ${navigator.userAgent}; ${navigator.hardwareConcurrency} logical processors`);
   const s = step(`game data at ${dataBase}`);
   try {
     const n = await data.init();
