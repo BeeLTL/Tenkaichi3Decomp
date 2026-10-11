@@ -228,13 +228,18 @@ static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, in
     }
 }
 
-int gPortMusicPercent = 100, gPortSePercent = 100; /* the settings overlay's volumes */
+/* The settings overlay's volumes. The game keeps its sounds apart by itself, and the four follow that:
+     music   the first stream player ("BGM")
+     stage   the second ("MAP": a stage's background sound, the only thing stg_b.c plays there) and the stage's
+             effect bank (slot 3)
+     voices  the two voice players and the two fighters' effect banks (slots 4 and 5)
+     effects the rest: the two effect players, the common banks */
+int gPortMusicPercent = 100, gPortSePercent = 100, gPortVoicePercent = 100, gPortStagePercent = 100;
 
 static void apply_volume(Player *p) {
     if (p->stream != NULL) {
-        /* The game's first player is the music's ("BGM"); the others carry stage sounds, effects and the voices
-           ("MAP", "SE", "VIC"), which go with the other slider. */
-        int percent = p == &sPlayers[0] ? gPortMusicPercent : gPortSePercent;
+        int ch = (int)(p - sPlayers); /* (the game makes its six players in the order of include/sys/adx.h) */
+        int percent = ch == 0 ? gPortMusicPercent : ch == 1 ? gPortStagePercent : ch == 4 || ch == 5 ? gPortVoicePercent : gPortSePercent;
         SDL_SetAudioStreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)percent / 100.0f);
     }
 }

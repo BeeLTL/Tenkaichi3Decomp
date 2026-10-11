@@ -1819,3 +1819,23 @@ Asked for by the user: "the whole match, that's the standard for competitive pla
   400; with a 0.1.25 as the one who joins, the host logs 100% and both keep 16.68 ms. The regression replay
   passes. Not checked: how it feels and sounds (nobody has played or heard it), a real match between two
   networks, rollback's behaviour at a high ping with the shorter blank, Windows.
+
+## Four volume sliders (2026-10-11)
+
+Asked for: voices apart from the sound effects, and a slider for the stages' ambient sound. The game keeps these
+apart by itself, so the sliders follow its own grouping (snd_adx.c, snd_se.c):
+
+| Slider | Stream players (include/sys/adx.h) | Effect bank slots (src/sys/snd.c) |
+|---|---|---|
+| Music | 0, "BGM" | |
+| Sound effects | 2, 3 | 0 (common, loaded at boot), 2 (the battle's common bank), any other |
+| Voices | 4, 5 | 4, 5 (the two fighters' banks: battle_load.c loads `sndChara[0..1]` there) |
+| Stage sounds | 1, "MAP" (only stg_b.c plays there) | 3 (the stage's bank) |
+
+Settings `voices` and `stage_sounds`; a settings file from before has neither, and both then start at what
+`effects` is set to, so nobody's sound changes by updating. Streams follow a slider at once, a bank's sound with
+the next one that starts.
+
+Checked: it builds, the regression replay passes, and a replay with sound logging uses stream players 0, 1, 2, 4
+and 5, as the table says. Not checked: by ear, at all. In particular what the fighters' banks hold besides voices
+(a fighter's own effects would follow the Voices slider) and what a stage's bank holds was not looked at.

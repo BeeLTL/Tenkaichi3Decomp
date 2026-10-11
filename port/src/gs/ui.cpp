@@ -932,8 +932,12 @@ static void effects_tab(PortVideo &v) {
 
 static void audio_tab(PortVideo &v) {
     ImGui::SliderInt("Music", &v.music, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
-    ImGui::SliderInt("Sound effects and voices", &v.effects, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
-    ImGui::SetItemTooltip("Voices and stage sounds follow at once; a sound effect with the next one that starts.");
+    ImGui::SliderInt("Sound effects", &v.effects, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SetItemTooltip("Hits, blasts, menu sounds. Takes effect with the next sound that starts.");
+    ImGui::SliderInt("Voices", &v.voices, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SetItemTooltip("The fighters' voices in a fight and the spoken lines outside one.");
+    ImGui::SliderInt("Stage sounds", &v.stage, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SetItemTooltip("A stage's background sound (wind, water) and its own effects.");
 }
 
 // Cheats. "Unlock everything" is the game's own leftover debug function (Save_UnlockAll, which nothing in the game

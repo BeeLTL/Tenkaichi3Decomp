@@ -44,7 +44,7 @@ extern unsigned long long Port_BlankNs(void); /* plat_stub.c: 16.68 ms, less in 
 extern int Port_AspectMilli(void);
 extern void Port_SetAspectMilli(int milli), Port_AudioRefresh(void), Port_SettingsWrite(void);
 extern int gPortMenuMode;       /* headless.c: the menus are running */
-extern int gPortMusicPercent, gPortSePercent;
+extern int gPortMusicPercent, gPortSePercent, gPortVoicePercent, gPortStagePercent;
 
 static GsBackend *sBackend;
 static int sSmooth2d = 1; /* the setting "2D filtering" (smooth_2d; BT3_2D_SMOOTH=0/1 wins): 1 smooth */
@@ -1331,6 +1331,8 @@ void GsGpu_GetSettings(PortVideo *v) {
     v->glow = gsGlowPercent;
     v->music = gPortMusicPercent;
     v->effects = gPortSePercent;
+    v->voices = gPortVoicePercent;
+    v->stage = gPortStagePercent;
     v->display = sDisplaySetting;
     v->texPack = sTexPackOn;
     v->texPackCount = TexPack_Count();
@@ -1355,9 +1357,11 @@ void GsGpu_SetSettings(const PortVideo *v) {
     }
     gsFxOff = (unsigned)v->fxOff & 63;
     gsGlowPercent = v->glow;
-    if (v->music != now.music || v->effects != now.effects) { /* (the streams that are playing follow at once: music, voices) */
+    if (v->music != now.music || v->effects != now.effects || v->voices != now.voices || v->stage != now.stage) { /* (the streams that are playing follow at once) */
         gPortMusicPercent = v->music;
         gPortSePercent = v->effects;
+        gPortVoicePercent = v->voices;
+        gPortStagePercent = v->stage;
         Port_AudioRefresh();
     }
     if (v->frameSkip != now.frameSkip) {
@@ -1380,6 +1384,8 @@ void GsGpu_SetSettings(const PortVideo *v) {
     Port_SettingSave("glow", gsGlowPercent);
     Port_SettingSave("music", gPortMusicPercent);
     Port_SettingSave("effects", gPortSePercent);
+    Port_SettingSave("voices", gPortVoicePercent);
+    Port_SettingSave("stage_sounds", gPortStagePercent);
     Port_SettingSave("display", sDisplaySetting);
     Port_SettingsWrite();
 }
@@ -1435,6 +1441,8 @@ int GsGpu_Init(void) {
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;
     gPortMusicPercent = Port_Setting("music", 100);
     gPortSePercent = Port_Setting("effects", 100);
+    gPortVoicePercent = Port_Setting("voices", gPortSePercent); /* (one slider before 0.1.30: what it was set to) */
+    gPortStagePercent = Port_Setting("stage_sounds", gPortSePercent);
     TexPack_Init();
     return 1;
 }
