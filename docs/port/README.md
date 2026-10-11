@@ -1541,3 +1541,28 @@ address 0x203364B0", the game running, an empty backtrace.
   rollback; with a list whose first line was changed they connect without rollback and print the message, no
   crash. Not checked: on Windows, by anyone; how that copy came to have an old list (only the .exe replaced is
   the guess).
+
+## Online: the opponent's aura showed on what he stood behind (2026-10-11)
+
+Found by the user in online matches, and again offline with `BT3_VIEW=0` in a 1P vs 2P battle: while the opponent
+charges behind a tree or a building, a soft dark-blue oval sits on it, where he is.
+
+- **What it is:** one camera-facing sprite of the aura (the dark layer under its glow, subtracted from the
+  picture), sent with the nearest depth there is (z = 0xFFFFFF: seen with BT3_GPU_DUMP). `EftBill_Draw`
+  (src/battle/eft_z.c) draws a billboard that has EFT_BILL_FRONT in front of everything, and only "when its
+  fighter is in view": `BtlScene_IsCharInView`. In a one-player battle that is the camera's fighter; in the two
+  halves of a split screen, each half's own fighter. So the layer is only ever drawn around the fighter the
+  camera stands behind.
+- **Why online:** an online match is the two-player battle with the local player's view shown full screen
+  (`BtlCam_UpdateOverride`). The game takes that for its own "one view of a split-screen battle" (a cinematic),
+  where `BtlCharApi_IsCamShown` says yes for both fighters when neither has camera priority. The opponent's
+  layer was drawn too, in front of whatever hid him. In a real split screen it is not (compared on the same
+  recording).
+- **The fix** (src/battle/btl_scene.c, `#ifdef PORT`): in that case, and only when the game itself gives no view
+  priority, a fighter is in view if he is the view's own (`objId == Port_NetView()`), as in the two halves. All
+  nine callers are drawing routines (EftBill, EftPtcl, EftQuad, EftChain, EftRay, EftSpdLine, EftBolt, EftGlow,
+  EftAnimPart), so the two copies' game states are not touched by which view each shows.
+- Checked on the user's recording, windowless: the oval is gone and 158 pixels changed, all of them the oval;
+  the charging player's own view and the split-screen picture are the same byte for byte as before; the
+  regression replay passes. Not checked: in a real online match, by anyone (a host and a joiner connect as
+  before, but that test does not reach a fight).
