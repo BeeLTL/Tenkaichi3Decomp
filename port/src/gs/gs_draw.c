@@ -1275,6 +1275,50 @@ void GsDraw_DisplayBufferPixels(int buffer, uint32_t *px) {
     }
 }
 
+void GsDraw_DisplayReduce(const uint8_t *px, uint8_t *rgba) {
+    int x, y, w = GS_DISPLAY_W * SCALE;
+    for (y = 0; y < GS_DISPLAY_H; y++) {
+        for (x = 0; x < GS_DISPLAY_W; x++) {
+            memcpy(rgba + (y * GS_DISPLAY_W + x) * 4, px + ((size_t)(y * SCALE + SCALE / 2) * w + x * SCALE + SCALE / 2) * 4, 4);
+        }
+    }
+}
+
+int GsDraw_ShotDue(void) {
+    static int every = -1;
+    if (every < 0) { every = getenv("BT3_SHOT") != NULL ? atoi(getenv("BT3_SHOT")) : 0; }
+    return every > 0 && gGsFrame % (unsigned)every == 0 &&
+           (getenv("BT3_SHOT_FROM") == NULL || (int)gGsFrame >= atoi(getenv("BT3_SHOT_FROM"))) &&
+           (getenv("BT3_SHOT_TO") == NULL || (int)gGsFrame <= atoi(getenv("BT3_SHOT_TO")));
+}
+
+int GsDraw_ShotAux(void) { return getenv("BT3_SHOT_AUX") != NULL; }
+
+void GsDraw_ShotWrite(const uint8_t *px, int w, int h, int aux) {
+    char name[64];
+    FILE *fp;
+    int x, y;
+    snprintf(name, sizeof(name), "port/build/shots/gpu_%05u.ppm", gGsFrame);
+    fp = fopen(name, "wb");
+    if (fp == NULL) {
+        fprintf(stderr, "bt3: screenshot %s not written\n", name);
+        return;
+    }
+    fprintf(fp, "P6\n%d %d\n255\n", w, h);
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            if (aux) {
+                /* the alpha byte (object ids, small numbers) brightened to be seen */
+                uint8_t v = px[y * w + x], t[3] = {(uint8_t)(v * 16), (uint8_t)(v * 16), v};
+                fwrite(t, 1, 3, fp);
+            } else {
+                fwrite(&px[(y * w + x) * 4], 1, 3, fp);
+            }
+        }
+    }
+    fclose(fp);
+}
+
 void GsDraw_FrameReset(void) {
     int i;
     for (i = 0; i < gsTargetCount; i++) {

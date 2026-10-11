@@ -263,5 +263,14 @@ void GsDraw_FrameReset(void); /* gs_draw.c: the frame was replayed: an empty lis
 /* gs_draw.c: the picture uploaded into display buffer `buffer` (GS_NATIVE_FB_UPLOAD), GS_W x GS_H RGBA from GS memory,
    opaque, top row first, into px (GS_W * GS_H words). */
 void GsDraw_DisplayBufferPixels(int buffer, uint32_t *px);
+/* gs_draw.c: a target's picture (GsBackend.targetRead) at the GS's own resolution: px is the display part of the target
+   (GS_DISPLAY_W x GS_DISPLAY_H at SCALE, RGBA, top row first), rgba gets the middle sample of each GS pixel. */
+void GsDraw_DisplayReduce(const uint8_t *px, uint8_t *rgba);
+/* gs_draw.c: the screenshots (BT3_SHOT=<every n frames>, BT3_SHOT_FROM / BT3_SHOT_TO, BT3_SHOT_AUX for the alpha byte
+   instead of the colour). Due: this frame is one to take. Write: the shown target's picture (w x h, top row first; RGBA,
+   or one byte per pixel when aux) to port/build/shots/gpu_<frame>.ppm. */
+int GsDraw_ShotDue(void);
+int GsDraw_ShotAux(void);
+void GsDraw_ShotWrite(const uint8_t *px, int w, int h, int aux);
 
 #endif

@@ -1100,41 +1100,17 @@ static void frame_end(void) {
 
     /* BT3_SHOT=<n>: read the shown buffer back to port/build/shots/gpu_NNNNN.ppm (rows come back in texture
        order: the first row is the scene's top, as in the Vulkan back end's download) */
-    {
-        static int every = -1;
-        if (every < 0) { every = getenv("BT3_SHOT") != NULL ? atoi(getenv("BT3_SHOT")) : 0; }
-        if (every > 0 && gGsFrame % (unsigned)every == 0 && best >= 0 && gsTargets[best].cleared &&
-            (getenv("BT3_SHOT_FROM") == NULL || (int)gGsFrame >= atoi(getenv("BT3_SHOT_FROM"))) &&
-            (getenv("BT3_SHOT_TO") == NULL || (int)gGsFrame <= atoi(getenv("BT3_SHOT_TO")))) {
-            GLsizei w = GS_DISPLAY_W * SCALE, h = GS_DISPLAY_H * SCALE;
-            int aux = getenv("BT3_SHOT_AUX") != NULL;
-            uint8_t *px = malloc((size_t)w * h * 4);
-            char name[64];
-            FILE *fp;
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, sTgFbo[best]);
-            glReadBuffer(aux ? GL_COLOR_ATTACHMENT1 : GL_COLOR_ATTACHMENT0);
-            glPixelStorei(GL_PACK_ALIGNMENT, 1);
-            glReadPixels(0, 0, w, h, aux ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, px);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            snprintf(name, sizeof(name), "port/build/shots/gpu_%05u.ppm", gGsFrame);
-            fp = fopen(name, "wb");
-            if (fp != NULL) {
-                fprintf(fp, "P6\n%d %d\n255\n", w, h);
-                for (i = 0; i < h; i++) {
-                    uint32_t x;
-                    for (x = 0; x < (uint32_t)w; x++) {
-                        if (aux) {
-                            uint8_t v = px[i * w + x], t[3] = {(uint8_t)(v * 16), (uint8_t)(v * 16), v};
-                            fwrite(t, 1, 3, fp);
-                        } else {
-                            fwrite(&px[(i * w + x) * 4], 1, 3, fp);
-                        }
-                    }
-                }
-                fclose(fp);
-            }
-            free(px);
-        }
+    if (best >= 0 && gsTargets[best].cleared && GsDraw_ShotDue()) {
+        GLsizei w = GS_DISPLAY_W * SCALE, h = GS_DISPLAY_H * SCALE;
+        int aux = GsDraw_ShotAux();
+        uint8_t *px = malloc((size_t)w * h * 4);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, sTgFbo[best]);
+        glReadBuffer(aux ? GL_COLOR_ATTACHMENT1 : GL_COLOR_ATTACHMENT0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, w, h, aux ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, px);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        GsDraw_ShotWrite(px, w, h, aux);
+        free(px);
     }
 
     GsDraw_FrameReset();
@@ -1144,7 +1120,6 @@ static void frame_end(void) {
 static int gl_target_read(int i, uint8_t *rgba) {
     GLsizei w = GS_DISPLAY_W * SCALE, h = GS_DISPLAY_H * SCALE; /* (the picture's part of the target, as the screenshot's) */
     uint8_t *px;
-    int x, y;
 
     if (sTgFbo[i] == 0 || (px = malloc((size_t)w * h * 4)) == NULL) {
         return 0;
@@ -1154,11 +1129,7 @@ static int gl_target_read(int i, uint8_t *rgba) {
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    for (y = 0; y < GS_DISPLAY_H; y++) { /* (rows come back in texture order: the first is the scene's top) */
-        for (x = 0; x < GS_DISPLAY_W; x++) {
-            memcpy(rgba + (y * GS_DISPLAY_W + x) * 4, px + ((size_t)(y * SCALE + SCALE / 2) * w + x * SCALE + SCALE / 2) * 4, 4);
-        }
-    }
+    GsDraw_DisplayReduce(px, rgba); /* (rows come back in texture order: the first is the scene's top) */
     free(px);
     return 1;
 }
