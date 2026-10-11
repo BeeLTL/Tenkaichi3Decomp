@@ -829,13 +829,6 @@ static void video_tab(PortVideo &v) {
     ImGui::SetItemTooltip("How the display of a fight, the menus and text are drawn above 1x internal resolution.\n"
                           "Sharp: each of the PlayStation 2's pixels is a block. Smooth: as an emulator shows them.\n"
                           "No difference at 1x.");
-    {
-        static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
-        ImGui::Combo("Fight display, widescreen", &v.hudLayout, kHud, 3);
-        ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
-                              "Long health bars: the bars reach from the edges to the timer.\n"
-                              "In the middle: the original 4:3 arrangement, next to the timer.");
-    }
     bool full = v.fullscreen != 0;
     if (ImGui::Checkbox("Full screen", &full)) { v.fullscreen = full; }
     ImGui::SameLine();
@@ -935,6 +928,14 @@ static void effects_tab(PortVideo &v) {
     ImGui::Spacing();
     ImGui::SliderInt("Glow strength", &v.glow, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
     ImGui::SetItemTooltip("100%% is what the PlayStation 2 draws; the default here is 60%%.");
+}
+
+static void ui_tab(PortVideo &v) {
+    static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
+    ImGui::Combo("HUD Style", &v.hudLayout, kHud, 3);
+    ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
+                          "Long health bars: the bars reach from the edges to the timer.\n"
+                          "In the middle: the original 4:3 arrangement, next to the timer.");
 }
 
 static void audio_tab(PortVideo &v) {
@@ -1088,7 +1089,7 @@ static void build(void) {
         open = false;
     }
     if (sForceTab < 0 && (pad_pressed(ImGuiKey_GamepadL1) || pad_pressed(ImGuiKey_GamepadR1))) {
-        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 4 : 1)) % 5;
+        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 5 : 1)) % 6;
         sPadTab = true;
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -1100,7 +1101,8 @@ static void build(void) {
             if (tab("Video", 0)) { video_tab(v); ImGui::EndTabItem(); }
             if (tab("Effects", 1)) { effects_tab(v); ImGui::EndTabItem(); }
             if (tab("Audio", 2)) { audio_tab(v); ImGui::EndTabItem(); }
-            if (tab("Controls", 3)) {
+            if (tab("UI", 3)) { ui_tab(v); ImGui::EndTabItem(); }
+            if (tab("Controls", 4)) {
                 bool cs = Port_ClashSquare() != 0;
                 if (ImGui::Checkbox("Clashes: Square counts as a direction", &cs)) {
                     Port_ClashSquareSet(cs);
@@ -1131,7 +1133,7 @@ static void build(void) {
                 controls_tab();
                 ImGui::EndTabItem();
             }
-            if (tab("Cheats", 4)) { cheats_tab(); ImGui::EndTabItem(); }
+            if (tab("Cheats", 5)) { cheats_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         ImGui::EndChild();

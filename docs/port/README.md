@@ -1842,7 +1842,7 @@ and 5, as the table says. Not checked: by ear, at all. In particular what the fi
 
 ## A fight's display in a wide picture: three layouts (2026-10-11)
 
-Setting `hud_layout` (F1, Video: "Fight display, widescreen"; BT3_HUD=<n> for a test), `Port_HudLayout()`:
+Setting `hud_layout` (F1, the UI tab: "HUD Style"; BT3_HUD=<n> for a test), `Port_HudLayout()`:
 
 - **0, at the screen's edges**: as since widescreen, the default.
 - **1, at the edges with long health bars**: pull request #28 (victor-g-lima), merged behind this setting. hud_b.c
