@@ -573,12 +573,13 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
             d->tex = texture_get(ctx);
         }
     }
-    d->sampler = (int)((gGs.tex1[ctx] >> 5) & 1) | ((cl & 3) ? 2 : 0) | (((cl >> 2) & 3) ? 4 : 0);
+    d->sampler = (((gGs.tex1[ctx] >> 5) & 1) ? GS_SAMPLER_LINEAR : 0) | ((cl & 3) ? GS_SAMPLER_CLAMP_U : 0) |
+                 (((cl >> 2) & 3) ? GS_SAMPLER_CLAMP_V : 0);
     /* A replacement is several times the original's size: with the nearest-texel sampling the game asks for on
        its text and 2D art (right for a texture drawn 1:1) it is shown smaller than it is, and its edges come out
        jagged. Replacements are always sampled with filtering. */
     if (d->tex != 0 && sLast != NULL && sLast->tex == d->tex && sLast->replaced) {
-        d->sampler |= 1 | 8; /* (GsGpu_Draw takes the 8 off again for 2D art) */
+        d->sampler |= GS_SAMPLER_LINEAR | GS_SAMPLER_MIPMAPS; /* (GsGpu_Draw takes the mipmaps off again for 2D art) */
     }
     d->pipeline = pipeline_get(ctx, (GsTopology)topo, (GsVertexSource)vu, 0);
     d->mode[0] = !tme ? 0 : d->tex_is_target ? 2 : 1; /* 2: a frame buffer as texture, its alpha is already rescaled */
@@ -673,7 +674,7 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
         return;
     }
     if (type == 6 || fst) {
-        d.sampler &= 7; /* 2D art: never the smaller copies of a replacement */
+        d.sampler &= ~GS_SAMPLER_MIPMAPS; /* 2D art: never the smaller copies of a replacement */
     }
     if ((type == 6 || fst) && !d.tex_is_target) {
         /* 2D art: sprites, and triangles with whole-texel coordinates (the logo, HUD pieces drawn as quads):
@@ -943,7 +944,7 @@ void GsGpu_DrawVu4(int ctx, const float *vertices, uint32_t count, const float *
         }
     }
     d.count = gsVuIdxCount - d.first;
-    memcpy(&gsVuVerts[gsVuVertCount * 12], vertices, count * 48);
+    memcpy(&gsVuVerts[gsVuVertCount * VU_VERT_FLOATS], vertices, count * VU_VERT_BYTES);
     gsVuVertCount += count;
     gsTargets[d.target].draws++;
     gsTargets[d.target].gen = gGsPageGen[gsTargets[d.target].fbp & 511];
@@ -1004,7 +1005,7 @@ void GsGpu_DrawVu0(int layer, int ctx, const float *vertices, uint32_t count, co
         }
     }
     d.count = gsVuIdxCount - d.first;
-    memcpy(&gsVuVerts[gsVuVertCount * 12], vertices, count * 48);
+    memcpy(&gsVuVerts[gsVuVertCount * VU_VERT_FLOATS], vertices, count * VU_VERT_BYTES);
     gsVuVertCount += count;
     gsTargets[d.target].draws++;
     gsTargets[d.target].gen = gGsPageGen[gsTargets[d.target].fbp & 511];
@@ -1116,7 +1117,7 @@ static void scale_apply(void) {
     gsPendingScale = 0;
     sBackend->scaleChanged();
     gsTargetCount = 0;
-    fprintf(stderr, "bt3: internal resolution %dx (%d x %d)\n", gsScale, 512 * gsScale, 448 * gsScale);
+    fprintf(stderr, "bt3: internal resolution %dx (%d x %d)\n", gsScale, GS_DISPLAY_W * gsScale, GS_DISPLAY_H * gsScale);
 }
 
 /* ------------------------------------------------------------------------------------------- the one window */
@@ -1173,7 +1174,7 @@ SDL_Window *GsDraw_WindowCreate(int opengl) {
     if (sWindow != NULL && !sFullscreen) {
         SDL_SetWindowSize(sWindow, (int)((float)896 * want + 0.5f), 896);
     }
-    fprintf(stderr, "bt3: internal resolution %dx (%d x %d)\n", gsScale, 512 * gsScale, 448 * gsScale);
+    fprintf(stderr, "bt3: internal resolution %dx (%d x %d)\n", gsScale, GS_DISPLAY_W * gsScale, GS_DISPLAY_H * gsScale);
     return sWindow;
 }
 
@@ -1273,7 +1274,7 @@ int GsGpu_Init(void) {
     gsScale = gsScale < 1 ? 1 : gsScale > 8 ? 8 : gsScale;
     gsPendingScale = 0;
     gsVerts = malloc(MAX_VERTS * sizeof(Vtx));
-    gsVuVerts = malloc(MAX_VU_VERTS * 48);
+    gsVuVerts = malloc(MAX_VU_VERTS * VU_VERT_BYTES);
     gsVuIdx = malloc(MAX_VU_IDX * sizeof(uint32_t));
     gsVuUni = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
     gsDraws = malloc(MAX_DRAWS * sizeof(GsDraw));

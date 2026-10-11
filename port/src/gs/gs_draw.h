@@ -16,6 +16,29 @@ extern int gsScale;
 #define GS_W 1024
 #define GS_H 1024
 
+/* The part of a frame buffer the game shows (its display registers): 512 x 448 GS pixels, at SCALE in a target. */
+#define GS_DISPLAY_W 512
+#define GS_DISPLAY_H 448
+
+/* A draw's sampler (GsDraw.sampler): these flags, from TEX1.MMAG and CLAMP; a back end makes one sampler object for
+   each of the GS_SAMPLER_COUNT combinations and indexes them with the value. */
+#define GS_SAMPLER_LINEAR 1u  /* bilinear (TEX1.MMAG) */
+#define GS_SAMPLER_CLAMP_U 2u /* CLAMP.WMS: clamped (else repeated) */
+#define GS_SAMPLER_CLAMP_V 4u /* CLAMP.WMT */
+#define GS_SAMPLER_MIPMAPS 8u /* a texture pack's replacement on 3D geometry: its smaller copies may be sampled */
+#define GS_SAMPLER_COUNT 16
+/* the samplers of the back ends' own passes (copies of targets, the present) */
+#define GS_SAMPLER_NEAREST_CLAMPED (GS_SAMPLER_CLAMP_U | GS_SAMPLER_CLAMP_V)
+#define GS_SAMPLER_LINEAR_CLAMPED (GS_SAMPLER_LINEAR | GS_SAMPLER_CLAMP_U | GS_SAMPLER_CLAMP_V)
+
+/* A vertex program's vertex in gsVuVerts: the three float quadwords the program reads (position, normal or colour,
+   texture coordinates). */
+#define VU_VERT_FLOATS 12
+#define VU_VERT_BYTES (VU_VERT_FLOATS * sizeof(float))
+
+/* The native outline (PORT_FX_OUTLINE): the game's ObjOutline_Draw darkens by a rectangle of 0x64 per channel. */
+#define GS_OUTLINE_DARKNESS (0x64 / 255.0f)
+
 #define MAX_VERTS (1 << 20)
 #define MAX_DRAWS (1 << 16)
 #define MAX_TARGETS 24

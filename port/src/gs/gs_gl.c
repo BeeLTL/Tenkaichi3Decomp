@@ -380,7 +380,7 @@ static GLuint make_present_program(void) {
     glDeleteShader(f);
     glUseProgram(p);
     glUniform1i(glGetUniformLocation(p, "tex"), 0);
-    glUniform2f(glGetUniformLocation(p, "uvScale"), 512.0f / (float)GS_W, 448.0f / (float)GS_H);
+    glUniform2f(glGetUniformLocation(p, "uvScale"), (float)GS_DISPLAY_W / (float)GS_W, (float)GS_DISPLAY_H / (float)GS_H);
     return p;
 }
 
@@ -390,7 +390,7 @@ static SDL_GLContext sCtx;
 static GLuint sMainProg[4]; /* gs.vert / vu0 / vu4 / vu6 + gs.frag */
 static GLuint sOutlineProg, sKeyProg, sDclutProg, sPresentProg;
 static GLuint sVaoGs, sVaoVu, sVboGs, sVboVu, sIboVu;
-static GLuint sSamplers[16];
+static GLuint sSamplers[GS_SAMPLER_COUNT]; /* indexed by GS_SAMPLER_* flags */
 static GLuint sWhite;
 static GLuint sUboU, sUboParams;
 static GLuint sTgCol[MAX_TARGETS], sTgAux[MAX_TARGETS], sTgDep[MAX_TARGETS], sTgFbo[MAX_TARGETS];
@@ -668,7 +668,7 @@ static void set_textures(GLuint t0, int s0, GLuint t1, int s1, GLuint t2, int s2
     if (t2 != 0 && sCurTex2 != t2) {
         glActiveTexture(GL_TEXTURE0 + 2);
         glBindTexture(GL_TEXTURE_2D, t2);
-        glBindSampler(2, sSamplers[6]);
+        glBindSampler(2, sSamplers[GS_SAMPLER_NEAREST_CLAMPED]);
         sCurTex2 = t2;
     }
 }
@@ -775,13 +775,13 @@ static int gl_init(void) {
 
     glGenBuffers(1, &sVboVu);
     glBindBuffer(GL_ARRAY_BUFFER, sVboVu);
-    glBufferData(GL_ARRAY_BUFFER, MAX_VU_VERTS * 48, NULL, GL_STREAM_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, MAX_VU_VERTS * VU_VERT_BYTES, NULL, GL_STREAM_DRAW);
     glGenVertexArrays(1, &sVaoVu);
     glBindVertexArray(sVaoVu);
     glBindBuffer(GL_ARRAY_BUFFER, sVboVu);
     for (i = 0; i < 3; i++) {
         glEnableVertexAttribArray((GLuint)i);
-        glVertexAttribPointer((GLuint)i, 4, GL_FLOAT, GL_FALSE, 48, (void *)(uintptr_t)(i * 16));
+        glVertexAttribPointer((GLuint)i, 4, GL_FLOAT, GL_FALSE, (GLsizei)VU_VERT_BYTES, (void *)(uintptr_t)(i * 4 * sizeof(float)));
     }
     glGenBuffers(1, &sIboVu); /* the triangles' indices (gsVuIdx); the binding is part of the vertex array's state */
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sIboVu);
@@ -797,14 +797,13 @@ static int gl_init(void) {
     glBufferData(GL_UNIFORM_BUFFER, 64, NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 1, sUboParams);
 
-    for (i = 0; i < 16; i++) {
-        int lin = (i & 1) != 0;
+    for (i = 0; i < GS_SAMPLER_COUNT; i++) {
+        GLint filter = (i & GS_SAMPLER_LINEAR) ? GL_LINEAR : GL_NEAREST;
         glGenSamplers(1, &sSamplers[i]);
-        glSamplerParameteri(sSamplers[i], GL_TEXTURE_MAG_FILTER, lin ? GL_LINEAR : GL_NEAREST);
-        /* bit 3: a texture pack's replacement, whose smaller copies (mip levels) may be sampled on 3D geometry */
-        glSamplerParameteri(sSamplers[i], GL_TEXTURE_MIN_FILTER, (i & 8) ? GL_LINEAR_MIPMAP_LINEAR : (lin ? GL_LINEAR : GL_NEAREST));
-        glSamplerParameteri(sSamplers[i], GL_TEXTURE_WRAP_S, (i & 2) ? GL_CLAMP_TO_EDGE : GL_REPEAT);
-        glSamplerParameteri(sSamplers[i], GL_TEXTURE_WRAP_T, (i & 4) ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+        glSamplerParameteri(sSamplers[i], GL_TEXTURE_MAG_FILTER, filter);
+        glSamplerParameteri(sSamplers[i], GL_TEXTURE_MIN_FILTER, (i & GS_SAMPLER_MIPMAPS) ? GL_LINEAR_MIPMAP_LINEAR : filter);
+        glSamplerParameteri(sSamplers[i], GL_TEXTURE_WRAP_S, (i & GS_SAMPLER_CLAMP_U) ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+        glSamplerParameteri(sSamplers[i], GL_TEXTURE_WRAP_T, (i & GS_SAMPLER_CLAMP_V) ? GL_CLAMP_TO_EDGE : GL_REPEAT);
     }
     glGenTextures(1, &sWhite);
     glBindTexture(GL_TEXTURE_2D, sWhite);
@@ -893,7 +892,7 @@ static void frame_end(void) {
     }
     if (gsVuVertCount != 0) {
         glBindBuffer(GL_ARRAY_BUFFER, sVboVu);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(gsVuVertCount * 48), gsVuVerts);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(gsVuVertCount * VU_VERT_BYTES), gsVuVerts);
     }
     if (gsVuIdxCount != 0) {
         glBindVertexArray(sVaoVu);
@@ -985,7 +984,8 @@ static void frame_end(void) {
             if (cur != d->target) { bind_target(d->target, 0); cur = d->target; }
 #endif
             set_pipe(d->pipeline);
-            set_textures(sTgDep[d->target], 6, sAuxCopy, 6, (GLuint)d->tex, 6);
+            set_textures(sTgDep[d->target], GS_SAMPLER_NEAREST_CLAMPED, sAuxCopy, GS_SAMPLER_NEAREST_CLAMPED, (GLuint)d->tex,
+                         GS_SAMPLER_NEAREST_CLAMPED);
             set_params(params, 16);
             haveFu = 0; /* the Params block now holds this pass's: the next primitive sends its own again */
             if (d->blendc != lastBlendc) { glBlendColor(d->blendc, d->blendc, d->blendc, d->blendc); lastBlendc = d->blendc; }
@@ -998,10 +998,10 @@ static void frame_end(void) {
             if (!gsTargets[d->target].cleared) { continue; }
             if (cur != d->target) { bind_target(d->target, 0); cur = d->target; }
             set_native(d->native);
-            set_textures(sAuxCopy, 6, 0, 6, 0, 6);
+            set_textures(sAuxCopy, GS_SAMPLER_NEAREST_CLAMPED, 0, GS_SAMPLER_NEAREST_CLAMPED, 0, GS_SAMPLER_NEAREST_CLAMPED);
             params[0] = 1.0f / (float)GS_W;
             params[1] = 1.0f / (float)GS_H;
-            params[2] = 100.0f / 255.0f;
+            params[2] = GS_OUTLINE_DARKNESS;
             params[3] = getenv("BT3_FX_DEBUG") != NULL ? 1.0f : 0.0f;
             set_params(params, 16);
             haveFu = 0;
@@ -1033,7 +1033,7 @@ static void frame_end(void) {
             memcpy(&lastFu, &fu, sizeof(fu));
             haveFu = 1;
         }
-        set_textures((GLuint)d->tex, d->sampler, sDateCopy, 6, 0, 6);
+        set_textures((GLuint)d->tex, d->sampler, sDateCopy, GS_SAMPLER_NEAREST_CLAMPED, 0, GS_SAMPLER_NEAREST_CLAMPED);
         if (d->blendc != lastBlendc) { glBlendColor(d->blendc, d->blendc, d->blendc, d->blendc); lastBlendc = d->blendc; }
         set_scissor(d->scissor);
         if (d->vu) {
@@ -1085,7 +1085,7 @@ static void frame_end(void) {
             glBindVertexArray(sVaoGs); /* core profile needs a bound VAO to draw (the present uses no attributes) */
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, sTgCol[best]);
-            glBindSampler(0, sSamplers[7]); /* linear, clamped */
+            glBindSampler(0, sSamplers[GS_SAMPLER_LINEAR_CLAMPED]);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
@@ -1129,7 +1129,7 @@ static void frame_end(void) {
         if (every > 0 && gGsFrame % (unsigned)every == 0 && best >= 0 && gsTargets[best].cleared &&
             (getenv("BT3_SHOT_FROM") == NULL || (int)gGsFrame >= atoi(getenv("BT3_SHOT_FROM"))) &&
             (getenv("BT3_SHOT_TO") == NULL || (int)gGsFrame <= atoi(getenv("BT3_SHOT_TO")))) {
-            GLsizei w = 512 * SCALE, h = 448 * SCALE;
+            GLsizei w = GS_DISPLAY_W * SCALE, h = GS_DISPLAY_H * SCALE;
             int aux = getenv("BT3_SHOT_AUX") != NULL;
             uint8_t *px = malloc((size_t)w * h * 4);
             char name[64];
@@ -1171,9 +1171,9 @@ static void frame_end(void) {
     gsNative = 0;
 }
 
-/* Target i's picture, reduced to the GS's 512 x 448 (as the Vulkan back end's). */
+/* Target i's picture, reduced to the GS's display area (as the Vulkan back end's). */
 static int gl_target_read(int i, uint8_t *rgba) {
-    GLsizei w = 512 * SCALE, h = 448 * SCALE; /* (the picture's part of the target, as the screenshot's) */
+    GLsizei w = GS_DISPLAY_W * SCALE, h = GS_DISPLAY_H * SCALE; /* (the picture's part of the target, as the screenshot's) */
     uint8_t *px;
     int x, y;
 
@@ -1185,9 +1185,9 @@ static int gl_target_read(int i, uint8_t *rgba) {
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-    for (y = 0; y < 448; y++) { /* (rows come back in texture order: the first is the scene's top) */
-        for (x = 0; x < 512; x++) {
-            memcpy(rgba + (y * 512 + x) * 4, px + ((size_t)(y * SCALE + SCALE / 2) * w + x * SCALE + SCALE / 2) * 4, 4);
+    for (y = 0; y < GS_DISPLAY_H; y++) { /* (rows come back in texture order: the first is the scene's top) */
+        for (x = 0; x < GS_DISPLAY_W; x++) {
+            memcpy(rgba + (y * GS_DISPLAY_W + x) * 4, px + ((size_t)(y * SCALE + SCALE / 2) * w + x * SCALE + SCALE / 2) * 4, 4);
         }
     }
     free(px);
