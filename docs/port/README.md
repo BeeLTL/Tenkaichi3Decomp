@@ -1740,7 +1740,7 @@ the measured input delay). Not known: whether that connection was direct or thro
 **The log printed the other player's address** (asked by the user: "does the log leak ip?"). The copy that joins
 wrote "net: joining <address>:<port>" for every match, also when the address was the host's as the matchmaking
 service gave it (a room code, a quick match): a stranger's public address in a log that gets pasted into bug
-reports. In releases 0.1.11 to 0.1.27. Now the address is printed only when the player typed it (Join by
+reports. In every release that has room codes, up to 0.1.27 (which one was the first was not looked up). Now the address is printed only when the player typed it (Join by
 address); otherwise the line says the host was found by the service. Checked: both logs of a room-code match
 between two copies hold no address at all. The crash report has none either (it never had). Not printed anywhere:
 the player's own address.
