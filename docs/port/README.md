@@ -1618,3 +1618,25 @@ with in-between pictures).
 
 Both renderers run with all of this (the user saw the same in each; an Nvidia card's OpenGL and an integrated
 GPU's Vulkan gave the same pictures windowless, 50 pixels apart at most).
+
+## A flat blue triangle across the picture after leaving the water, at 16:9 only (2026-10-11)
+
+Found by the user at Kame House ("a vertex explosion for two seconds"); not in PCSX2 (checked by him), not at 4:3
+here (checked on his recording), and in the game's own pictures, not the in-between ones.
+
+- A ripple ring on the water (`EftWaterRing`, src/battle/eft_e.c) grows by a share of itself every tick
+  (`sizeVel += sizeVel * sizeDamp`) and within two seconds its size is the largest number a float holds: the
+  quad `EftWater_DrawGroundQuad` hands to the clipper then has corners at 1.7e38 (seen in a trace of the
+  clipper's input: a five-cornered polygon with positions of 1e9 to 1e38 and "distances" to the planes that put
+  kept corners far outside them).
+- Cut off at the view's edges with such numbers, the result is where the rounding puts it. On the console and at
+  4:3 that is off the screen and the triangles are dropped (`EftWater_IsClipped` for all three corners). With
+  the side planes of a 16:9 view (`EftGfx_UpdateClipPlanes`, widened by Port_WideFactor) one corner is on the
+  screen and two behind the eye: a triangle from the ring's middle to the far ends of the GS's coordinates.
+- Under `#ifdef PORT`, a ring of 100,000 units or more (ten times a map) is not drawn. Checked on the recording:
+  the three frames that showed it are clean, the ring while small is drawn as before, a 4:3 frame is the same
+  pixel for pixel. Checked by the user on screen.
+- The first fault that comes from the widescreen setting meeting an effect that grows without limit; others of
+  the kind would look the same (a flat shape across the picture for a moment) and are found the same way: the
+  draw by BT3_GPU_CUT, its vertices by BT3_GPU_DUMP (a corner at x = 2303.94 or -1792 is the GS's coordinate
+  range), then the clipper's caller.
