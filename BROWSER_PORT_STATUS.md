@@ -407,7 +407,38 @@ thresholds in the widescreen layout code (not constants of the same kind). Still
 back ends: the `BT3_GPU_CUT` / `BT3_GPU_TAIL` debug switches and the PPM screenshot writer (the writer is to be shared
 when the WebGPU back end needs it).
 
-### WebGPU back end: design (2026-10-11, phase 1 — nothing implemented yet)
+### WebGPU back end: implemented and compared with WebGL 2 (2026-10-11) — verified
+`port/src/gs/gs_wgpu.c` implements every `GsBackend` entry (commit c6a8aca); select it with `?gpu=webgpu`. WebGL 2 stays the
+default and the reference. Fixed objects are made in a validation error scope (init fails with WebGPU's message if one
+is wrong); uncaptured device errors are counted and logged; device loss is reported once and drawing stops.
+
+**Fidelity** (12 screenshots each, `bench.js --shots`, `compare_shots.js`; thresholds not relaxed — every difference examined):
+| run | result |
+|---|---|
+| boot (logos, opening movie through the display-buffer upload, title), frames 600-2800 | **12/12 identical** to WebGL 2 |
+| demo battle, hardware (RTX 5070 Ti; WebGL = ANGLE/D3D11, WebGPU = Dawn/D3D12) | 0 device errors, fight trace identical (8ad198bf58dbed33); 0.19-1.40 % of pixels differ, nearly all by 1 level, plus 3-28 isolated pixels per frame (pairs one GS pixel apart with colours swapped: nearest-texel ties) |
+| demo battle, both APIs on SwiftShader (`--chrome-flags use-angle=swiftshader` for WebGL; `use-webgpu-adapter=swiftshader,enable-unsafe-webgpu,enable-unsafe-swiftshader` for WebGPU), frames 300-750 | 0.008-0.012 % differ: single channels by 1 in the bilinear sky (interpolation rounding) and one pixel by 12 on a diagonal edge between two surfaces (a pixel centre on the shared edge: GL rasterizes the picture mirrored, its gl_Position.y flip, so the fill rule's tie goes the other way) |
+Conclusion: the large hardware outliers come from the two drivers; on a common rasterizer what remains is rounding and
+one edge tie, no rendering defect. Menus beyond the title and the settings window: not yet compared (below).
+
+**Performance** (demo battle, frames 300-2100, headless, no screenshots; `perf_gl2` / `perf_wgpu2`):
+| ms per frame | WebGL 2 mean / p95 / p99 / max | WebGPU mean / p95 / p99 / max |
+|---|---|---|
+| work (game + list) | 11.70 / 14.84 / 17.23 / 23.74 | **7.07 / 9.65 / 12.21 / 19.58** |
+| game | 2.33 / 3.17 / 5.61 / 8.94 | 2.87 / 3.98 / 5.08 / 15.78 |
+| list (replay + present) | 9.37 / 12.18 / 13.51 / 20.16 | **4.20 / 6.42 / 8.13 / 11.98** |
+| submit | 7.75 / 9.62 / 11.39 / 15.83 | **2.49 / 3.96 / 4.64 / 5.29** |
+Frames over the 33.4 ms budget (work): 0 / 1800 for both. Wall pacing identical (headless: 2 vblanks per frame).
+WebGPU objects by frame 2070 (`BT3_GS_VERBOSE=1`): 0 errors, 1984 textures made (all live: the shared cache), 12923
+bind groups (cached per texture and sampler, plus 1-2 table-pass groups a frame), 30 pipelines, uniform buffer 3.5 MB.
+Not measured yet: GPU time (needs `timestamp-query`), GPU memory in bytes. (With `BT3_GS_VERBOSE` the GL back end
+calls glGetError every frame, a GPU sync: don't compare GL timings taken with it.)
+
+**Not implemented**: the settings window (F1) with WebGPU — the overlay needs ImGui's WebGPU renderer
+(`imgui_impl_wgpu.cpp/.h`, v1.92.9b), not in the repository; the back end says so at start. Native pass 2 (alpha key)
+is no longer recorded; if it ever were, it is reported, not drawn.
+
+### WebGPU back end: design (2026-10-11; implemented as described, differences from the first draft marked *as built*)
 Inspected: `gs_draw.h` (GsBackend), `gs_draw.c` (recording, pipeline_get, targets), `gs_gl.c` (replay, native passes,
 present), `gs_gpu.c` (the Vulkan back end, the closest model), the nine shaders and their WGSL, the browser tests.
 
@@ -439,7 +470,8 @@ game's thread waits as it does for files. ImGui's `imgui_impl_wgpu.cpp/.h` taken
 | depth clamp (SDL GPU / GL: no depth clipping, depth clamped) | primitive `unclippedDepth` (feature `depth-clip-control`); if the adapter lacks it, said at start and listed as a difference (not hidden) |
 | native 4 / 5 (alpha-byte copies) | `CopyTextureToTexture` aux -> `sAuxCopy` / `sDateCopy` between render passes |
 | native 3 (depth table pass) | its own render pass: colour + aux, no depth attachment, sampling the target's depth (`unfilterable-float` + non-filtering sampler): legal in WebGPU (the GL feedback loop does not arise) |
-| native 1 / 2 (outline, alpha key) | own pass, colour only, the Vulkan back end's fixed blend states |
+| native 1 (outline) | *as built:* inside the target's own pass (colour + aux + depth): a fixed pipeline, colour reverse-subtract one/one with RGB written, aux not written, depth compare always without writes (= GL's depth test off), sampling the alpha-byte copy |
+| native 2 (alpha key) | not recorded any more (gs_draw.h); if it ever appears the replay reports it once and does not draw it |
 | native >= 100 (a picture uploaded into a display buffer) | `sFbTex` written with `WriteTexture`, drawn scaled into the target with a full-screen triangle (WebGPU has no blit) |
 | present | swapchain texture of the canvas (`getPreferredCanvasFormat`), cleared black, viewport = the letterboxed rectangle (`GsDraw_PictureSize`, top-left origin like Vulkan), the shown target's display area sampled linearly |
 | `targetRead` / screenshots | `CopyTextureToBuffer` (rows padded to 256 bytes), `MapAsync` + `WaitAny`; the PPM writer shared with the GL back end |
@@ -451,7 +483,15 @@ game's thread waits as it does for files. ImGui's `imgui_impl_wgpu.cpp/.h` taken
   0 aux texture, 1 sampler; dclut: 0 depth texture **unfilterable-float**, 1 sampler **non-filtering**, 2 aux, 3, 4 clut,
   5. Bind groups cached per (texture, sampler) on the texture's own record (`targetColor` / `texCreate` handles point to
   it), so a draw only switches a cached group.
-- group 3 (fragment): gs.frag `Params` 64 bytes; dclut / outline `Params` 16 bytes; dynamic offset. alphakey has none.
+- group 3 (fragment): gs.frag `Params` 64 bytes; dclut / outline / blit `Params` 16 bytes; dynamic offset. *As built:*
+  one params bind group of 64 bytes serves all of them (the 16-byte ones are written into a 64-byte slot); the layout's
+  minimum binding size is the largest user's. alphakey has none.
+- *As built:* the frame's uniform buffer holds every `U` block first (U i at i x the aligned slot, as the draws index
+  them), then one Params slot per draw that changes them and one for the present; it grows when a frame needs more
+  (bind groups made again then, before the replay), and is written with one `WriteBuffer` before the submit.
+- *As built:* the table pass's group 2 (target depth, alpha-byte copy, table) is made for each table pass and released
+  once the pass holds it (a few a frame); every other group is cached (per texture and sampler; the outline's and the
+  empty one made once).
 - One extra shader source, `shaders/blit.frag` (texture sampled over a uv rectangle), for the present and the scaled
   upload: GLSL like the others, translated by the same pipeline (Vulkan uses SDL's blit, GL its own present program;
   neither changes).
@@ -498,6 +538,8 @@ with WebGL 2), browser console and device validation errors.
 
 - 2026-10-11 (6): WGSL pipeline (naga 30.0.1 pinned), shared test driver. Commits c55c29c, 031c144.
 - 2026-10-11 (7): shared renderer layer clean-up (behaviour-preserving). Commits 359653e, efb4deb, 0d760f9, 902869d.
+- 2026-10-11 (8): WebGPU back end: init (bf2196f), blit shader (122dd4e), shared screenshot writer (7a251db), bench
+  --chrome-flags (25a1aab), the back end itself (c6a8aca); compared with WebGL 2 and measured (above).
 
 ## 6. Next milestone
 
