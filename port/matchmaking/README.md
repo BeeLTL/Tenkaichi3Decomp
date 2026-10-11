@@ -18,6 +18,47 @@ The table `rooms`, one row per room (rows older than ten minutes are removed whe
 | `host_name`, `join_name` | the players' names |
 | `host_addrs`, `join_addrs` | JSON: the addresses each game can be reached at ("ip:port"), best first |
 
+| `queue` | a quick-match room: which queue it waits in (`S`, `T`, `D10`, `D15`, `D20`); empty for a room with a code to hand on |
+| `who` | a quick-match room: a random text the host's game made up for this run, so that a room it left behind is not given back to it |
+
+## Quick match (from 0.1.27)
+
+A player who searches a queue is put with whoever waits longest in it, or, if nobody does, gets a room of their own
+in that queue and waits there exactly as a host with a room code does (the same `poll`, `addrs`, `leave`; the same
+relay rules and ceilings). Five queues: single battle, team battle, DP battle of 10, 15 and 20 DP; the game gives
+all of them no time limit. A room lasts ten minutes; the game searches again by itself when it runs out. Limits:
+60 searches an hour from one address, and the four open rooms per address that hosting has. One relay login is
+asked for per search, not per room: a search that starts again says it holds a relay address already.
+
+**Updating a Worker that is already set up** (in this order, so that nothing is refused in between):
+
+1. D1 -> `bt3-rooms` -> Console. Run these two lines, one at a time:
+   `ALTER TABLE rooms ADD COLUMN queue TEXT;`
+   `ALTER TABLE rooms ADD COLUMN who TEXT;`
+2. The Worker -> Edit code: replace everything with the new `worker.js`, Deploy.
+
+Older releases of the game are not affected: they do not send the new request, and rooms with codes work as before.
+Until the Worker is updated, a game that has the Quick match tab says "The matchmaking service does not know quick
+match yet." when a search is started.
+
+## Only the newest release (from 0.1.29)
+
+The game tells the service which release it is (`rel`: 129 for 0.1.29). With the variable `MIN_RELEASE` set on the
+Worker (Settings -> Variables and Secrets, a plain variable, e.g. `129`), a new room, a join or a quick-match search
+from an older game is refused, and so is one from a game that does not say (0.1.28 and earlier). Rooms under way
+are not touched. Without the variable, or at 0, everyone is let in.
+
+- When its online screen opens, a game of 0.1.29 or later asks (`/v1/hello`) and, if it is below the minimum,
+  shows at the top of that screen: "Update available. Online servers are unreachable until you update.", with its
+  own number and the one that is needed. The same words answer a refused room, join or search.
+- A second variable, `LATEST_RELEASE`, is optional: a game older than it, but not below the minimum, shows
+  "Update available: release 0.1.NN." there and goes on working.
+- Raise it when a release must be the minimum; it takes effect at the next request, with no new code.
+- A game of 0.1.29 or later that is refused says so: "This release is too old ... Get the newest release."
+  An older one shows its own words for an answer it does not know ("gave no room", "gave no answer").
+- It closes the service, not the game: two copies of an old release can still play each other by typing an
+  address (Host on a port / Join by address), and the source is open, so a changed copy can claim any number.
+
 ## What it keeps
 
 For at most ten minutes per room: the room code, the two player names, the addresses each game reported about
@@ -46,6 +87,16 @@ host of a room also gets an address at Cloudflare's TURN service that passes the
 Without the two secrets the Worker works as before, without a relay. The key never leaves the Worker: each host is
 handed a name and password that are good for three hours. Cloudflare's TURN is free for the first 1,000 GB a month
 (a match is about 50 MB an hour, and only matches that cannot connect directly use it).
+
+## A relay login only when a match needs one (from 0.1.29)
+
+A game of 0.1.29 or later gets no relay login with its room. The two games first try to reach each other directly;
+if they have not after four seconds, the host asks (`/v1/relay`, answered only once someone has joined), takes a
+relay address, adds it to the room, and the one who joined learns it by asking the room again (`/v1/poll`). Logins
+are then used by matches that need the relay, not by rooms: with a login for every room, the first day of quick
+match used up the day's 500 on searches that never played through the relay, and the relay was off for everyone
+until midnight UTC. An older game is still given its login with the room. `TURN_DAILY_MAX` (a plain variable)
+raises the day's count if it is ever reached again; what protects the bill is the measuring below, not that count.
 
 ## A ceiling on the relay's use
 

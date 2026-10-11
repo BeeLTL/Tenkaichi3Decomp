@@ -59,13 +59,30 @@ static void regions_init(void) {
         if (fp == NULL) {
             fprintf(stderr, "bt3: state: %s is missing (written by port/tools/make_state.py at link time)\n", path);
         } else {
+            /* The list's first two lines say which program it was made for: "0 <address of gPortResim>" and
+               "1 <address of gPortVBlanks>" there. A list of another release (seen on Windows: a new .exe put
+               next to the old files) names addresses that are something else here, code among them, and the
+               first state put back was written over that: a crash at the start of an online match. */
+            extern unsigned gPortVBlanks; /* plat_stub.c */
+            int marks = 0;
             while (sRegions < MAX_REGIONS - 2 && fscanf(fp, "%llx %llx", &a, &size) == 2) {
+                if (a < 2) {
+                    marks += (uintptr_t)size == (a == 0 ? (uintptr_t)&gPortResim : (uintptr_t)&gPortVBlanks);
+                    continue;
+                }
                 sRegion[sRegions].p = (const uint8_t *)(uintptr_t)a;
                 sRegion[sRegions].n = (size_t)size;
                 sRegion[sRegions].what = "globals";
                 sRegions++;
             }
             fclose(fp);
+            if (marks != 2) {
+                extern void Port_UiNotice(const char *text);
+                fprintf(stderr, "bt3: state: %s is not this program's (it is from another release). Online play starts the slow way and "
+                                "without rollback. Copy ALL the files of a release, not only the program.\n", path);
+                Port_UiNotice("Files of two different releases are mixed: copy all the files of the release, not only the program.");
+                sRegions = 0;
+            }
             sListed = sRegions > 0;
         }
     }

@@ -41,8 +41,22 @@ int func_00296B48() { return 0; }      /* sceSdRemoteCallbackInit */
 static int (*sVsyncHandler)(int);
 void sceGsResetGraph() {}
 void sceGsResetPath() {}
-void sceGsSetDefStoreImage() {}
-int sceGsExecStoreImage() { return 0; }
+/* Reading pixels back from the GS (the screen cross-fade of the fight's scenes reads the frame being shown: stg_b.c).
+   SetDef says what: the place in GS memory (in 64-pixel units), the size; Exec delivers it, 3 bytes a pixel. */
+static int sStoreBp, sStoreW, sStoreH;
+int sceGsSetDefStoreImage(void *si, int sbp, int sbw, int spsm, int x, int y, int w, int h) {
+    (void)si; (void)sbw; (void)spsm; (void)x; (void)y;
+    sStoreBp = sbp & 0xFFFF;
+    sStoreW = w & 0xFFFF;
+    sStoreH = h & 0xFFFF;
+    return 0;
+}
+int sceGsExecStoreImage(void *si, void *dst) {
+    extern void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb); /* gs/gs_core.c */
+    (void)si;
+    Gs_StoreImage((unsigned)sStoreBp, (unsigned)sStoreW, (unsigned)sStoreH, (unsigned char *)dst);
+    return 0;
+}
 int sceGsSyncPath() { return 0; }
 void *sceGsSyncVCallback(int (*handler)(int)) { void *old = (void *)sVsyncHandler; sVsyncHandler = handler; return old; }
 /* One vertical blank: runs the game's VBlank handler, as the interrupt would. */
@@ -78,6 +92,18 @@ int Port_VBlankUsLeft(void) {
     return sPaceNext > t && sPaceNext - t < 100000000ull ? (int)((sPaceNext - t) / 1000ull) : 0;
 }
 
+/* How far behind its grid the game is, in microseconds: the coming vertical blank was due that long ago (0: it
+   is not due yet, or there is no grid). For gs/gs_draw.c, which leaves pictures out when the machine is behind. */
+int Port_PaceBehindUs(void) {
+    unsigned long long t = now_ns();
+    return sPaceNext != 0 && t > sPaceNext && t - sPaceNext < 100000000ull ? (int)((t - sPaceNext) / 1000ull) : 0;
+}
+
+/* A vertical blank's length: 16.68 ms, or a sixth less in an online session played at 120% (gs/net.c). */
+extern int Port_NetSpeedMilli(void);
+#define BLANK_NS (16683350ull * 1000ull / (unsigned long long)Port_NetSpeedMilli())
+unsigned long long Port_BlankNs(void) { return BLANK_NS; }
+
 static void vblank_wait(void) {
     struct timespec ts;
     unsigned long long t = now_ns(), after;
@@ -96,7 +122,7 @@ static void vblank_wait(void) {
            a new grid instead, as this did before, added a full period to every such frame: a machine that needed
            20 ms per frame ran the fight at 27 frames per second and unevenly, though it was within the budget.) */
         after = t;
-        next += 16683350ull;
+        next += BLANK_NS;
         sPaceLate++;
     } else if (next > t && next - t < 100000000ull) {
 #ifdef _WIN32
@@ -120,10 +146,10 @@ static void vblank_wait(void) {
 #endif
         after = now_ns();
         gPortSleptNs += after - t; /* the time really spent waiting (a sleep can return early or late) */
-        next += 16683350ull;
+        next += BLANK_NS;
     } else {
         after = t;
-        next = t + 16683350ull; /* the first one, or more than a tenth of a second behind: a new grid from now */
+        next = t + BLANK_NS; /* the first one, or more than a tenth of a second behind: a new grid from now */
         sPaceReset++;
     }
     /* BT3_GS_VERBOSE: once a second, how evenly the vertical blanks came (they should be 16.68 ms apart) */
@@ -330,7 +356,11 @@ int sceVibSetActParam() { return 0; }
    The game's projection, culling and effect proportions take Port_WideFactor() (src/battle/btl_cam.c, stg_a.c,
    eft_*.c, all #ifdef PORT); the renderer keeps 2D art in proportion and shows the picture at this shape
    (port/src/gs/gs_gpu.c). */
-static int sAspectMilli = -1;
+/* (PORT_HOST: the player's setting, not the game's state. Without it the shape was saved and put back with the
+   game: a session starts by going back to the state of the program's first moments, so a shape chosen in the
+   settings window during the run went back to what it was at start, 4:3 on a first run. Reported as "joining a
+   match resets the screen to 4:3".) */
+PORT_HOST static int sAspectMilli = -1;
 extern int Port_Setting(const char *name, int def); /* plat_settings.c */
 int Port_AspectMilli(void) {
     if (sAspectMilli < 0) {
@@ -347,6 +377,24 @@ int Port_AspectMilli(void) {
         }
         if (sAspectMilli < 1333) { sAspectMilli = 1333; }
         if (sAspectMilli > 4000) { sAspectMilli = 4000; }
+    }
+    {
+        /* BT3_ASPECT_AT=<frame>:<w>:<h> (testing): from that frame on the shape is w:h, as if it had been changed in
+           the settings window at that moment (a run without a window can then show a change made during a fight). */
+        static int at = -2, to;
+        extern unsigned gGsFrame; /* gs_core.c */
+        if (at == -2) {
+            int f = 0, w = 0, h = 0;
+            const char *e = getenv("BT3_ASPECT_AT");
+            at = -1;
+            if (e != NULL && sscanf(e, "%d:%d:%d", &f, &w, &h) == 3 && w > 0 && h > 0) {
+                at = f;
+                to = w * 1000 / h;
+            }
+        }
+        if (at >= 0 && (int)gGsFrame >= at) {
+            return to < 1333 ? 1333 : to > 4000 ? 4000 : to;
+        }
     }
     return sAspectMilli;
 }

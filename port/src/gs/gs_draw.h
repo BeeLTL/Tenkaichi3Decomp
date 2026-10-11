@@ -61,6 +61,8 @@ typedef struct GsTarget {
 
 /* One recorded primitive. Everything inside is GS state or a handle a back end made (`tex`, `pipeline`); a
    back end replays the list by rebuilding its passes around the current target and calling the pipeline. */
+extern float gsZMax; /* gs_draw.c */
+
 typedef struct GsDraw {
     int vu;      /* 1, 2, 3: vertex programs' vertices (gsVuVerts, uniform block at `uniform`); 0: gsVerts */
     int uniform;
@@ -80,6 +82,7 @@ typedef struct GsDraw {
     float orig[4];  /* a texture pack's replacement: xy = the original texture's size in texels, z = its largest alpha */
     float blendc;
     int scissor[4]; /* x, y, width, height, at SCALE */
+    int wall;       /* triangles of the wall at the edge of the map (gs_draw.c, Port_WallMesh): in-between pictures draw it anew */
 } GsDraw;
 
 /* The formats a texture pack's replacement can be in (matches gs_texpack.h's TexPackImage.format). */
@@ -146,6 +149,8 @@ typedef struct GsBackend {
     GsTex (*targetAux)(int i);
     GsTex (*targetDepth)(int i);
     int (*pipeGet)(uint32_t key);         /* the back end's pipeline for a key, creating it if new */
+    int (*targetRead)(int i, uint8_t *rgba); /* target i's picture as 512 x 448 RGBA, top row first; 0 = not read */
+    void (*targetCopy)(int src, int dst);    /* the colour of target src into target dst, as it is now */
 } GsBackend;
 
 extern GsBackend sVulkanBackend; /* gs_gpu.c */
@@ -154,5 +159,7 @@ extern GsBackend sGlBackend;     /* gs_gl.c */
 /* gs_draw.c: the shared target table's entry for a frame-buffer address (create: one is made if absent,
    with the back end's attachments through GsBackend.targetEnsure). */
 int GsDraw_TargetGet(uint32_t fbp, int create);
+
+void GsGpu_TitlePoll(void); /* gs_draw.c */
 
 #endif

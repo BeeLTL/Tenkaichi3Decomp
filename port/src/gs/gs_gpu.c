@@ -338,6 +338,34 @@ static int pipe_get(uint32_t key) {
     return pipeline_create(key, 1);
 }
 
+/* How a finished picture reaches the display. on = 0: without waiting for it (MAILBOX: no tearing, no wait; else
+   IMMEDIATE); on = 1: at its refresh (VSYNC, the settings window's "V-sync"). */
+static int sVsyncPending = -1; /* asked for from the settings window: -1 nothing, else 0 / 1 */
+
+static void vsync_apply(int on);
+
+/* From the settings window, which is drawn inside a frame: the swapchain's picture of that frame is already taken,
+   and changing how it presents then made the driver crash in the window's own drawing (found by the user: ticking
+   "V-sync" closed the game). Kept until the next frame starts (frame_end, before anything of it is acquired). */
+void GsGpu_Vsync(int on) {
+    sVsyncPending = on != 0;
+}
+
+static void vsync_apply(int on) {
+    SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
+    if (sDev == NULL || sWindow == NULL) {
+        return;
+    }
+    SDL_WaitForGPUIdle(sDev); /* (nothing of an earlier frame still on its way to the old swapchain) */
+    if (!on && SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_MAILBOX)) {
+        mode = SDL_GPU_PRESENTMODE_MAILBOX;
+    } else if (!on && SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+        mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+    }
+    SDL_SetGPUSwapchainParameters(sDev, sWindow, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+    fprintf(stderr, "bt3: present mode %s\n", mode == SDL_GPU_PRESENTMODE_MAILBOX ? "mailbox" : mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? "immediate" : "vsync");
+}
+
 /* --- init --------------------------------------------------------------------------------------- */
 
 static int vk_init(void) {
@@ -357,16 +385,7 @@ static int vk_init(void) {
     }
     /* The game paces itself at 30 frames per second; waiting for the display's own refresh on top of that
        (VSYNC) costs up to a refresh period per frame. Prefer MAILBOX (no tearing, no wait), then IMMEDIATE. */
-    {
-        SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
-        if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_MAILBOX)) {
-            mode = SDL_GPU_PRESENTMODE_MAILBOX;
-        } else if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
-            mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
-        }
-        SDL_SetGPUSwapchainParameters(sDev, sWindow, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
-        fprintf(stderr, "bt3: present mode %s\n", mode == SDL_GPU_PRESENTMODE_MAILBOX ? "mailbox" : mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? "immediate" : "vsync");
-    }
+    vsync_apply(Port_Setting("vsync", 0)); /* (the setting "V-sync" asks for the wait all the same) */
     sVs = shader(kGsVertSpv, sizeof(kGsVertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
     sFs = shader(kGsFragSpv, sizeof(kGsFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
     if (sVs == NULL || sFs == NULL) {
@@ -492,16 +511,21 @@ static void vk_frame_end(void) {
     uint64_t sEndT[5];
     int lastPipe = -1, lastUni = -1, lastSampler = -1, haveFu = 0, haveScissor = 0; /* what the pass has set (the replay loop) */
     SDL_GPUTexture *lastTex = NULL;
-    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } lastFu;
+    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; float extra[4]; } lastFu;
     int lastScissor[4];
     float lastBlend = -1.0f;
     uint32_t n;
 
+    GsGpu_TitlePoll();
+    if (sVsyncPending >= 0) {
+        vsync_apply(sVsyncPending);
+        sVsyncPending = -1;
+    }
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) {
             exit(0);
         }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) {
+        if (PortInput_Hotkey(&ev)) { /* F1, START + SELECT, or what the settings window's list says */
             Ui_Toggle();
             continue;
         }
@@ -509,7 +533,7 @@ static void vk_frame_end(void) {
             continue;
         }
         if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) {
-            exit(0);
+            if (!ev.key.repeat && !Ui_QuitAsk()) { exit(0); } /* (asks first) */
         }
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
             extern int gsInterp;
@@ -538,6 +562,18 @@ static void vk_frame_end(void) {
             fprintf(stderr, "cut: first dropped draw: native %d target %d (fbp %03x) vu %d count %u tex_is_target %d mode %d %d %d %d\n", d->native,
                     d->target, d->target >= 0 ? gsTargets[d->target].fbp : 0, d->vu, d->count, d->tex_is_target, d->mode[0], d->mode[1], d->mode[2], d->mode[3]);
             gsDrawCount = n;
+        }
+    }
+    if (getenv("BT3_GPU_DUMP") != NULL && (int)gGsFrame == atoi(getenv("BT3_GPU_DUMP")) && strchr(getenv("BT3_GPU_DUMP"), ':') != NULL) {
+        /* BT3_GPU_DUMP=<frame>:<n>: every vertex of that frame's draw n (one the game transformed itself) */
+        uint32_t k = (uint32_t)atoi(strchr(getenv("BT3_GPU_DUMP"), ':') + 1), j;
+        if (k < gsDrawCount && !gsDraws[k].native && !gsDraws[k].vu) {
+            const GsDraw *d = &gsDraws[k];
+            fprintf(stderr, "dump: draw %u: %u vertices, pipeline key %08x, mode %d %d %d %d\n", k, d->count, sPipes[d->pipeline].key, d->mode[0], d->mode[1], d->mode[2], d->mode[3]);
+            for (j = 0; j < d->count; j++) {
+                const Vtx *v = &gsVerts[d->first + j];
+                fprintf(stderr, "dump: %3u (%.2f, %.2f) z %.9f st %.4f %.4f q %.5f rgba %u %u %u %u\n", j, v->x, v->y, v->z, v->s, v->t, v->q, v->r, v->g, v->b, v->a);
+            }
         }
     }
     if (getenv("BT3_GPU_TAIL") != NULL && (int)gGsFrame == atoi(getenv("BT3_GPU_TAIL"))) { /* the frame's last draws */
@@ -679,7 +715,7 @@ static void vk_frame_end(void) {
         SDL_GPUBufferBinding vb;
         SDL_GPUTextureSamplerBinding ts;
         SDL_FColor bc;
-        struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } fu;
+        struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; float extra[4]; } fu;
 
         if (d->native >= 100) { /* a picture uploaded into this display buffer (GsGpu_FbUpload): scaled into its texture */
             SDL_GPUBlitInfo bl;
@@ -882,6 +918,7 @@ static void vk_frame_end(void) {
         memcpy(fu.misc, d->misc, sizeof(fu.misc));
         memcpy(fu.rect, d->rect, sizeof(fu.rect));
         memcpy(fu.orig, d->orig, sizeof(fu.orig));
+        fu.extra[0] = d->vu ? (gsVuUni[d->uniform].misc[2] > 0.0f ? gsVuUni[d->uniform].misc[2] : 0.0f) : gsZMax;
         if (!haveFu || memcmp(&fu, &lastFu, sizeof(fu)) != 0) {
             SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
             memcpy(&lastFu, &fu, sizeof(fu));
@@ -1129,6 +1166,76 @@ static void vk_frame_end(void) {
     gsNative = 0;
 }
 
+/* Target i's picture, reduced to the GS's 512 x 448 (the nearest pixel of each: the cross-fade it is for is a
+   half-second blend). A copy from the card, waited for: a few times in a fight's intro. */
+static int vk_target_read(int i, uint8_t *rgba) {
+    SDL_GPUTransferBufferCreateInfo ti;
+    SDL_GPUTransferBuffer *tb;
+    SDL_GPUTextureRegion src;
+    SDL_GPUTextureTransferInfo dst;
+    SDL_GPUCommandBuffer *cmd;
+    SDL_GPUCopyPass *cp;
+    SDL_GPUFence *fence;
+    Uint32 w = 512 * SCALE, h = 448 * SCALE, x, y; /* (the picture's part of the target, as the screenshot's) */
+    const uint8_t *px;
+
+    if (sDev == NULL || sTgCol[i] == NULL) {
+        return 0;
+    }
+    SDL_zero(ti);
+    ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    ti.size = w * h * 4;
+    tb = SDL_CreateGPUTransferBuffer(sDev, &ti);
+    if (tb == NULL) {
+        return 0;
+    }
+    cmd = SDL_AcquireGPUCommandBuffer(sDev);
+    cp = SDL_BeginGPUCopyPass(cmd);
+    SDL_zero(src);
+    src.texture = sTgCol[i];
+    src.w = w;
+    src.h = h;
+    src.d = 1;
+    SDL_zero(dst);
+    dst.transfer_buffer = tb;
+    SDL_DownloadFromGPUTexture(cp, &src, &dst);
+    SDL_EndGPUCopyPass(cp);
+    fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    SDL_WaitForGPUFences(sDev, true, &fence, 1);
+    SDL_ReleaseGPUFence(sDev, fence);
+    px = SDL_MapGPUTransferBuffer(sDev, tb, false);
+    if (px != NULL) {
+        for (y = 0; y < 448; y++) {
+            for (x = 0; x < 512; x++) {
+                memcpy(rgba + (y * 512 + x) * 4, px + ((size_t)(y * SCALE + SCALE / 2) * w + x * SCALE + SCALE / 2) * 4, 4);
+            }
+        }
+        SDL_UnmapGPUTransferBuffer(sDev, tb);
+    }
+    SDL_ReleaseGPUTransferBuffer(sDev, tb);
+    return px != NULL;
+}
+
+static void vk_target_copy(int src, int dst) {
+    SDL_GPUCommandBuffer *cmd;
+    SDL_GPUBlitInfo bl;
+    if (sDev == NULL || sTgCol[src] == NULL || sTgCol[dst] == NULL) {
+        return;
+    }
+    cmd = SDL_AcquireGPUCommandBuffer(sDev);
+    SDL_zero(bl);
+    bl.source.texture = sTgCol[src];
+    bl.source.w = GS_W * SCALE;
+    bl.source.h = GS_H * SCALE;
+    bl.destination.texture = sTgCol[dst];
+    bl.destination.w = GS_W * SCALE;
+    bl.destination.h = GS_H * SCALE;
+    bl.load_op = SDL_GPU_LOADOP_DONT_CARE;
+    bl.filter = SDL_GPU_FILTER_NEAREST;
+    SDL_BlitGPUTexture(cmd, &bl);
+    SDL_SubmitGPUCommandBuffer(cmd);
+}
+
 GsBackend sVulkanBackend = {
     "vulkan",
     vk_init,
@@ -1145,4 +1252,6 @@ GsBackend sVulkanBackend = {
     target_aux,
     target_depth,
     pipe_get,
+    vk_target_read,
+    vk_target_copy,
 };

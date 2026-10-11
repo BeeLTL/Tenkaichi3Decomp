@@ -247,6 +247,15 @@ static int stream_ready(void) {
             SDL_BindAudioStream(dev, sStream);
         }
     }
+    if (sStream != NULL) { /* (the pace of an online session at 120%: the effects with it, see snd_adx.c) */
+        extern int Port_NetSpeedMilli(void); /* net.c */
+        static int was = 1000;
+        int now = Port_NetSpeedMilli();
+        if (now != was) {
+            was = now;
+            SDL_SetAudioStreamFrequencyRatio(sStream, (float)now / 1000.0f);
+        }
+    }
     return sStream != NULL;
 }
 

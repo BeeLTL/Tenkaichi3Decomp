@@ -5,6 +5,7 @@ layout(location = 0) in vec4 vColor;
 layout(location = 1) in vec3 vStq;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outAux; // .r: the alpha byte exactly as the GS stores it (object numbers live there)
+layout(depth_less) out float gl_FragDepth; // (only ever made smaller: the early depth test stays valid)
 layout(set = 2, binding = 0) uniform sampler2D tex;
 layout(set = 2, binding = 1) uniform sampler2D dateTex; // a copy of the target's alpha bytes, for the destination alpha test
 layout(set = 3, binding = 0) uniform Params {
@@ -16,6 +17,7 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 rect;   // textured from a frame buffer (mode.x == 2): the uv range that may be sampled
     vec4 orig;   // a texture pack's replacement: xy = the original texture's size (2D art, misc.w < 0);
                  // z = the original's largest alpha
+    vec4 extra;  // x: the depth buffer's largest value (0xFFFFFF for 24 bits)
 } p;
 // 1.0 where v is not negative
 vec2 step2(vec2 v) { return vec2(v.x >= 0.0 ? 1.0 : 0.0, v.y >= 0.0 ? 1.0 : 0.0); }
@@ -44,6 +46,20 @@ void main() {
             vec2 at = uv - (dx * (f.x - g.x) + dy * (f.y - g.y)); // where the GS takes it
             if (p.misc.w > 0.0) {
                 uv = at;
+            } else if (p.mode.x != 3 || p.orig.w != 0.0) {
+                // The game's own 2D art, shown smooth (BT3_2D_SMOOTH): the coordinate of this output pixel as it
+                // is. The GS shows the texel its whole pixel falls into over the whole GS pixel, so that texel's
+                // middle belongs at the GS pixel's middle, which is where the plain coordinate puts it; the
+                // filter then blends towards the neighbours on either side. Held inside the piece's own rectangle
+                // of the sheet (rect), by the middles of its edge texels, so nothing of the next piece is blended
+                // in. (The replacement's rule below, tried here, chooses between two formulas by a derivative
+                // for every pixel: on art near one texel a pixel the choice flickered from pixel to pixel, seen as
+                // comb-like stripes in small text.)
+                // A texture pack's replacement takes this rule too (orig.w, set unless BT3_TEX_GRID=1): the rule below
+                // holds the picture to the GS's pixel grid, so a piece that glides by parts of a GS pixel (the main
+                // menu's entries) had its letters step one after the other: text that tears while it moves.
+                vec2 inset = 0.5 / vec2(textureSize(tex, 0));
+                uv = clamp(uv, p.rect.xy + inset, p.rect.zw - inset);
             } else {
                 // A texture pack's replacement (several texels per original texel; orig.xy = the original's size,
                 // rect = this piece's rectangle of the sheet). o: this output pixel's place inside its GS pixel.
@@ -51,7 +67,10 @@ void main() {
                 // falls into, so the output pixel shows the matching part of that texel; otherwise the
                 // coordinate is carried on from `at`, half a GS pixel to either side.
                 vec2 o = (f - g) / s, step = vec2(dx.x, dy.y) * s * p.orig.xy; // texels per GS pixel
-                vec2 snapped = (floor(at * p.orig.xy) + mix(1.0 - o, o, step2(step))) / p.orig.xy;
+                // (`at` lies ON a texel boundary where a piece has whole-texel coordinates: a 64th of a texel in the
+                // piece's direction decides which side, as the piece's rectangle is worked out. Without it the
+                // rounding of `at` chose from pixel to pixel: columns of a letter missing, steps along a logo.)
+                vec2 snapped = (floor(at * p.orig.xy + sign(step) / 64.0) + mix(1.0 - o, o, step2(step))) / p.orig.xy;
                 vec2 carried = at + (o - 0.5) * vec2(dx.x, dy.y) * s;
                 bvec2 one = lessThan(abs(abs(step) - 1.0), vec2(0.02));
                 uv = vec2(one.x ? snapped.x : carried.x, one.y ? snapped.y : carried.y);
@@ -96,6 +115,11 @@ void main() {
                     f == 4 ? abs(ag - p.misc.x) < tol : f == 5 ? ag >= ref : f == 6 ? ag > ref : abs(ag - p.misc.x) >= tol;
         if (!pass) discard;
     }
+    // The GS keeps and compares depth as whole numbers. Two surfaces in one plane (a waterfall on its rock, a
+    // decal on the ground) then tie and the later one is drawn over the earlier; with fractions kept, one of them
+    // wins by a hair, here this triangle and there that one, and it changes as the camera moves. (Not with 32
+    // bits: a float has no room for those.)
+    gl_FragDepth = p.extra.x > 0.0 && p.extra.x < 2.0e7 ? floor(gl_FragCoord.z * p.extra.x) / p.extra.x : gl_FragCoord.z;
     outColor = vec4(clamp(rgb, 0.0, 1.0), clamp(a, 0.0, 1.0));
     float ab = clamp(a * 128.0 / 255.0, 0.0, 1.0);
     if (p.misc.z != 0.0) ab = (float(int(ab * 255.0 + 0.5) | 128)) / 255.0; // FBA
