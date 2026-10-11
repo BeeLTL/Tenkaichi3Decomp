@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tenkaichi3Decomp (browser)</title>
+<style>
+  :root { --bg: #0d0f14; --panel: #161a22; --text: #d8dce4; --dim: #8a93a5; --ok: #6fcf8f; --bad: #ff6b6b; --warn: #f0b85a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  #stage { width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; overflow: hidden; position: relative; }
+  #canvas { width: 100%; height: 100%; display: block; outline: none; }
+  #start { position: absolute; inset: 0; margin: auto; width: 200px; height: 56px; font-size: 16px; border-radius: 8px;
+           border: 1px solid #3a4152; background: #232938; color: var(--text); cursor: pointer; }
+  #start:disabled { opacity: .5; cursor: default; }
+  section { background: var(--panel); border-radius: 6px; padding: 10px 12px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 0 0 6px; }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 3px; }
+  .ok::before { content: "✓ "; color: var(--ok); } .bad::before { content: "✗ "; color: var(--bad); }
+  .wait::before { content: "… "; color: var(--warn); }
+  #error { display: none; border: 1px solid var(--bad); }
+  #error pre, #log { font: 12px ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; margin: 0; }
+  #log { max-height: 320px; overflow: auto; color: var(--dim); }
+  #stats { font: 12px ui-monospace, monospace; color: var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tenkaichi3Decomp — browser build</h1>
+  <div id="stage">
+    <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+    <button id="start" disabled>Checking…</button>
+  </div>
+  <section id="error"><h2>Stopped</h2><pre id="errtext"></pre></section>
+  <section><h2>Start-up</h2><ul id="steps"></ul><div id="stats"></div></section>
+  <section><h2>Log</h2><pre id="log"></pre></section>
+</main>
+<script src="bt3_data.js"></script>
+<script>
+'use strict';
+// Query: ?data=<url of the gamedata folder> (default /gamedata/), ?env=NAME=value,NAME=value (the game's BT3_*
+// variables), ?autostart=1 (no click; sound may stay muted until one), ?report=<name> (the log is posted to the
+// dev server's /__result for unattended tests).
+const q = new URLSearchParams(location.search);
+const dataBase = q.get('data') || '/gamedata/';
+const report = q.get('report');
+const logEl = document.getElementById('log'), stepsEl = document.getElementById('steps');
+const lines = [];
+let reported = 0, mod = null, stopped = false;
+
+function log(s) {
+  s = String(s);
+  lines.push(s);
+  console.log(s);
+  logEl.textContent += s + '\n';
+  if (logEl.textContent.length > 200000) logEl.textContent = logEl.textContent.slice(-150000);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function step(text, state = 'wait') {
+  const li = document.createElement('li');
+  li.className = state;
+  li.textContent = text;
+  stepsEl.appendChild(li);
+  log(`[${state === 'ok' ? 'ok' : state === 'bad' ? 'FAIL' : '..'}] ${text}`);
+  return (t, s) => { li.textContent = t; li.className = s; log(`[${s === 'ok' ? 'ok' : s === 'bad' ? 'FAIL' : '..'}] ${t}`); };
+}
+function stop(title, detail) {
+  if (stopped) return;
+  stopped = true;
+  let ctx = '';
+  try { if (mod && mod._Port_CrashContext) ctx = '\nengine ' + mod.UTF8ToString(mod._Port_CrashContext()); } catch (e) { ctx = ''; }
+  const text = `${title}\n${detail || ''}${ctx}`;
+  document.getElementById('error').style.display = 'block';
+  document.getElementById('errtext').textContent = text;
+  log('STOPPED: ' + text);
+  flush();
+}
+async function flush() {
+  if (!report || reported >= lines.length) return;
+  const body = lines.slice(reported).join('\n');
+  reported = lines.length;
+  try { await fetch(`/__result?name=${encodeURIComponent(report)}`, { method: 'POST', body }); } catch (e) { /* no dev server */ }
+}
+if (report) setInterval(flush, 1000);
+addEventListener('error', (e) => stop('Uncaught error', (e.error && e.error.stack) || e.message));
+addEventListener('unhandledrejection', (e) => stop('Unhandled rejection', (e.reason && e.reason.stack) || String(e.reason)));
+
+const data = new Bt3Data(dataBase, { log });
+setInterval(() => {
+  const s = data.stats;
+  document.getElementById('stats').textContent =
+    `data: ${s.files} files opened, ${s.requests} requests, ${(s.bytes / 1048576).toFixed(1)} MB fetched, ` +
+    `${s.hits} cache hits / ${s.misses} misses, ${s.errors} errors, cache ${(data.cached / 1048576).toFixed(1)} MB` +
+    (mod ? `; memory ${(mod.HEAPU8.length / 1048576).toFixed(0)} MB` : '');
+}, 500);
+
+async function checks() {
+  let ok = true;
+  const c = (cond, good, badText) => { step(cond ? good : badText, cond ? 'ok' : 'bad'); ok = ok && cond; };
+  c(typeof WebAssembly === 'object', 'WebAssembly available', 'WebAssembly is not available');
+  c(typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function',
+    'JavaScript Promise Integration (JSPI) available',
+    'JSPI is not available in this browser (needed: the game waits for files and frames). Use a current Chrome or Edge.');
+  const gl = document.createElement('canvas').getContext('webgl2');
+  c(!!gl, `WebGL 2 available (${gl ? gl.getParameter(gl.VERSION) : ''})`, 'WebGL 2 is not available');
+  const s = step(`game data at ${dataBase}`);
+  try {
+    const n = await data.init();
+    const size = await data.size('disc/SLUS_216.78');
+    if (size > 0) s(`game data at ${dataBase}: reachable (${n ? n + ' files in its manifest' : 'no manifest: sizes by HEAD'})`, 'ok');
+    else { s(`game data at ${dataBase}: disc/SLUS_216.78 not found (${size === -1 ? 'HTTP 404' : 'server error'}). ` +
+             'Serve your own unpacked gamedata folder there (see BROWSER_PORT_STATUS.md).', 'bad'); ok = false; }
+  } catch (e) { s(`game data at ${dataBase}: ${e.message}`, 'bad'); ok = false; }
+  return ok;
+}
+
+async function start() {
+  const btn = document.getElementById('start');
+  btn.style.display = 'none';
+  const env = {};
+  for (const kv of (q.get('env') || '').split(',').filter(Boolean)) {
+    const i = kv.indexOf('=');
+    env[kv.slice(0, i)] = kv.slice(i + 1);
+  }
+  let s = step('loading bt3.js');
+  await new Promise((res, rej) => {
+    const el = document.createElement('script');
+    el.src = 'bt3.js';
+    el.onload = res;
+    el.onerror = () => rej(new Error('bt3.js could not be loaded'));
+    document.head.appendChild(el);
+  }).catch((e) => { s(e.message, 'bad'); throw e; });
+  s('bt3.js loaded', 'ok');
+  // The two programs plat_mem.c reads in a constructor, before main (where a read cannot wait): fetched first.
+  const early = ['disc/SLUS_216.78', 'disc/BIN/DBZP.BIN'];
+  const pre = {};
+  s = step('fetching the game\'s programs from the data folder');
+  for (const rel of early) pre[rel] = await data.whole(rel);
+  s(`fetched ${early.map((r) => `${r} (${pre[r].length} bytes)`).join(', ')}`, 'ok');
+  s = step('compiling and instantiating bt3.wasm');
+  const t0 = performance.now();
+  try {
+    mod = await createBt3({
+      canvas: document.getElementById('canvas'),
+      print: log,
+      printErr: log,
+      onAbort: (what) => stop('Aborted', String(what)),
+      preRun: [(m) => {
+        for (const rel of early) {
+          const path = '/gamedata/' + rel;
+          m.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
+          m.FS.writeFile(path, pre[rel]);
+        }
+        Object.assign(m.ENV, env);
+      }],
+    });
+  } catch (e) {
+    // an exit() during start-up (the engine's own checks, e.g. the game data) arrives as an ExitStatus: its message
+    // was printed to the log just above
+    const what = e && e.name === 'ExitStatus' ? `the engine stopped during start-up (exit ${e.status}); its message is in the log`
+                                              : (e && e.message) || String(e);
+    s(`instantiation failed: ${what}`, 'bad');
+    stop('The module could not start', e && e.name === 'ExitStatus' ? what : (e && e.stack) || String(e));
+    return;
+  }
+  data.module = mod;
+  mod.bt3Data = data;
+  s(`instantiated in ${(performance.now() - t0).toFixed(0)} ms; memory ${(mod.HEAPU8.length / 1048576).toFixed(0)} MB; ` +
+    'constructors done (memory map, game data tables)', 'ok');
+  s = step('running the game (main)');
+  try {
+    await mod.callMain([]);
+    s('main returned', 'ok');
+  } catch (e) {
+    if (e && e.name === 'ExitStatus') { s(`the game ended (exit ${e.status})`, e.status ? 'bad' : 'ok'); if (e.status) stop('Exit', `status ${e.status}`); }
+    else { s('the game stopped with an error', 'bad'); stop('Runtime error', (e && e.stack) || String(e)); }
+  }
+}
+
+checks().then((ok) => {
+  const btn = document.getElementById('start');
+  if (!ok) { btn.textContent = 'Cannot start'; return; }
+  btn.disabled = false;
+  btn.textContent = 'Start';
+  btn.onclick = () => start().catch((e) => stop('Start-up failed', (e && e.stack) || String(e)));
+  if (q.get('autostart')) btn.click();
+});
+</script>
+</body>
+</html>

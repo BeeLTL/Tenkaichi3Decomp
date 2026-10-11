@@ -178,7 +178,8 @@ LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000
         "-sMODULARIZE=1", "-sEXPORT_NAME=createBt3", "-sENVIRONMENT=web",
         "-sFORCE_FILESYSTEM=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV,HEAPU8,UTF8ToString,callMain",
         "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext", "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
-        "-Wl,--wrap=Progress_Main", "-Wl,--error-limit=0", "--profiling-funcs", "-sASSERTIONS=1"]
+        "-Wl,--wrap=Progress_Main", "-Wl,--wrap=fopen",  # fopen: the data folder over HTTP (port/src/web/web_fs.c)
+        "-Wl,--error-limit=0", "--profiling-funcs", "-sASSERTIONS=1"]
 
 def data():
     """The data tables (wasm_data.py) assembled, with the compiled-in list of their disc runs."""
@@ -240,6 +241,8 @@ def link():
     if s.returncode:
         sys.exit(1)
     r = em([])
+    for f in ("index.html", "bt3_data.js"):  # the page (port/web)
+        (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
     mism = re.findall(r"signature mismatch: (\S+)", r.stderr)
     errs = [l for l in r.stderr.splitlines() if "error" in l]
     print(f"{len(need)} stubs (port/build/wasm_stubs.txt); {len(mism)} signature mismatches left; link "

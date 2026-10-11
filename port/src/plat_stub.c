@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <time.h>
 #include <time.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 extern void Port_StateTouch(void *p, unsigned long n); /* gs/state.c */
 
 /* ---- second processor (IOP): heap and remote calls ---- */
@@ -112,6 +115,9 @@ static void vblank_wait(void) {
         after = t;
         next += 16683350ull;
         sPaceLate++;
+#ifdef __EMSCRIPTEN__
+        emscripten_sleep(0); /* (the page still has to get control once a blank, or nothing is shown) */
+#endif
     } else if (next > t && next - t < 100000000ull) {
 #ifdef _WIN32
         /* Windows' sleep is only good to about a millisecond, and only once the timer resolution has been asked
@@ -127,6 +133,12 @@ static void vblank_wait(void) {
         while (now_ns() < next) {
             Sleep(0);
         }
+#elif defined(__EMSCRIPTEN__)
+        /* Browser: the wait gives control back to the page (the game runs under JSPI, so this suspends it): the
+           browser shows the frame drawn so far, handles input and sound, and comes back after the time asked for
+           (timers are good to about a millisecond). nanosleep would spin and freeze the page. */
+        (void)ts;
+        emscripten_sleep((unsigned)((next - t) / 1000000ull));
 #else
         ts.tv_sec = 0;
         ts.tv_nsec = (long)(next - t);
@@ -138,6 +150,9 @@ static void vblank_wait(void) {
     } else {
         after = t;
         next = t + 16683350ull; /* the first one, or more than a tenth of a second behind: a new grid from now */
+#ifdef __EMSCRIPTEN__
+        emscripten_sleep(0);
+#endif
         sPaceReset++;
     }
     /* BT3_GS_VERBOSE: once a second, how evenly the vertical blanks came (they should be 16.68 ms apart) */
