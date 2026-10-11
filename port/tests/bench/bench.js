@@ -5,7 +5,7 @@
 //
 //   node port/tests/bench/bench.js --label <name> [--browser <exe>] [--url http://127.0.0.1:8080/index.html]
 //        [--from 300] [--to 2100] [--profile] [--headless] [--env NAME=value,...] [--query page-option=value]
-//        [--shots N] [--boot]
+//        [--shots N] [--boot] [--chrome-flags name=value,...]
 //
 // The page and the data must be served (port/web/devserver.py with the gamedata mount). Frames [from, to) are
 // measured; frames before `from` are the warm-up (loading, first textures and pipelines). Writes
@@ -34,6 +34,10 @@ const from = Number(args.from || 300), to = Number(args.to || 2100);
 const SHOT_DIR = 'port/build/shots';  // where the back ends write them (gs_gl.c, gs_gpu.c), relative to the engine's cwd
 const shotEvery = args.shots ? Number(args.shots) : 0;
 // --boot: the game's own start (logos, the opening movie, the title) instead of the attract-demo battle
+// --chrome-flags: switches for the browser itself, without their dashes, e.g. use-angle=swiftshader,use-webgpu-adapter=
+// swiftshader,enable-unsafe-swiftshader to draw both APIs with the same software rasterizer (picture comparisons free of
+// the drivers' differences)
+const chromeFlags = args['chrome-flags'] && args['chrome-flags'] !== true ? args['chrome-flags'].split(',').map((f) => `--${f}`) : [];
 const env = (args.boot ? [] : ['BT3_DEMO=1']).concat(['BT3_FRAME_LOG=1', `BT3_TRACE=${TRACE_EVERY_VBLANKS}`])
   .concat(shotEvery ? [`BT3_SHOT=${shotEvery}`, `BT3_SHOT_FROM=${from}`, `BT3_SHOT_TO=${to - 1}`] : [])
   .concat(args.env && args.env !== true ? args.env.split(',') : []);
@@ -127,7 +131,7 @@ function print(result) {
 }
 
 (async () => {
-  const browser = await launch({ browser: args.browser, headless: !!args.headless });
+  const browser = await launch({ browser: args.browser, headless: !!args.headless, extraArgs: chromeFlags });
   const { send } = browser;
   const frames = [], trace = [], log = [];
   let profiling = false, stopped = null, done = false;
