@@ -549,12 +549,13 @@ static void build_net(void) {
                     ImGui::Combo("Time limit", &timeLimit, kTime, 5);
                     {
                         if (speed < 0) {
-                            speed = Port_Setting("net_speed_percent", Port_NetSpeedStandard());
+                            speed = Port_Setting("net_speed_host", Port_NetSpeedStandard()) /* (a new name with 0.1.31: the standard went from 120 to 114) */;
                         }
                         ImGui::SetNextItemWidth(260.0f);
                         ImGui::SliderInt("Game speed", &speed, 100, 150, "%d%%", ImGuiSliderFlags_AlwaysClamp);
                         ImGui::SetItemTooltip("How fast the match runs, for both players; the sound keeps its pitch.\n"
-                                              "100%% is the game's own speed. Quick matches run at %d%%.\n"
+                                              "100%% is the game's own speed. %d%% is the competitive standard, and what\n"
+                                              "quick matches run at.\n"
                                               "With a player on 0.1.29 only 100%% and 120%% are possible, with an older\n"
                                               "release only 100%%.", Port_NetSpeedStandard());
                     }
@@ -700,7 +701,7 @@ static void build_net(void) {
                         Port_NetOptions(roll * 2, delay == 0 ? -2 : delay - 1);
                         if (battle >= 0) {
                             Port_NetSpeedSet(speed);
-                            Port_SettingSave("net_speed_percent", speed);
+                            Port_SettingSave("net_speed_host", speed);
                             Port_NetRulesSet(battle == 0 ? 0 : battle == 1 ? 1 : 2, battle >= 2 ? battle - 2 : 0, timeLimit);
                             Port_SettingSave("net_battle", battle);
                             Port_SettingSave("net_time", timeLimit);
@@ -1025,7 +1026,7 @@ static void cheats_tab(void) {
             Port_AudioRefresh();
         }
         ImGui::SetItemTooltip("How fast the game runs outside online play (the sound keeps its pitch). 100%% is the game's own;\n"
-                              "120%% is what competitive play uses. An online match never uses this value:\n"
+                              "114%% is what competitive play uses. An online match never uses this value:\n"
                               "its speed is the host's or the queue's.");
         ImGui::SameLine();
         if (ImGui::Button("Reset")) {

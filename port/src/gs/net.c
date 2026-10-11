@@ -184,12 +184,12 @@ int Port_NetSideOptions(int *camera, int *shake) {
    0.1.28 and earlier send none). The host takes back what the other does not know before it answers, so the two
    never run at different paces: a 0.1.29 gets 120% or 100%, anything older 100%.
    NET_SPEED_STANDARD is what a quick match runs at and what the Host tab starts from. Competitive play of this
-   game is "120% on the PAL version in Dolphin"; what that is on this (the USA) version's scale is not known yet,
-   the number here is the first guess and the Host tab's slider is there to find it. */
+   game is "120% on the PAL version in Dolphin"; on this (the USA) version's scale the players settled on 114%
+   after trying the sliders of 0.1.30 (told by the maintainer, 2026-10-12). */
 #define RULE_FAST 0x1000u
 #define RULE_SPEED_SHIFT 16
 #define CAP_MARK 0x43410000u
-#define NET_SPEED_STANDARD 120
+#define NET_SPEED_STANDARD 114
 static int sWantSpeed = NET_SPEED_STANDARD;
 
 static uint32_t speed_bits(int percent) {

@@ -1935,3 +1935,12 @@ screen: that typing a name writes it.
 - **106 HUD pixels in from the outer edge** (was 62 picture pixels, which sat on the panel of a team's waiting
   fighters), narrowed and placed like the HUD in a wide picture, including the "in the middle" style. Not seen on
   screen yet.
+
+## The competitive standard is 114% (2026-10-12)
+
+The players tried the sliders of 0.1.30 and settled on 114% as what "120% on PAL in Dolphin" is on this version
+(told by the maintainer). `NET_SPEED_STANDARD` is 114: what every quick match runs at and what the Host tab's
+slider starts from (its setting has a new name, `net_speed_host`, so that a 120 saved by 0.1.30 does not stay).
+Checked with connected pairs, without a window: a host at 114% with the new build or the published 0.1.30
+joining: both run blanks 14.63 ms apart; with 0.1.29 joining: both 100%. A quick match hosted by a 0.1.30 still
+runs at its 120% on both sides, so the standard is only uniform once the service asks for this release.
