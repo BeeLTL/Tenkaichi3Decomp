@@ -55,6 +55,7 @@ typedef struct Player {
 } Player;
 
 static Player sPlayers[MAX_PLAYERS];
+extern int gPortMusicFollows; /* (below, with the volumes) */
 
 /* plat_sndstate.c: which players exist and, counted in vertical blanks, what they report: the part of this that is
    the game's state. The second is used when the state must not depend on the sound device (sByTicks). */
@@ -306,6 +307,9 @@ static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, in
     (void)total;
     while (additional > 0 && p->stat == ADXT_STAT_PLAYING && !p->paused) {
         int speed = Port_SpeedMilli();
+        if (p->loop && p - sPlayers <= 1 && gPortMusicFollows <= 0) {
+            speed = 1000;
+        }
         if (speed != 1000) {
             int n = stretch_feed(p, stream, speed);
             if (n == 0) {
@@ -339,6 +343,11 @@ static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, in
      voices  the two voice players and the two fighters' effect banks (slots 4 and 5)
      effects the rest: the two effect players, the common banks */
 int gPortMusicPercent = 100, gPortSePercent = 100, gPortVoicePercent = 100, gPortStagePercent = 100;
+/* "Music follows game speed" (Audio tab, setting music_follows_speed, off by default). Off: music and a stage's
+   background that loop are played as they are at any game speed: the game never waits for the end of a loop, so
+   nothing has to fit, and the songs are heard untouched. What plays once (a jingle, a spoken line) is always
+   fitted to the speed, because the game counts its length in vertical blanks. */
+int gPortMusicFollows = -1; /* (-1: not read from the settings yet) */
 
 static void apply_volume(Player *p) {
     if (p->stream != NULL) {
@@ -477,6 +486,10 @@ static void start(Player *p, const char *path) {
     p->stN = 0;
     p->stHasTail = 0;
     p->stSkip = 0.0;
+    if (gPortMusicFollows < 0) {
+        extern int Port_Setting(const char *name, int def); /* plat_settings.c */
+        gPortMusicFollows = Port_Setting("music_follows_speed", 0) != 0;
+    }
     if (getenv("BT3_SND_VERBOSE") != NULL) {
         fprintf(stderr, "adx: player %d: start %s: %u ch, %u Hz, %.1f s, loop %d, volume %d (0.1 dB), paused %d\n", (int)(p - sPlayers), path,
                 p->channels, p->rate, (double)p->total / (double)p->rate, p->loop, p->vol, p->paused);

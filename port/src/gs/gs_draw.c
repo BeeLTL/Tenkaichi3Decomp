@@ -1461,6 +1461,7 @@ int GsGpu_Init(void) {
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;
     gPortMusicPercent = Port_Setting("music", 100);
     gPortSePercent = Port_Setting("effects", 100);
+
     sHudLayout = getenv("BT3_HUD") != NULL ? atoi(getenv("BT3_HUD")) : Port_Setting("hud_layout", 0);
     sHudLayout = sHudLayout < 0 || sHudLayout > 2 ? 0 : sHudLayout;
     gPortVoicePercent = Port_Setting("voices", gPortSePercent); /* (one slider before 0.1.30: what it was set to) */

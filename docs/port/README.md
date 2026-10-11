@@ -1903,3 +1903,14 @@ the number.
 Checked with connected pairs, without a window, against the published 0.1.29 build: new and new at 110% both run
 blanks 15.16 ms apart; a new host at 110% with a 0.1.29 joining: both 100%; a new host at 120% with a 0.1.29:
 both 120%; a 0.1.29 hosting at 120% with a new one joining: both 120%. The regression replay passes.
+
+## "Music follows game speed" (2026-10-12)
+
+Audio tab, setting `music_follows_speed`, off by default (`gPortMusicFollows`, snd_adx.c). Off: a looping stream
+on the music or the stage player is played as it is at any game speed; the game never waits for a loop's end, so
+nothing has to fit. On: it is stretched with the game, as in 0.1.30. A stream that plays once (a jingle, a spoken
+line) is always stretched: the game counts its length in vertical blanks.
+
+Checked from the music player's output at a game speed of 120% (BT3_SND_DUMP, the menu's looping music): off, 99%
+of it is an exact copy of the original, advancing 1.000 per sample; on, 70% and 1.201. Not checked: by ear; the
+checkbox on screen.

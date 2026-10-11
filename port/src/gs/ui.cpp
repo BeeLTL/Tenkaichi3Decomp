@@ -963,6 +963,8 @@ static void ui_tab(PortVideo &v) {
                           "In the middle: the original 4:3 arrangement, next to the timer.");
 }
 
+extern "C" int gPortMusicFollows; // snd_adx.c: 1 = looping music is sped up or slowed down with the game
+
 static void audio_tab(PortVideo &v) {
     ImGui::SliderInt("Music", &v.music, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
     ImGui::SliderInt("Sound effects", &v.effects, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
@@ -971,6 +973,17 @@ static void audio_tab(PortVideo &v) {
     ImGui::SetItemTooltip("The fighters' voices in a fight and the spoken lines outside one.");
     ImGui::SliderInt("Stage sounds", &v.stage, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
     ImGui::SetItemTooltip("A stage's background sound (wind, water) and its own effects.");
+    {
+        bool follows = gPortMusicFollows > 0;
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Music follows game speed", &follows)) {
+            gPortMusicFollows = follows;
+            Port_SettingSave("music_follows_speed", follows);
+        }
+        ImGui::SetItemTooltip("When the game runs at another speed than 100%% (an online match, the Cheats tab):\n"
+                              "off, the music plays as it is; on, it is sped up or slowed down with the game,\n"
+                              "at its own pitch, as an emulator does. Spoken lines always follow the game.");
+    }
 }
 
 // Cheats. "Unlock everything" is the game's own leftover debug function (Save_UnlockAll, which nothing in the game
