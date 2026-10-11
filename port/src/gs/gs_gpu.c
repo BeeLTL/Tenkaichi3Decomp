@@ -340,11 +340,23 @@ static int pipe_get(uint32_t key) {
 
 /* How a finished picture reaches the display. on = 0: without waiting for it (MAILBOX: no tearing, no wait; else
    IMMEDIATE); on = 1: at its refresh (VSYNC, the settings window's "V-sync"). */
+static int sVsyncPending = -1; /* asked for from the settings window: -1 nothing, else 0 / 1 */
+
+static void vsync_apply(int on);
+
+/* From the settings window, which is drawn inside a frame: the swapchain's picture of that frame is already taken,
+   and changing how it presents then made the driver crash in the window's own drawing (found by the user: ticking
+   "V-sync" closed the game). Kept until the next frame starts (frame_end, before anything of it is acquired). */
 void GsGpu_Vsync(int on) {
+    sVsyncPending = on != 0;
+}
+
+static void vsync_apply(int on) {
     SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
     if (sDev == NULL || sWindow == NULL) {
         return;
     }
+    SDL_WaitForGPUIdle(sDev); /* (nothing of an earlier frame still on its way to the old swapchain) */
     if (!on && SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_MAILBOX)) {
         mode = SDL_GPU_PRESENTMODE_MAILBOX;
     } else if (!on && SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
@@ -373,7 +385,7 @@ static int vk_init(void) {
     }
     /* The game paces itself at 30 frames per second; waiting for the display's own refresh on top of that
        (VSYNC) costs up to a refresh period per frame. Prefer MAILBOX (no tearing, no wait), then IMMEDIATE. */
-    GsGpu_Vsync(Port_Setting("vsync", 0)); /* (the setting "V-sync" asks for the wait all the same) */
+    vsync_apply(Port_Setting("vsync", 0)); /* (the setting "V-sync" asks for the wait all the same) */
     sVs = shader(kGsVertSpv, sizeof(kGsVertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
     sFs = shader(kGsFragSpv, sizeof(kGsFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
     if (sVs == NULL || sFs == NULL) {
@@ -505,6 +517,10 @@ static void vk_frame_end(void) {
     uint32_t n;
 
     GsGpu_TitlePoll();
+    if (sVsyncPending >= 0) {
+        vsync_apply(sVsyncPending);
+        sVsyncPending = -1;
+    }
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) {
             exit(0);

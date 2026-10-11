@@ -1662,3 +1662,14 @@ the option menu's defaults whatever each player had chosen.
   0.1.25 in either role: they connect and the new copy says the defaults are used. Not checked: what the camera
   and the shake look like in the match (no picture was looked at), a match longer than that, Windows.
 - What is read is the save FILE: an option changed in the menu and not yet saved is not the one sent.
+
+## Ticking "V-sync" closed the game (0.1.25, the Vulkan renderer) (2026-10-11)
+
+Found by the user an hour after 0.1.25 was published; his backtrace ends in `Ui_DrawAgain`, in the Nvidia driver.
+The settings window is drawn inside a frame, after the swapchain's picture of that frame was acquired; the
+checkbox called `SDL_SetGPUSwapchainParameters` right there, and the window was then drawn onto a picture of a
+swapchain that was gone. `GsGpu_Vsync` now only notes the request; `frame_end` applies it at the start of the
+next frame, after `SDL_WaitForGPUIdle`. (The OpenGL renderer sets a swap interval, which is safe at any time.)
+The option had only been tried as a saved setting read at start; "ticking it while the game runs" was listed as
+not tested in the release notes and should have been tried before release. Checked by the user on screen (Nvidia,
+Vulkan): on and off, no crash.
