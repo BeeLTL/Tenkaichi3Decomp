@@ -373,8 +373,8 @@ static void start(Player *p, const char *path) {
     {   /* An online session at 120%: the game counts a stream's length in vertical blanks, which are shorter
            there, so the stream is played that much faster (and higher), or a line would still be heard when the
            game has the next one start. */
-        extern int Port_NetSpeedMilli(void); /* net.c */
-        SDL_SetAudioStreamFrequencyRatio(p->stream, (float)Port_NetSpeedMilli() / 1000.0f);
+        extern int Port_SpeedMilli(void); /* plat_stub.c: the match's speed online, else the player's own */
+        SDL_SetAudioStreamFrequencyRatio(p->stream, (float)Port_SpeedMilli() / 1000.0f);
     }
     if (getenv("BT3_SND_VERBOSE") != NULL) {
         fprintf(stderr, "adx: player %d: start %s: %u ch, %u Hz, %.1f s, loop %d, volume %d (0.1 dB), paused %d\n", (int)(p - sPlayers), path,
@@ -505,8 +505,12 @@ int func_00277A70(void *adxt) {
 
 /* The music volume setting changed: the streams playing now take it over. */
 void Port_AudioRefresh(void) {
+    extern int Port_SpeedMilli(void);
     int i;
     for (i = 0; i < MAX_PLAYERS; i++) {
+        if (sPlayers[i].stream != NULL) { /* (and the game speed, when that was what changed) */
+            SDL_SetAudioStreamFrequencyRatio(sPlayers[i].stream, (float)Port_SpeedMilli() / 1000.0f);
+        }
         apply_volume(&sPlayers[i]);
     }
 }

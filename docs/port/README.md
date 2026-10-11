@@ -1856,3 +1856,14 @@ Setting `hud_layout` (F1, the UI tab: "HUD Style"; BT3_HUD=<n> for a test), `Por
 Checked from screenshots of a recorded fight (offscreen): the three at 16:9, the long bars and the middle at 21:9,
 both sides, at full health. Not checked: a bar that is losing health (the moving mask over the longer bar),
 several bars in reserve, a team's portraits, split screen, Survival's counter, other aspect ratios.
+
+## The player's own game speed, outside online play (2026-10-11)
+
+"Game speed" on the Cheats tab: 50% to 200%, setting `game_speed`, `Port_GameSpeed()` in plat_stub.c. The same
+thing as an online match's 120%: the vertical blanks' pace and the pitch of the sound, nothing of the game's state.
+**An online match never reads it** (asked for by the user): `Port_SpeedMilli()` is the match's speed whenever a
+match is connected or a session runs, and the setting only otherwise.
+
+Checked without a window: with the setting at 150% the blanks come 11.1 ms apart offline; two connected copies that
+both have 150% in their settings run at 16.68 ms when the host chose 100% and at 13.9 ms when it chose 120%, and
+agree at tick 400. The regression replay passes. Not checked: the slider on screen, the sound by ear at any speed.

@@ -249,9 +249,9 @@ static int stream_ready(void) {
         }
     }
     if (sStream != NULL) { /* (the pace of an online session at 120%: the effects with it, see snd_adx.c) */
-        extern int Port_NetSpeedMilli(void); /* net.c */
+        extern int Port_SpeedMilli(void); /* plat_stub.c */
         static int was = 1000;
-        int now = Port_NetSpeedMilli();
+        int now = Port_SpeedMilli();
         if (now != was) {
             was = now;
             SDL_SetAudioStreamFrequencyRatio(sStream, (float)now / 1000.0f);

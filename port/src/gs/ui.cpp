@@ -954,7 +954,28 @@ extern "C" {
 extern volatile int gPortUnlockAll, gPortUnlockDone;
 }
 
+extern "C" int Port_GameSpeed(void);          // plat_stub.c: the player's own game speed, percent; never used online
+extern "C" void Port_GameSpeedSet(int percent);
+extern "C" void Port_AudioRefresh(void);
+
 static void cheats_tab(void) {
+    {
+        int speed = Port_GameSpeed();
+        if (ImGui::SliderInt("Game speed", &speed, 50, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+            Port_GameSpeedSet(speed);
+            Port_AudioRefresh();
+        }
+        ImGui::SetItemTooltip("How fast the game runs outside online play, sound included. 100%% is the game's own;\n"
+                              "120%% is what competitive play uses. An online match never uses this value:\n"
+                              "its speed is the host's or the queue's.");
+        ImGui::SameLine();
+        if (ImGui::Button("Reset")) {
+            Port_GameSpeedSet(100);
+            Port_AudioRefresh();
+        }
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
     ImGui::TextWrapped("Unlock everything: all characters, stages, music and items, and the largest amount of Zenni. "
                        "This is a debug function the game's developers left in.");
     ImGui::Spacing();

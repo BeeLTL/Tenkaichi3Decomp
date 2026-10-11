@@ -99,9 +99,35 @@ int Port_PaceBehindUs(void) {
     return sPaceNext != 0 && t > sPaceNext && t - sPaceNext < 100000000ull ? (int)((t - sPaceNext) / 1000ull) : 0;
 }
 
-/* A vertical blank's length: 16.68 ms, or a sixth less in an online session played at 120% (gs/net.c). */
+/* The game's pace, 1000 = its own. Online it is the match's and nothing else (gs/net.c: 1000 or 1200, the same on
+   both copies); otherwise the player's own "Game speed" of the Cheats tab (setting game_speed, percent, 50..200),
+   which an online match never reads. Like the match's speed it is the vertical blanks' pace and the pitch of what
+   is heard: every step of the game is computed as always. (PORT_HOST: not the game's state.) */
 extern int Port_NetSpeedMilli(void);
-#define BLANK_NS (16683350ull * 1000ull / (unsigned long long)Port_NetSpeedMilli())
+extern int Port_NetSession(void);
+extern int Port_NetActive(void);
+extern int Port_Setting(const char *name, int def); /* plat_settings.c */
+extern void Port_SettingSave(const char *name, int value);
+PORT_HOST static int sSpeedPercent = -1;
+int Port_GameSpeed(void) {
+    if (sSpeedPercent < 0) {
+        int v = Port_Setting("game_speed", 100);
+        sSpeedPercent = v < 50 ? 50 : v > 200 ? 200 : v;
+    }
+    return sSpeedPercent;
+}
+void Port_GameSpeedSet(int percent) {
+    percent = percent < 50 ? 50 : percent > 200 ? 200 : percent;
+    if (percent != Port_GameSpeed()) {
+        sSpeedPercent = percent;
+        Port_SettingSave("game_speed", percent);
+    }
+}
+int Port_SpeedMilli(void) {
+    return Port_NetSession() || Port_NetActive() ? Port_NetSpeedMilli() : Port_GameSpeed() * 10;
+}
+/* A vertical blank's length: 16.68 ms at the game's own pace. */
+#define BLANK_NS (16683350ull * 1000ull / (unsigned long long)Port_SpeedMilli())
 unsigned long long Port_BlankNs(void) { return BLANK_NS; }
 
 static void vblank_wait(void) {
