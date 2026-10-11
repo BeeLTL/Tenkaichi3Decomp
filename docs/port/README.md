@@ -1764,3 +1764,14 @@ milder "Update available: release 0.1.NN" when a newer one exists (`LATEST_RELEA
 in. A refused room, join or search answers with the same words. Checked against the Worker behind a local server
 with a minimum above this build: host, join and quick match all stop with that line. Not seen: the banner in the
 window. One request more per opening of the online screen; none while it is closed.
+
+## Joining a match reset the picture to 4:3 (2026-10-11)
+
+Reported to the user by a player. The shape of the picture (`sAspectMilli`, plat_stub.c) was an ordinary static of
+a file whose variables count as the game's state (make_state.py: PORT_STATE has plat_stub), so it was saved and
+put back with the game. An online session starts by going back to the state of the program's first vertical
+blank; a shape chosen in the settings window during that run went back to what it had been at start (4:3 on a
+first run, or whatever the settings file said then). The same at the session's end, and it sat in every rollback's
+state too. Now PORT_HOST, like the other things of plat_stub.c that are the player's and not the game's. Checked:
+before, the variable's address lies inside the ranges of the `.mem` list; after, outside; two copies still connect,
+reach a scripted battle and agree at tick 400; the regression replay passes. Not checked: on screen, by anyone.

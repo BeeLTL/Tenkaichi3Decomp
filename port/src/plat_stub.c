@@ -351,7 +351,11 @@ int sceVibSetActParam() { return 0; }
    The game's projection, culling and effect proportions take Port_WideFactor() (src/battle/btl_cam.c, stg_a.c,
    eft_*.c, all #ifdef PORT); the renderer keeps 2D art in proportion and shows the picture at this shape
    (port/src/gs/gs_gpu.c). */
-static int sAspectMilli = -1;
+/* (PORT_HOST: the player's setting, not the game's state. Without it the shape was saved and put back with the
+   game: a session starts by going back to the state of the program's first moments, so a shape chosen in the
+   settings window during the run went back to what it was at start, 4:3 on a first run. Reported as "joining a
+   match resets the screen to 4:3".) */
+PORT_HOST static int sAspectMilli = -1;
 extern int Port_Setting(const char *name, int def); /* plat_settings.c */
 int Port_AspectMilli(void) {
     if (sAspectMilli < 0) {
