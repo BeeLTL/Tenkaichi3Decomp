@@ -233,6 +233,9 @@ typedef struct GsBackend {
 
 extern GsBackend sVulkanBackend; /* gs_gpu.c */
 extern GsBackend sGlBackend;     /* gs_gl.c */
+#ifdef __EMSCRIPTEN__
+extern GsBackend sWebGpuBackend; /* gs_wgpu.c (the browser build only) */
+#endif
 
 /* gs_draw.c: the shared target table's entry for a frame-buffer address (create: one is made if absent,
    with the back end's attachments through GsBackend.targetEnsure). */

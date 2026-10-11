@@ -112,6 +112,8 @@ def game_object(f):
 WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c", "imgui_impl_sdlgpu3.cpp"}
 HARD = {"plat_libm.c", "plat_fastvec.c"}  # host floats on purpose (undefined.py)
 SDL = ["-sUSE_SDL=3"]
+# Dawn's webgpu.h for Emscripten (the WebGPU back end, gs_wgpu.c; ImGui's WebGPU renderer): compile and link flag
+WEBGPU = ["--use-port=emdawnwebgpu"]
 PC = ["-std=gnu99", "-fno-strict-aliasing", "-ffp-contract=off", "-fno-builtin", "-w", "-Iinclude", "-Iport/include", "-Iport/src"]
 SOFT_FORCED = ["-DSF_FAST_CALLS", "-include", "math.h", "-include", "stdlib.h", "-include", "port_libm.h"]
 GEN = ROOT / "port/build/gen_wasm"
@@ -163,10 +165,10 @@ def port_object(job):
         if kind == "hard":
             cmd = [EMCC, "-c"] + OPT + PC
         elif kind == "gs":
-            cmd = [EMCC, "-c"] + OPT + SDL + ["-std=gnu99", "-fno-strict-aliasing", "-Wall", "-Wno-unused",
+            cmd = [EMCC, "-c"] + OPT + SDL + WEBGPU + ["-std=gnu99", "-fno-strict-aliasing", "-Wall", "-Wno-unused",
                                              "-Wno-misleading-indentation", f"-I{GEN}"]
         else:
-            cmd = ["em++", "-c"] + OPT + SDL + ["-std=c++17", "-fno-exceptions", "-fno-rtti", "-w", "-DIMGUI_IMPL_OPENGL_ES3",
+            cmd = ["em++", "-c"] + OPT + SDL + WEBGPU + ["-std=c++17", "-fno-exceptions", "-fno-rtti", "-w", "-DIMGUI_IMPL_OPENGL_ES3",
                                                f"-I{ROOT / 'port/third_party/imgui'}", f"-I{ROOT / 'port/src/gs'}"]
         # through LLVM IR like every other file, so that wasm_sig.py can repair calls in it (see there)
         ll = o.with_suffix(".ll")
@@ -185,7 +187,7 @@ WEB = ROOT / "port/build" / os.environ.get("BT3_WASM_WEB", "web" + SUFFIX)
 # ends at the scratchpad's address (0x70000000), so an access there traps.
 LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000), "-sALLOW_MEMORY_GROWTH=1",
         "-sMAXIMUM_MEMORY=" + str(0x70000000), "-sSTACK_SIZE=16MB", "-sABORTING_MALLOC=0",
-        "-sUSE_SDL=3", "-sMIN_WEBGL_VERSION=2", "-sMAX_WEBGL_VERSION=2",
+        "-sUSE_SDL=3", "-sMIN_WEBGL_VERSION=2", "-sMAX_WEBGL_VERSION=2", "--use-port=emdawnwebgpu",
         "-sJSPI=1",  # the game's own loop waits for the vertical blank and for files: those waits suspend (plat_stub.c)
         # calls through function pointers of another type than the function (the game's callbacks, e.g.
         # McFlow_CallDone calls every "done" callback as void(s32)): as on the PS2, missing arguments are 0, extra ones
@@ -284,6 +286,11 @@ def main():
         return
     if sys.argv[1:2] == ["port"]:
         shaders_header()
+        r = run([sys.executable, ROOT / "port/tools/wasm_shaders.py"])  # WGSL for the WebGPU back end
+        print(r.stdout.strip())
+        if r.returncode:
+            print(r.stderr.strip())
+            sys.exit(1)
         jobs = [j for j in port_jobs() if len(sys.argv) == 2 or j[1].name in sys.argv[2:]]
         with concurrent.futures.ProcessPoolExecutor(min(16, os.cpu_count() or 4)) as ex:
             res = list(ex.map(port_object, jobs))

@@ -1349,13 +1349,20 @@ int GsGpu_Init(void) {
     gsVuUni = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
     gsDraws = malloc(MAX_DRAWS * sizeof(GsDraw));
 #ifdef __EMSCRIPTEN__
-    /* The browser build has one renderer: the OpenGL back end on WebGL 2 (SDL3 has no browser back end for its GPU
-       API, and gs_gpu.c is not built). */
-    (void)api;
-    sb = &sGlBackend;
+    /* The browser build: BT3_GPU_API=gl (default: the OpenGL back end on WebGL 2, the reference) or webgpu (gs_wgpu.c).
+       SDL3 has no browser back end for its GPU API, so gs_gpu.c is not built. A renderer that cannot start is not
+       replaced by the other one: the page reports it. */
+    if (api == NULL || strcmp(api, "gl") == 0) {
+        sb = &sGlBackend;
+    } else if (strcmp(api, "webgpu") == 0) {
+        sb = &sWebGpuBackend;
+    } else {
+        fprintf(stderr, "bt3: unknown BT3_GPU_API=%s (the browser build has gl and webgpu)\n", api);
+        return 0;
+    }
     sBackend = sb;
     if (!sb->init()) {
-        fprintf(stderr, "bt3: the WebGL 2 renderer could not start\n");
+        fprintf(stderr, "bt3: the %s renderer could not start\n", sb == &sGlBackend ? "WebGL 2" : "WebGPU");
         sBackend = NULL;
         return 0;
     }

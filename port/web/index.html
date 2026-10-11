@@ -45,6 +45,7 @@
 // dev server's /__result for unattended tests).
 const q = new URLSearchParams(location.search);
 const dataBase = q.get('data') || '/gamedata/';
+const renderer = q.get('gpu') || 'gl';  // ?gpu=webgpu: the WebGPU back end; default the WebGL 2 one (the reference)
 const report = q.get('report');
 const logEl = document.getElementById('log'), stepsEl = document.getElementById('steps');
 const lines = [];
@@ -165,7 +166,13 @@ async function checks() {
     'JavaScript Promise Integration (JSPI) available',
     'JSPI is not available in this browser (needed: the game waits for files and frames). Use a current Chrome or Edge.');
   const gl = document.createElement('canvas').getContext('webgl2');
-  c(!!gl, `WebGL 2 available (${gl ? gl.getParameter(gl.VERSION) : ''})`, 'WebGL 2 is not available');
+  if (renderer === 'webgpu') {
+    const adapter = navigator.gpu ? await navigator.gpu.requestAdapter() : null;
+    c(!!adapter, `WebGPU available (${adapter && adapter.info ? `${adapter.info.vendor} ${adapter.info.architecture}` : ''})`,
+      'WebGPU is not available in this browser (the page was asked for it: ?gpu=webgpu)');
+  } else {
+    c(!!gl, `WebGL 2 available (${gl ? gl.getParameter(gl.VERSION) : ''})`, 'WebGL 2 is not available');
+  }
   if (gl) {  // the real GPU, for the record of every measurement
     const dbg = gl.getExtension('WEBGL_debug_renderer_info');
     log(`gpu: ${dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '(renderer string not available)'}`);
@@ -185,7 +192,7 @@ async function checks() {
 async function start() {
   const btn = document.getElementById('start');
   btn.style.display = 'none';
-  const env = {};
+  const env = { BT3_GPU_API: renderer };  // (gs_draw.c: gl or webgpu)
   for (const kv of (q.get('env') || '').split(',').filter(Boolean)) {
     const i = kv.indexOf('=');
     env[kv.slice(0, i)] = kv.slice(i + 1);
