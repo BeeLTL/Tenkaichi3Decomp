@@ -1797,3 +1797,25 @@ directly failed until midnight UTC. (My own tests of the day used some of them.)
   direct ways stayed silent, is told why there is no relay, the one who joined asks the room eleven times, both
   give up. The Worker's tests (7 new) pass. **Not checked: a relay address actually taken late and a match played
   through it** (needs the Worker deployed with its key and logins left for the day).
+
+## Online matches at 120% speed (2026-10-11)
+
+Asked for by the user: "the whole match, that's the standard for competitive play".
+
+- **What it is here:** the vertical blanks' pace. `BLANK_NS` in plat_stub.c is 16.68 ms divided by
+  `Port_NetSpeedMilli()` / 1000 (gs/net.c: 1200 while a match is connected and the rules word has `RULE_FAST`, bit
+  12; else 1000). Every step of the game is computed as always, 72 of them a second instead of 60: nothing of the
+  game's state changes, so replays, rollback and the two copies' agreement are untouched. The in-between pictures'
+  timing, the frame-skip threshold and the automatic input delay take the blank's real length.
+- **Sound** goes with it: the game counts a stream's length in vertical blanks in a session, so streams and
+  effects are played a fifth faster (`SDL_SetAudioStreamFrequencyRatio` in snd_adx.c / snd_se.c), and higher.
+- **Both copies or neither.** The host's choice, sent with the rules. The one who joins says in its greeting that
+  it knows the pace (a capability word behind the options, `CAP_MARK | 1`); a host that hears none (0.1.28 and
+  earlier) takes the bit back before it answers, so the two never run at different paces.
+- **Where it is chosen:** every quick match is at 120%; the Host tab has "Game speed" (100% / 120%, setting
+  `net_speed`, 120% by default). BT3_NET_SPEED=120|100 for tests.
+- Checked with two copies connected by address, without a window: both log "game speed 120%", their blanks come
+  13.90 ms apart (16.68 at 100%), and with scripted input both are in the same battle with the same health at tick
+  400; with a 0.1.25 as the one who joins, the host logs 100% and both keep 16.68 ms. The regression replay
+  passes. Not checked: how it feels and sounds (nobody has played or heard it), a real match between two
+  networks, rollback's behaviour at a high ping with the shorter blank, Windows.

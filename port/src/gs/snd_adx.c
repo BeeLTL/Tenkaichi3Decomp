@@ -365,6 +365,12 @@ static void start(Player *p, const char *path) {
         fprintf(stderr, "bt3: sound stream: %s\n", SDL_GetError());
         return;
     }
+    {   /* An online session at 120%: the game counts a stream's length in vertical blanks, which are shorter
+           there, so the stream is played that much faster (and higher), or a line would still be heard when the
+           game has the next one start. */
+        extern int Port_NetSpeedMilli(void); /* net.c */
+        SDL_SetAudioStreamFrequencyRatio(p->stream, (float)Port_NetSpeedMilli() / 1000.0f);
+    }
     if (getenv("BT3_SND_VERBOSE") != NULL) {
         fprintf(stderr, "adx: player %d: start %s: %u ch, %u Hz, %.1f s, loop %d, volume %d (0.1 dB), paused %d\n", (int)(p - sPlayers), path,
                 p->channels, p->rate, (double)p->total / (double)p->rate, p->loop, p->vol, p->paused);

@@ -21,6 +21,7 @@ extern "C" {
 extern volatile int gPortNetMenuRequest;
 void Port_NetOptions(int rollback, int delay); // gs/net.c
 void Port_NetRulesSet(int type, int dp, int time); // gs/net.c: the host's battle type, DP limit row, time limit
+void Port_NetSpeedSet(int fast);                   // ... and the match's speed: 1 = 120% (set before the rules)
 void Port_NetNameSet(const char *name);         // gs/net.c: this player's name for the match
 const char *Port_NetName(int player);          // the name of the player of side 0 or 1 ("" outside a match)
 int Port_HudSwap(void);                        // the two sides of the HUD are in each other's places on this copy
@@ -429,6 +430,7 @@ static void quick_status(int state, int &lastState, const char *name) {
         // the input delay measured from the connection. (The Host tab's own choices are for matches with someone
         // you can agree them with; a stranger's saved ones were not to be inherited unseen.)
         Port_NetOptions(Port_RollCan() ? 8 : 0, -2);
+        Port_NetSpeedSet(1); // (every quick match: 120%, the competitive standard)
         Port_NetRulesSet(sQueue == 0 ? 0 : sQueue == 1 ? 1 : 2, sQueue >= 2 ? sQueue - 2 : 0, 4);
         Port_NetNameSet(name);
         Port_SettingSave("net_queue", sQueue);
@@ -440,7 +442,7 @@ static void quick_status(int state, int &lastState, const char *name) {
 
 static void build_net(void) {
     static char name[17] = "Player", address[64] = "", port[8] = "7000";
-    static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3;
+    static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3, speed = -1;
     static bool useCode = true;       // host with a room code (no port forwarding) or on a port
     static char roomCode[8] = "";     // the code to join with
     static int lastState = 0;         // what the lobby said last (for its messages after a failure)
@@ -525,6 +527,17 @@ static void build_net(void) {
                     ImGui::Combo("Battle", &battle, kBattle, 5);
                     ImGui::SetNextItemWidth(260.0f);
                     ImGui::Combo("Time limit", &timeLimit, kTime, 5);
+                    {
+                        static const char *const kSpeed[] = {"100% (the game's own)", "120% (competitive standard)"};
+                        if (speed < 0) {
+                            speed = Port_Setting("net_speed", 1) != 0;
+                        }
+                        ImGui::SetNextItemWidth(260.0f);
+                        ImGui::Combo("Game speed", &speed, kSpeed, 2);
+                        ImGui::SetItemTooltip("120% is what competitive play of this game uses: the whole match runs a fifth\n"
+                                              "faster, sound included. If the other player's release does not know it\n"
+                                              "(0.1.28 or earlier), the match runs at 100%.");
+                    }
                 }
                 ImGui::TextDisabled("The host's choices apply to both players.");
                 ImGui::EndTabItem();
@@ -555,7 +568,7 @@ static void build_net(void) {
                         Port_LobbyQueuesAsk();
                     }
                 }
-                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit.");
+                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit and run at 120% speed, the competitive standard.");
                 ImGui::BeginDisabled(busy);
                 for (int i = 0; i < 5; i++) {
                     char label[80];
@@ -642,6 +655,8 @@ static void build_net(void) {
                     if (tab == 0 && roll >= 0) {
                         Port_NetOptions(roll * 2, delay == 0 ? -2 : delay - 1);
                         if (battle >= 0) {
+                            Port_NetSpeedSet(speed != 0);
+                            Port_SettingSave("net_speed", speed != 0);
                             Port_NetRulesSet(battle == 0 ? 0 : battle == 1 ? 1 : 2, battle >= 2 ? battle - 2 : 0, timeLimit);
                             Port_SettingSave("net_battle", battle);
                             Port_SettingSave("net_time", timeLimit);

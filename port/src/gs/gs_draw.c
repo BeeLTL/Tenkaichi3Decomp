@@ -40,6 +40,7 @@ volatile int gUiSongLit; /* the added song's name is the one of the open music l
 extern int Port_Setting(const char *name, int def); /* plat_settings.c: the saved settings */
 extern void Port_SettingSave(const char *name, int value);
 extern int Port_IsWide(void);   /* plat_stub.c */
+extern unsigned long long Port_BlankNs(void); /* plat_stub.c: 16.68 ms, less in an online session at 120% */
 extern int Port_AspectMilli(void);
 extern void Port_SetAspectMilli(int milli), Port_AudioRefresh(void), Port_SettingsWrite(void);
 extern int gPortMenuMode;       /* headless.c: the menus are running */
@@ -3817,7 +3818,7 @@ static void skip_decide(void) {
     extern int gPortOverlayOpen;
     int behind = Port_PaceBehindUs();
     int skip = GsDraw_FrameSkip() && getenv("BT3_UNCAPPED") == NULL && getenv("BT3_SHOT") == NULL && !gPortOverlayOpen &&
-               behind > 16683 && sSkipRun < 4;
+               behind > (int)(Port_BlankNs() / 1000ull) && sSkipRun < 4;
 
     if (getenv("BT3_SKIP_FORCE") != NULL) { /* testing: every other tick is left out, whatever the clock says */
         skip = sSkipRun == 0;
@@ -3884,7 +3885,7 @@ void GsGpu_FrameEnd(void) {
             sInterpLastBlank = gPortVBlanks;
             blanks = blanks < 1 ? 1 : blanks > 2 ? 2 : blanks;
             sInterpSteps = (interp_steps() < sInterpCap ? interp_steps() : sInterpCap) * (int)blanks / 2;
-            sInterpTickNs = (uint64_t)blanks * 16683350ull;
+            sInterpTickNs = (uint64_t)blanks * Port_BlankNs();
         }
         if (gsInterp > 0) {
             interp_signatures(sInterpSig);

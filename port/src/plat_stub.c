@@ -99,6 +99,11 @@ int Port_PaceBehindUs(void) {
     return sPaceNext != 0 && t > sPaceNext && t - sPaceNext < 100000000ull ? (int)((t - sPaceNext) / 1000ull) : 0;
 }
 
+/* A vertical blank's length: 16.68 ms, or a sixth less in an online session played at 120% (gs/net.c). */
+extern int Port_NetSpeedMilli(void);
+#define BLANK_NS (16683350ull * 1000ull / (unsigned long long)Port_NetSpeedMilli())
+unsigned long long Port_BlankNs(void) { return BLANK_NS; }
+
 static void vblank_wait(void) {
     struct timespec ts;
     unsigned long long t = now_ns(), after;
@@ -117,7 +122,7 @@ static void vblank_wait(void) {
            a new grid instead, as this did before, added a full period to every such frame: a machine that needed
            20 ms per frame ran the fight at 27 frames per second and unevenly, though it was within the budget.) */
         after = t;
-        next += 16683350ull;
+        next += BLANK_NS;
         sPaceLate++;
     } else if (next > t && next - t < 100000000ull) {
 #ifdef _WIN32
@@ -141,10 +146,10 @@ static void vblank_wait(void) {
 #endif
         after = now_ns();
         gPortSleptNs += after - t; /* the time really spent waiting (a sleep can return early or late) */
-        next += 16683350ull;
+        next += BLANK_NS;
     } else {
         after = t;
-        next = t + 16683350ull; /* the first one, or more than a tenth of a second behind: a new grid from now */
+        next = t + BLANK_NS; /* the first one, or more than a tenth of a second behind: a new grid from now */
         sPaceReset++;
     }
     /* BT3_GS_VERBOSE: once a second, how evenly the vertical blanks came (they should be 16.68 ms apart) */
