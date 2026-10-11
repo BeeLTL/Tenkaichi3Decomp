@@ -407,6 +407,79 @@ thresholds in the widescreen layout code (not constants of the same kind). Still
 back ends: the `BT3_GPU_CUT` / `BT3_GPU_TAIL` debug switches and the PPM screenshot writer (the writer is to be shared
 when the WebGPU back end needs it).
 
+### WebGPU back end: design (2026-10-11, phase 1 — nothing implemented yet)
+Inspected: `gs_draw.h` (GsBackend), `gs_draw.c` (recording, pipeline_get, targets), `gs_gl.c` (replay, native passes,
+present), `gs_gpu.c` (the Vulkan back end, the closest model), the nine shaders and their WGSL, the browser tests.
+
+**Interface to implement** (`GsBackend`, 17 entries): `init`, `frameEnd`, `scaleChanged`, `whiteTex`, `texCreate`,
+`texUpload`, `texDestroy`, `texSlotsLeft`, `targetEnsure`, `targetDrop`, `targetColor`, `targetAux`, `targetDepth`,
+`pipeGet`, `targetRead`, `targetCopy`, plus `name`. New file `port/src/gs/gs_wgpu.c` (`sWebGpuBackend`), compiled into
+the browser build only (the whole file is `#ifdef __EMSCRIPTEN__`, so the native builds, which compile `gs/*.c`, are
+unchanged). Selection in the browser (`gs_draw.c` browser branch of `GsGpu_Init`): `BT3_GPU_API=webgpu|gl`; the page's
+`?gpu=webgpu` sets it. **WebGL 2 stays the default and the reference** until WebGPU is verified.
+
+**Dependencies**: Dawn's `webgpu.h` for Emscripten (`--use-port=emdawnwebgpu`, pinned by Emscripten 6.0.12 to Dawn
+`v20260423.175430`). Waiting (adapter, device, buffer mapping) uses `wgpuInstanceWaitAny`, which the port implements for
+JSPI builds (`emwgpuWaitAny` under `#if ASYNCIFY`, set for JSPI; requires the instance feature `TimedWaitAny`): the
+game's thread waits as it does for files. ImGui's `imgui_impl_wgpu.cpp/.h` taken from the vendored version's tag
+(ocornut/imgui v1.92.9b).
+
+**Mapping**
+| GS / back-end concept | WebGPU |
+|---|---|
+| render target (`gsTargets[i]`) | colour `rgba8unorm` + aux `r8unorm` (the exact GS alpha byte) + depth `depth32float`, GS_W x GS_H x SCALE, usage RENDER_ATTACHMENT + TEXTURE_BINDING (+ COPY_SRC for colour / aux: copies, read-back) |
+| first draw into a target in a frame (`cleared == 0`) | render pass load op CLEAR (colour 0, aux 0, depth 0), else LOAD; store op STORE |
+| texture (`texCreate`/`texUpload`) | `rgba8unorm` or BC1/2/3 (`texture-compression-bc`, if the adapter has it; else `texCreate` returns 0 as the interface says), mip levels as asked; pixels written with `wgpuQueueWriteTexture` |
+| `GsDraw.sampler` (GS_SAMPLER_* flags) | 16 samplers made once: mag/min filter, address modes, mipmap filter linear + lodMaxClamp for GS_SAMPLER_MIPMAPS, else lodMaxClamp 0 |
+| pipeline key | `GsPipeKey_Decode` -> one `WGPURenderPipeline` per key, cached; `GsBlendDesc` -> blend factors / operation; depth compare from `GsDepthTest` (GREATER, GREATER_EQUAL as on the GS: depth 0 cleared, larger = nearer); per-attachment write masks (aux written where alpha is) |
+| blend constant (`d->blendc`) | `wgpuRenderPassEncoderSetBlendConstant` per draw when it changes |
+| scissor (`d->scissor`, at SCALE) | `SetScissorRect`, intersected with the target (WebGPU rejects a rectangle outside the attachment; GL / Vulkan clip it, which is the same picture) |
+| per-draw uniforms (vertex `U`, fragment `Params`) | one uniform buffer per frame, each draw's data appended at offsets aligned to the device's `minUniformBufferOffsetAlignment` (a device limit, not a constant), dynamic offsets in `SetBindGroup`, uploaded once with `WriteBuffer` before submission |
+| vertices / indices | `gsVerts` (stride `sizeof(Vtx)`: float32x3, unorm8x4, float32x3), `gsVuVerts` (stride `VU_VERT_BYTES`: 3 x float32x4), `gsVuIdx` (uint32): three buffers sized like the GL ones, written once a frame |
+| depth clamp (SDL GPU / GL: no depth clipping, depth clamped) | primitive `unclippedDepth` (feature `depth-clip-control`); if the adapter lacks it, said at start and listed as a difference (not hidden) |
+| native 4 / 5 (alpha-byte copies) | `CopyTextureToTexture` aux -> `sAuxCopy` / `sDateCopy` between render passes |
+| native 3 (depth table pass) | its own render pass: colour + aux, no depth attachment, sampling the target's depth (`unfilterable-float` + non-filtering sampler): legal in WebGPU (the GL feedback loop does not arise) |
+| native 1 / 2 (outline, alpha key) | own pass, colour only, the Vulkan back end's fixed blend states |
+| native >= 100 (a picture uploaded into a display buffer) | `sFbTex` written with `WriteTexture`, drawn scaled into the target with a full-screen triangle (WebGPU has no blit) |
+| present | swapchain texture of the canvas (`getPreferredCanvasFormat`), cleared black, viewport = the letterboxed rectangle (`GsDraw_PictureSize`, top-left origin like Vulkan), the shown target's display area sampled linearly |
+| `targetRead` / screenshots | `CopyTextureToBuffer` (rows padded to 256 bytes), `MapAsync` + `WaitAny`; the PPM writer shared with the GL back end |
+
+**Binding layouts** (from the generated WGSL; entry points `main`):
+- group 0: unused by every shader -> an empty layout and bind group (WebGPU needs every slot of a pipeline layout set).
+- group 1 (vertex programs vu0 / vu4 / vu6): binding 0 `U`, uniform, 304 bytes (`Vu0Uniform`), dynamic offset.
+- group 2: gs.frag: 0 texture float, 1 sampler filtering, 2 `dateTex` texture float, 3 its sampler; outline / alphakey:
+  0 aux texture, 1 sampler; dclut: 0 depth texture **unfilterable-float**, 1 sampler **non-filtering**, 2 aux, 3, 4 clut,
+  5. Bind groups cached per (texture, sampler) on the texture's own record (`targetColor` / `texCreate` handles point to
+  it), so a draw only switches a cached group.
+- group 3 (fragment): gs.frag `Params` 64 bytes; dclut / outline `Params` 16 bytes; dynamic offset. alphakey has none.
+- One extra shader source, `shaders/blit.frag` (texture sampled over a uv rectangle), for the present and the scaled
+  upload: GLSL like the others, translated by the same pipeline (Vulkan uses SDL's blit, GL its own present program;
+  neither changes).
+
+**Ownership and lifetime**: every WebGPU object belongs to `gs_wgpu.c`. Textures: a record (texture, view, its cached
+bind groups) freed by `texDestroy` (bind groups released first). Targets: created by `targetEnsure`, released by
+`targetDrop` with their cached bind groups; `scaleChanged` releases every target and the alpha-byte copies (whose bind
+groups depend on them) and remakes the copies. Pipelines: kept for the whole run (keys are few, at most 1024 as in the
+other back ends). Per-frame: command encoder, the swapchain texture view, released at the end of `frameEnd`. Device
+loss: the device-lost callback records the reason; the next `frameEnd` reports it once and stops drawing (the page's
+log shows it); no silent recovery. Uncaptured errors (validation): logged with their message and counted (the tests
+read the count).
+
+**What does not map directly** (and how it is handled): no blit (shader passes); no combined samplers (WGSL from
+SEPARATE_SAMPLERS); depth texture sampling only as unfilterable float with a non-filtering sampler; scissor must lie
+inside the attachment; uniform offsets aligned to a device limit; no GL-style implicit state (all state is in the
+pipeline or set per pass: blend constant, scissor, viewport, bind groups, vertex / index buffers are set again in each
+render pass); no feedback loops at all (a texture used as an attachment cannot be sampled in the same pass: the
+replay already separates those passes as the Vulkan back end does).
+
+**Order of the work** (each a commit with the tests below): (1) build integration and device / surface init with
+error reporting and device-loss handling, a cleared canvas; (2) shaders, layouts, pipelines; (3) buffers, textures,
+samplers, targets, the replay of ordinary draws, the present; (4) the native passes and the scaled upload; (5) read-back
+and screenshots (shared PPM writer); (6) the settings window (ImGui WebGPU); (7) menus and the battle compared with
+WebGL 2; (8) performance. Tests at every step: both targets build, `wasm_shaders.py` + `tests/wgsl/check.js`,
+`tests/pipekey`, the demo battle's 12 screenshots and fight trace for WebGL 2 (unchanged) and WebGPU (compared
+with WebGL 2), browser console and device validation errors.
+
 ## 5. Log
 
 - 2026-10-11 (1): repository identified, audit above, Emscripten installed. Blocked by the session folder's long path.
