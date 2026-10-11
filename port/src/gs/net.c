@@ -112,6 +112,68 @@ static struct sockaddr_in sCodePunch;
    T_CONFIG); headless.c applies it on both sides when the session enters the versus mode. */
 static uint32_t sRules = 3u << 8; /* single battle, 240 seconds: the game's defaults */
 
+/* Each player's own two battle options of the game's option menu (save 0x1694: the camera type; 0x1698: the
+   screen shake; they become BattleOption.optA / optB of the player's side, battle_load.c). A session starts from
+   an empty save on both sides, so both sides had the defaults. Each copy now reads its player's own from his save
+   and tells the other; both then set side 0 to the host's and side 1 to the joiner's, the same on both copies
+   (the cameras are part of the game's state). Sent behind the name in the greeting and in its answers, with a
+   mark: a copy of 0.1.25 or earlier does not send them and does not read them, and then neither side uses them.
+   OPT_MARK | camera | shake << 8. */
+int Port_NetActive(void);
+#define OPT_MARK 0x4F500000u
+static uint32_t sOpts[2]; /* by player: 0 = not known */
+
+static uint32_t own_options(void) {
+    const char *root = getenv("BT3_SAVES") != NULL ? getenv("BT3_SAVES") : "saves";
+    const char *carried = getenv("BT3_NET_OPTS"); /* (across the restart into the session: the save folder is the session's by then) */
+    char path[600];
+    unsigned char w[8];
+    uint32_t a = 0, b = 0;
+    FILE *fp;
+
+    if (carried != NULL) {
+        return OPT_MARK | ((uint32_t)strtoul(carried, NULL, 0) & 0xFFFFu);
+    }
+    snprintf(path, sizeof(path), "%s/card1/BASLUS-21678DBZT3/BASLUS-21678DBZT3", root);
+    fp = fopen(path, "rb");
+    if (fp != NULL) {
+        if (fseek(fp, 0x1694, SEEK_SET) == 0 && fread(w, 1, 8, fp) == 8) {
+            a = w[0] | (uint32_t)w[1] << 8 | (uint32_t)w[2] << 16 | (uint32_t)w[3] << 24;
+            b = w[4] | (uint32_t)w[5] << 8 | (uint32_t)w[6] << 16 | (uint32_t)w[7] << 24;
+        }
+        fclose(fp);
+    }
+    return OPT_MARK | (a > 15 ? 0 : a) | (b > 15 ? 0 : b) << 8; /* (anything else: the defaults) */
+}
+
+static void opts_take(int player, const uint8_t *at) {
+    uint32_t v;
+    memcpy(&v, at, 4);
+    if ((v & 0xFFFF0000u) == OPT_MARK) {
+        sOpts[player] = v;
+    }
+}
+
+/* For the game (BattleSetup_DefaultOptions): the two sides' options of an online match. 0 = not both known. */
+int Port_NetSideOptions(int *camera, int *shake) {
+    int i;
+    if (!Port_NetActive() || sOpts[0] == 0 || sOpts[1] == 0) {
+        return 0;
+    }
+    for (i = 0; i < 2; i++) {
+        camera[i] = (int)(sOpts[i] & 0xFF);
+        shake[i] = (int)(sOpts[i] >> 8 & 0xFF);
+    }
+    {
+        static int said;
+        if (!said) {
+            said = 1;
+            fprintf(stderr, "bt3: net: a battle is set up with each side's own camera type and screen shake\n");
+        }
+    }
+    return 1;
+}
+
 void Port_NetRulesSet(int type, int dp, int time) {
     sRules = (uint32_t)(type < 0 || type > 2 ? 0 : type) | (uint32_t)(dp < 0 || dp > 2 ? 0 : dp) << 4 | (uint32_t)(time < 0 || time > 4 ? 3 : time) << 8;
 }
@@ -313,6 +375,9 @@ static int receive(void) {
                 memcpy(sNames[0], pkt + 24, NAME_LEN);
                 sNames[0][NAME_LEN - 1] = '\0';
             }
+            if (n >= 28 + NAME_LEN) {
+                opts_take(0, pkt + 24 + NAME_LEN);
+            }
             sCfgGot = 2;
             net_send(ack, sizeof(ack), &from);
         } else if (type == T_CONFIG_ACK && sMode == 1) {
@@ -330,11 +395,15 @@ static int receive(void) {
             uint32_t ack[3] = {MAGIC, T_HELLO_ACK, NET_VERSION};
             net_send(ack, sizeof(ack), &from);
         } else if (type == T_HELLO && sMode == 1) {
-            uint32_t ack[6 + NAME_LEN / 4] = {MAGIC, T_HELLO_ACK, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+            uint32_t ack[7 + NAME_LEN / 4] = {MAGIC, T_HELLO_ACK, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
             memcpy(&ack[6], sMyName, NAME_LEN);
+            ack[6 + NAME_LEN / 4] = sOpts[0];
             if (n >= 12 + NAME_LEN) { /* the other player's name came with the greeting */
                 memcpy(sNames[1], pkt + 12, NAME_LEN);
                 sNames[1][NAME_LEN - 1] = '\0';
+            }
+            if (n >= 16 + NAME_LEN) {
+                opts_take(1, pkt + 12 + NAME_LEN);
             }
             memcpy(sNames[0], sMyName, NAME_LEN);
             sPeer = from; /* the host learns the other side's address from its greeting */
@@ -356,6 +425,9 @@ static int receive(void) {
                 if (n >= 24 + NAME_LEN) {
                     memcpy(sNames[0], pkt + 24, NAME_LEN);
                     sNames[0][NAME_LEN - 1] = '\0';
+                }
+                if (n >= 28 + NAME_LEN) {
+                    opts_take(0, pkt + 24 + NAME_LEN);
                 }
                 memcpy(sNames[1], sMyName, NAME_LEN);
                 sCfgGot = 1;
@@ -457,6 +529,8 @@ static void net_start(int role, const char *host, const char *join) {
     }
     memset(sNames, 0, sizeof(sNames));
     memcpy(sNames[sMe], sMyName, NAME_LEN);
+    memset(sOpts, 0, sizeof(sOpts));
+    sOpts[sMe] = own_options();
     if (getenv("BT3_NET_RULES") != NULL) { /* (the host's, across the restart into the session, or for a test) */
         sRules = (uint32_t)strtoul(getenv("BT3_NET_RULES"), NULL, 0);
     }
@@ -538,8 +612,9 @@ static void net_start(int role, const char *host, const char *join) {
             last = now;
         }
         if (sMode == 2 && now - last > 100000000ull) {
-            uint32_t hello[3 + NAME_LEN / 4] = {MAGIC, T_HELLO, NET_VERSION};
+            uint32_t hello[4 + NAME_LEN / 4] = {MAGIC, T_HELLO, NET_VERSION};
             memcpy(&hello[3], sMyName, NAME_LEN);
+            hello[3 + NAME_LEN / 4] = sOpts[1];
             net_send(hello, sizeof(hello), &sPeer);
             last = now;
         }
@@ -583,8 +658,9 @@ static void net_start(int role, const char *host, const char *join) {
         while (!sCfgAcked && SDL_GetTicksNS() - start < 3000000000ull) {
             uint64_t now = SDL_GetTicksNS();
             if (now - lastCfg >= 50000000ull) {
-                uint32_t cfg[6 + NAME_LEN / 4] = {MAGIC, T_CONFIG, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+                uint32_t cfg[7 + NAME_LEN / 4] = {MAGIC, T_CONFIG, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
                 memcpy(&cfg[6], sMyName, NAME_LEN);
+                cfg[6 + NAME_LEN / 4] = sOpts[0];
                 net_send(cfg, sizeof(cfg), &sPeer);
                 lastCfg = now;
             }
@@ -613,6 +689,12 @@ static void net_start(int role, const char *host, const char *join) {
     }
     sHave[0] = sHave[1] = (uint32_t)sDelay + 1;
     fprintf(stderr, "bt3: net: connected; input delay %d blanks, %s\n", sDelay, sRollMax > 0 ? "rollback" : "waiting for each other");
+    if (sOpts[0] != 0 && sOpts[1] != 0) {
+        fprintf(stderr, "bt3: net: each player's own options: player 1 camera %u shake %u, player 2 camera %u shake %u\n", (unsigned)(sOpts[0] & 0xFF),
+                (unsigned)(sOpts[0] >> 8 & 0xFF), (unsigned)(sOpts[1] & 0xFF), (unsigned)(sOpts[1] >> 8 & 0xFF));
+    } else {
+        fprintf(stderr, "bt3: net: the other copy does not send its player's options (0.1.25 or earlier): both sides use the defaults\n");
+    }
     if (sRollMax > 0) {
         fprintf(stderr, "bt3: net: rollback of up to %d blanks\n", sRollMax);
     }
@@ -971,6 +1053,10 @@ static void relaunch(int role, const char *join, int port) {
         SETENV("BT3_NOMOVIE", "1");
         if (getenv("BT3_NET_VOICE") == NULL) { /* (before the save folder changes: it is read from the player's own) */
             SETENV("BT3_NET_VOICE", own_voice_alt() ? "alt" : "default");
+        }
+        if (getenv("BT3_NET_OPTS") == NULL) { /* (the same for the player's camera type and screen shake) */
+            snprintf(value, sizeof(value), "%u", (unsigned)(own_options() & 0xFFFFu));
+            SETENV("BT3_NET_OPTS", value);
         }
         SETENV("BT3_SAVES", "net_session");
         /* the session's own save folder starts empty: both sides begin from the game's defaults */

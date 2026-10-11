@@ -1640,3 +1640,25 @@ here (checked on his recording), and in the game's own pictures, not the in-betw
   the kind would look the same (a flat shape across the picture for a moment) and are found the same way: the
   draw by BT3_GPU_CUT, its vertices by BT3_GPU_DUMP (a corner at x = 2303.94 or -1792 is the GS's coordinate
   range), then the clipper's caller.
+
+## Online: each player's own camera type and screen shake (2026-10-11)
+
+Asked for by the user. A session starts from an empty save on both copies, so both sides of an online match had
+the option menu's defaults whatever each player had chosen.
+
+- The two options are save words 0x1694 and 0x1698 (`gOption->type` and `->value` in the option menu,
+  menu_x_c.c); `BattleSetup_DefaultOptions` copies them to both sides of the battle setup, from where they reach
+  each fighter (+0x49C; +0x4B8 `camShakeOn` = the second word is 0).
+- Each copy reads its player's own two words from his save file (as it does for the voice set: `own_options` beside
+  `own_voice_alt`, carried over the restart into a session in BT3_NET_OPTS) and sends them behind the name in the
+  greeting (the joiner) and in its answers (the host), with a mark. Both copies then set side 0 to the host's and
+  side 1 to the joiner's: the same on both, as it must be, the cameras being part of the game's state
+  (`Port_NetSideOptions`, called from BattleSetup_DefaultOptions under `#ifdef PORT`).
+- NET_VERSION is not raised. A copy of 0.1.25 or earlier neither sends nor reads the word; a new copy that gets
+  none uses none, so with an older copy both sides keep the defaults (the log says so).
+- Checked, two copies on one machine through the room-code lobby, saves made to differ (camera 1 shake 1 against
+  camera 2 shake 0): both log the same four values; with scripted input both reach a battle, log that it was set
+  up with them, and are at the same vertical blank with the same health at battle tick 400. Against the published
+  0.1.25 in either role: they connect and the new copy says the defaults are used. Not checked: what the camera
+  and the shake look like in the match (no picture was looked at), a match longer than that, Windows.
+- What is read is the save FILE: an option changed in the menu and not yet saved is not the one sent.
