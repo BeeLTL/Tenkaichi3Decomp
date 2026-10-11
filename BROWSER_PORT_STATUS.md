@@ -355,6 +355,30 @@ node port/tests/bench/bench.js --label <name> --headless --from 300 --to 2100 [-
 - Earlier "Chrome 154 shows no errors" was unmeasured: the per-frame check only runs with `BT3_GS_VERBOSE`.
 - Only this scene was checked (the demo battle); menus and other stages not yet.
 
+### WebGPU shaders: WGSL generated from the GLSL (2026-10-11) — verified
+- **Toolchain** (build only; nothing of it is in the game): naga-cli **30.0.1** (gfx-rs/wgpu's shader translator, from
+  crates.io, `--locked`), built with Rust **1.99.0** installed into the project's tools folder without touching PATH:
+  ```
+  RUSTUP_HOME=C:/project/Tenkaichi3Web/tools/rust/rustup CARGO_HOME=C:/project/Tenkaichi3Web/tools/rust/cargo
+  rustup-init.exe -y --no-modify-path --profile minimal --default-toolchain 1.99.0      (win.rustup.rs, 12.7 MB)
+  cargo +1.99.0 install naga-cli --version 30.0.1 --locked                               (74 s)
+  ```
+  Linker: Visual Studio 2022 Build Tools (already installed). `port/tools/wasm_shaders.py` refuses another naga
+  version; `BT3_NAGA` names another executable.
+- **Prebuilt alternatives checked first, not taken**: no official naga binary exists (wgpu v30.0.1 release has no
+  assets; nothing in scoop / winget); npm wrappers `naga-wasm` 30.2.0 and `naga-js-*` 30.0.1 embed the official naga
+  but are weeks-old single-maintainer repositories (0 stars); scoop's glslang is 8.13 (2019). Emscripten's
+  `emdawnwebgpu` port gives the WebGPU C API (Dawn's webgpu.h), not a shader compiler.
+- **What naga accepts from our nine shaders**: the 5 vertex shaders as they are; the 4 fragment shaders fail on
+  `uniform sampler2D` ("Not implemented: variable qualifier": its GLSL frontend has no combined image samplers; its
+  SPIR-V frontend maps a sampled-image type to the image alone, so glslang -> SPIR-V -> naga does not help either).
+  The fragment shaders now declare, under `SEPARATE_SAMPLERS` (defined only when naga translates them), a texture at
+  binding 2k and its sampler at 2k + 1 of the same set; the `#else` part is the original line, so Vulkan (glslc) and
+  OpenGL compile exactly what they did.
+- **Checks**: naga validates all 9 (`python port/tools/wasm_shaders.py`); Chrome 154's own WebGPU compiler accepts all
+  9 with no message (`node port/tests/wgsl/check.js`, adapter "nvidia blackwell"); the WebGL build with the edited
+  sources keeps the fight trace (`8ad198bf58dbed33`), no GL errors, work 11.50 ms.
+
 ## 5. Log
 
 - 2026-10-11 (1): repository identified, audit above, Emscripten installed. Blocked by the session folder's long path.
@@ -370,6 +394,8 @@ node port/tests/bench/bench.js --label <name> --headless --from 300 --to 2100 [-
 
 - 2026-10-11 (5): measurement tooling, CPU investigation (two fixes in the page/glue), WebGL 0x502 found and fixed.
   Commits 08c6117, ccdd15b, 4f4787e, 6a3a16d, 1b5f38a, 02a52f3.
+
+- 2026-10-11 (6): WGSL pipeline (naga 30.0.1 pinned), shared test driver. Commits c55c29c, 031c144.
 
 ## 6. Next milestone
 
