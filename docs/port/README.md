@@ -1914,3 +1914,12 @@ line) is always stretched: the game counts its length in vertical blanks.
 Checked from the music player's output at a game speed of 120% (BT3_SND_DUMP, the menu's looping music): off, 99%
 of it is an exact copy of the original, advancing 1.000 per sample; on, 70% and 1.201. Not checked: by ear; the
 checkbox on screen.
+
+## The online name is remembered (2026-10-12)
+
+The settings file takes text besides numbers: `name="text"` lines, written after the numbers
+(`Port_SettingText` / `Port_SettingTextSave`, plat_settings.c; a release from before reads past them, and drops
+them when it writes the file). The first one is `net_name`: the "Player name" of the online screen, read when the
+screen is first built and saved when the field is left after an edit and when a match is started. Checked: a
+settings file with `net_name="Goku 99"` shows that name in the field (offscreen screenshot). Not checked on
+screen: that typing a name writes it.

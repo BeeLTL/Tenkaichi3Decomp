@@ -43,6 +43,9 @@ const char *PortSongs_Name(int index);
 int PortSongs_Count(void);
 int Port_Setting(const char *name, int def);   // plat_settings.c
 void Port_SettingSave(const char *name, int value);
+void Port_SettingText(const char *name, const char *def, char *out, int size);
+void Port_SettingTextSave(const char *name, const char *value);
+void Port_SettingsWrite(void);
 int Port_ClashSquare(void);                    // gs_input.c: Square counts as a direction in clashes
 void Port_ClashSquareSet(int on);
 int Port_ClashSquareX(void);                   // what a press is worth, in quarters of a point (4, 6, 7, 8)
@@ -434,6 +437,7 @@ static void quick_status(int state, int &lastState, const char *name) {
         Port_NetSpeedSet(Port_NetSpeedStandard()); // (every quick match: the competitive standard)
         Port_NetRulesSet(sQueue == 0 ? 0 : sQueue == 1 ? 1 : 2, sQueue >= 2 ? sQueue - 2 : 0, 4);
         Port_NetNameSet(name);
+        Port_SettingTextSave("net_name", name);
         Port_SettingSave("net_queue", sQueue);
         Port_SettingsWrite();
         lastState = 0;
@@ -473,7 +477,18 @@ static void build_net(void) {
         ImGui::TextWrapped("Fight a player on another computer. One of you hosts, the other joins with the host's address.");
         ImGui::Spacing();
         ImGui::SetNextItemWidth(260.0f);
+        {
+            static bool read;
+            if (!read) { // the name used last time
+                read = true;
+                Port_SettingText("net_name", "Player", name, sizeof(name));
+            }
+        }
         ImGui::InputText("Player name", name, sizeof(name));
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            Port_SettingTextSave("net_name", name);
+            Port_SettingsWrite();
+        }
         ImGui::Spacing();
         if (ImGui::BeginTabBar("net")) {
             if (ImGui::BeginTabItem("Host")) {
@@ -693,6 +708,8 @@ static void build_net(void) {
                         Port_NetOptions(-1, -1); // joining: the host's choices arrive with its answer
                     }
                     Port_NetNameSet(name);
+                    Port_SettingTextSave("net_name", name);
+                    Port_SettingsWrite();
                     lastState = 0;
                     if (byCode) {
                         Port_LobbyStartCode(tab == 0, roomCode);
