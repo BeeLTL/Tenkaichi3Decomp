@@ -53,6 +53,11 @@ static const struct { const char *name, *label; unsigned bit; int key; int pad; 
 };
 
 static int sKeys[2][PORT_ACTIONS], sPadBtn[2][PORT_PAD_BUTTONS], sPadSlot[2];
+/* What opens and closes the settings window: a key (F1) and a controller button (none), both of the settings
+   window's list; and START + SELECT of any controller together, always. */
+static int sOverlayKey = SDL_SCANCODE_F1, sOverlayPad = -1;
+static int sComboLatch; /* START + SELECT has opened or closed the window and is still held */
+static int sSwallow; /* a controller opened or closed the window: nothing of the controllers reaches the game until those buttons are let go */
 static pthread_once_t sLoadOnce = PTHREAD_ONCE_INIT;
 
 static void defaults(int player) {
@@ -88,12 +93,54 @@ static void load(void) {
             sPadSlot[p] = 0; /* overrides the saved setting too */
         }
     }
+    sOverlayKey = Port_Setting("key_overlay", SDL_SCANCODE_F1);
+    sOverlayPad = Port_Setting("pad_overlay", -1);
 }
 
 const char *PortInput_ActionLabel(int action) { return kActions[action].label; }
 int *PortInput_Keys(int player) { pthread_once(&sLoadOnce, load); return sKeys[player]; }
 int *PortInput_PadButtons(int player) { pthread_once(&sLoadOnce, load); return sPadBtn[player]; }
 int *PortInput_PadSlot(int player) { pthread_once(&sLoadOnce, load); return &sPadSlot[player]; }
+int *PortInput_OverlayKey(void) { pthread_once(&sLoadOnce, load); return &sOverlayKey; }
+int *PortInput_OverlayPad(void) { pthread_once(&sLoadOnce, load); return &sOverlayPad; }
+
+/* 1 = this event opens or closes the settings window. */
+int PortInput_Hotkey(const SDL_Event *ev) {
+    pthread_once(&sLoadOnce, load);
+    if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_UP &&
+        (ev->gbutton.button == SDL_GAMEPAD_BUTTON_START || ev->gbutton.button == SDL_GAMEPAD_BUTTON_BACK)) {
+        sComboLatch = 0;
+        return 0;
+    }
+    if (gPortInputCapture) { /* (a binding is being taken, or the online screen is up) */
+        return 0;
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat) {
+        return sOverlayKey > 0 && (int)ev->key.scancode == sOverlayKey;
+    }
+    if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+        SDL_Gamepad *g = SDL_GetGamepadFromID(ev->gbutton.which);
+        int b = (int)ev->gbutton.button;
+        if (sOverlayPad >= 0 && b == sOverlayPad) {
+            sSwallow = 1;
+            return 1;
+        }
+        /* START + SELECT counts once per press of the two (sComboLatch, cleared when either is let go). Pressed
+           in the same moment, both "down" events come in one round and each already finds the other held:
+           without the latch the window opened and closed again at once, and only "hold one, press the other"
+           worked. */
+        if (g != NULL && (b == SDL_GAMEPAD_BUTTON_START || b == SDL_GAMEPAD_BUTTON_BACK) &&
+            SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_START) && SDL_GetGamepadButton(g, SDL_GAMEPAD_BUTTON_BACK)) {
+            sSwallow = 1;
+            if (sComboLatch) {
+                return 0;
+            }
+            sComboLatch = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
 void PortInput_ResetDefaults(int player) { pthread_once(&sLoadOnce, load); defaults(player); }
 
 void PortInput_Save(void) {
@@ -111,6 +158,8 @@ void PortInput_Save(void) {
         snprintf(name, sizeof(name), "padslot_p%d", p + 1);
         Port_SettingSave(name, sPadSlot[p]);
     }
+    Port_SettingSave("key_overlay", sOverlayKey);
+    Port_SettingSave("pad_overlay", sOverlayPad);
     Port_SettingsWrite();
 }
 
@@ -345,7 +394,19 @@ int Port_PadRead(int socket, unsigned char *data) {
     }
     pthread_once(&sLoadOnce, load);
     pads_refresh();
-    g = gPortInputCapture ? NULL : pad_of(socket);
+    if (sSwallow) { /* the buttons that opened or closed the settings window are not the game's (START would pause) */
+        int k, held = 0;
+        for (k = 0; k < MAX_PADS; k++) {
+            if (sOpen[k].pad != NULL &&
+                (SDL_GetGamepadButton(sOpen[k].pad, SDL_GAMEPAD_BUTTON_START) || SDL_GetGamepadButton(sOpen[k].pad, SDL_GAMEPAD_BUTTON_BACK) ||
+                 (sOverlayPad >= 0 && sOverlayPad < SDL_GAMEPAD_BUTTON_COUNT && SDL_GetGamepadButton(sOpen[k].pad, (SDL_GamepadButton)sOverlayPad)))) {
+                held = 1;
+            }
+        }
+        sSwallow = held;
+    }
+    /* (the settings window is worked with the controller too while it is open: nothing of it for the game) */
+    g = gPortInputCapture || gPortOverlayOpen || sSwallow ? NULL : pad_of(socket);
     if (g != NULL) {
         for (a = 0; a < PORT_PAD_BUTTONS; a++) {
             int src = sPadBtn[socket][a];

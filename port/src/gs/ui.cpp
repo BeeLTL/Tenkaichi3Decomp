@@ -1,4 +1,5 @@
-// The settings window of the PC build: Dear ImGui over the finished picture. F1 opens and closes it.
+// The settings window of the PC build: Dear ImGui over the finished picture. F1 opens and closes it, or START + SELECT
+// of a controller, or the key and button of its Controls list (gs_input.c: PortInput_Hotkey).
 // Everything it shows lives elsewhere (ui.h): the renderer's settings in gs_gpu.c, the bindings in gs_input.c.
 // It runs on the render thread, which owns the window and its events.
 #include <stdio.h>
@@ -238,7 +239,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL; // no window-layout file next to the game
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad; // (a controller opens it too: START + SELECT)
     style();
     for (size_t i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
         FILE *fp = fopen(fonts[i], "rb");
@@ -490,7 +491,13 @@ void Ui_Toggle(void) {
 }
 
 static void bind(int value) {
-    if (sCapKind == 1) {
+    if (sCapAction == PORT_ACTIONS) { // the row "Open this window"
+        if (sCapKind == 1) {
+            *PortInput_OverlayKey() = value > 0 ? value : SDL_SCANCODE_F1; // (cleared = F1 again: a keyboard always has a way in)
+        } else if (value < PORT_PAD_LT) { // (a button, not a trigger)
+            *PortInput_OverlayPad() = value;
+        }
+    } else if (sCapKind == 1) {
         PortInput_Keys(sCapPlayer)[sCapAction] = value;
     } else {
         PortInput_PadButtons(sCapPlayer)[sCapAction] = value;
@@ -763,6 +770,25 @@ static void controls_tab(void) {
         ImGui::TableSetupColumn("Keyboard");
         ImGui::TableSetupColumn("Controller");
         ImGui::TableHeadersRow();
+        {   // what opens and closes this window (not a player's: one for the program)
+            const int a = PORT_ACTIONS;
+            bool waitKey = sCapKind == 1 && sCapAction == a, waitPad = sCapKind == 2 && sCapAction == a;
+            int key = *PortInput_OverlayKey(), pad = *PortInput_OverlayPad();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Open this window");
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : key > 0 ? SDL_GetScancodeName((SDL_Scancode)key) : "-", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                sCapKind = 1; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+            }
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##p%d", waitPad ? "press a button..." : pad >= 0 ? pad_source_name(pad) : "START + SELECT", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                sCapKind = 2; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+            }
+        }
         for (int a = 0; a < PORT_ACTIONS; a++) {
             bool waitKey = sCapKind == 1 && sCapPlayer == player && sCapAction == a;
             bool waitPad = sCapKind == 2 && sCapPlayer == player && sCapAction == a;

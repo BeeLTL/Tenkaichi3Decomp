@@ -1430,3 +1430,27 @@ Checked: frames of the boot and the main menu with the pack, before and after, s
 frames without the pack (windowless, the processor's own Radeon, Vulkan); the recorded fight ends as before. The
 user saw on screen: the logos, the copyright text and the menu's motion right in both settings, the fight's HUD
 unchanged in sharp. Not checked: widescreen with a pack; the OpenGL renderer with a pack.
+
+## The settings window opens from a controller (2026-10-11)
+
+Asked for by the user. Until now only F1 opened the settings window, and with it open only the keyboard was kept
+from the game.
+
+- **START + SELECT** of any connected controller opens and closes it (the controller's own two buttons, whatever
+  the game's bindings are). `PortInput_Hotkey` (gs_input.c) decides for both renderers' event loops.
+- **A row "Open this window"** heads the Controls list: a key (F1) and a controller button (none) of the settings
+  file (`key_overlay`, `pad_overlay`). A cleared key is F1 again, so a keyboard always has a way in; a trigger
+  is not taken as the button. START + SELECT works beside a bound button.
+- **The window is worked with the controller** (Dear ImGui's gamepad navigation), and **nothing of a controller
+  reaches the game while it is open**, as with the keyboard. The buttons that opened or closed it do not reach
+  the game until they are let go (START would pause).
+- **Found by the user: pressed in the same moment, the two did nothing.** Both "down" events come in one round and
+  each already finds the other button held, so the window opened and closed again at once; only "hold one, press
+  the other" worked. The pair counts once per press now (a latch, cleared when either is let go).
+
+Known: START pressed a moment before SELECT reaches the game first (a pause in a fight). With the controller,
+Cross on a binding starts waiting for a button and the next press is taken; Esc on the keyboard leaves it as it
+was, and there is no way back from the controller yet (the user bound SELECT alone this way without meaning to).
+
+Checked by the user on screen (Linux): START + SELECT opens and closes it, pressed together. Not checked by
+anyone: Windows; a second controller; the online screen with a controller.

@@ -502,7 +502,7 @@ static void vk_frame_end(void) {
         if (ev.type == SDL_EVENT_QUIT) {
             exit(0);
         }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) {
+        if (PortInput_Hotkey(&ev)) { /* F1, START + SELECT, or what the settings window's list says */
             Ui_Toggle();
             continue;
         }

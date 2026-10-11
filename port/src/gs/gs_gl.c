@@ -762,7 +762,7 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) { exit(0); }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) { Ui_Toggle(); continue; }
+        if (PortInput_Hotkey(&ev)) { Ui_Toggle(); continue; }
         if (Ui_Event(&ev)) { continue; }
         if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { exit(0); }
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
