@@ -434,9 +434,55 @@ bind groups (cached per texture and sampler, plus 1-2 table-pass groups a frame)
 Not measured yet: GPU time (needs `timestamp-query`), GPU memory in bytes. (With `BT3_GS_VERBOSE` the GL back end
 calls glGetError every frame, a GPU sync: don't compare GL timings taken with it.)
 
-**Not implemented**: the settings window (F1) with WebGPU — the overlay needs ImGui's WebGPU renderer
-(`imgui_impl_wgpu.cpp/.h`, v1.92.9b), not in the repository; the back end says so at start. Native pass 2 (alpha key)
-is no longer recorded; if it ever were, it is reported, not drawn.
+**Not implemented**: native pass 2 (alpha key) is no longer recorded; if it ever were, it is reported, not drawn. (The
+settings window no longer depends on the renderer: see "Settings panel in the page".)
+
+### Settings panel in the page; no Dear ImGui in the browser build (2026-10-11) — verified
+The browser build compiles no C++: `gs/ui.cpp` and Dear ImGui are left out (`wasm_build.py`); `port/src/web/web_ui.c`
+is the engine's side of `ui.h` there, and the settings are an HTML panel beside the game (`port/web/settings.js`). The
+canvas shows the game alone. Native builds, the Vulkan back end, `ui.cpp`, `gs_input.c`, `gs_draw.c`, `gs_gl.c` and
+`headless.c` are unchanged (`git diff` against the commit before: no change).
+
+**Interface** (`web_ui.c`, exported `Bt3Ui_*`): `Get(name)` reads a value at once; `Set(name, value)` and
+`Action(name, arg)` queue a change, applied by the game's thread between two frames (an SDL user event that
+`GsDraw_PollEvents` hands to `Ui_Event`); the engine then calls the page's `changed`. Values stay where the native
+build keeps them (PortVideo via `GsGpu_Get/SetSettings`, `gs_input.c`'s bindings, `Port_ClashSquare*`,
+`gPortUnlockAll`) and are saved through `Port_SettingSave` into the engine's settings file, which the page keeps
+between visits (localStorage). Bindings are captured by the engine (SDL's key codes and names): the page puts the
+focus on the canvas and the next key or controller button is taken there. The engine's settings key (F1, START +
+SELECT, or the bound one) calls the page's `toggle`.
+
+**The ImGui window's controls and where they went**
+| ImGui (ui.cpp) | Browser |
+|---|---|
+| Internal resolution, aspect ratio, 2D filtering; effects (6) and glow; music and effects volume; texture pack (shown only if a pack is found) | panel, same engine settings |
+| Renderer (Vulkan / OpenGL, next start) | WebGL 2 / WebGPU: restarts the page with `?gpu=` |
+| Full screen (F11) | page button (browser Fullscreen API; a browser grants it only from a click, so the saved setting cannot apply it at start) |
+| Controls: player, controller, reset, 24 bindings + the settings key; clash option and its worth | panel, same engine values |
+| Cheats: unlock everything | panel (offered once a save is loaded; reports the result) |
+| Meter (frame rate, game speed) | Developer section (with renderer, GPU, resolution, frame, WebGPU errors, screenshot, restart with start-up switches) |
+| Display (monitor choice) | not offered: the browser decides |
+| Smooth motion (60 / 120 / 240) | **not offered**: measured in the browser, it slows the game (speed 90 % at "60", 74 % at "120") and the in-between pictures do not reach the screen (a page shows one picture per animation frame). The engine's F9 still switches it, with that effect |
+| Online play window, players' names, connection meter | online play is not in the browser build: the main menu's Dragon Net Battle entry is hidden (`BT3_MENU_ITEM4=0`) |
+| Names of stages / songs added from outside the disc | the game prints them with its own font (its fallback without the overlay); the browser data has none |
+| Notices (`Port_UiNotice`) | a line under the game |
+
+**Keyboard and focus**: SDL hears the keyboard on the canvas only (`SDL_EMSCRIPTEN_KEYBOARD_ELEMENT=#canvas`; SDL's
+default, the whole window, swallowed Tab and the arrows and passed the page's typing to the game). Panel: tabs with
+the arrow keys, Escape closes it, the focus returns to the game; while it is open neither the keyboard nor a
+controller reaches the game (`gPortOverlayOpen`). The engine quits on Escape (a desktop rule, unchanged); the page
+keeps Escape from the canvas (a tab has no quit, and Escape leaves full screen), except while a binding is taken.
+
+**Tested** (built-in browser pane and Chrome through CDP): every control changed its engine value on WebGL 2
+(scale, aspect, 2D filtering, texture pack, the six effects bit by bit, glow, both volumes, clash option and worth,
+key binding with K / Esc keep / Enter to rebind, reset to defaults, controller list, unlock after loading a save,
+screenshot 512 x 448, renderer switch, restart with switches) and the video, effects and screenshot ones on WebGPU
+(two resolution changes: 0 device errors); settings restored after a reload; F1 in the game opens the panel; Escape
+closes it and the game keeps running; phone width (375 px) usable; full screen in Chrome 2560 x 1440 at 60 pictures/s,
+Escape leaves it without ending the game (3 runs; in two of them Chrome did not grant full screen to its background
+test window, without an error the page could report). Regression: demo battle and boot 12/12 identical on both
+renderers, trace 8ad198bf58dbed33; pipekey and WGSL tests pass. Not testable here: a physical controller (START +
+SELECT, button capture), the native build.
 
 ### WebGPU back end: design (2026-10-11; implemented as described, differences from the first draft marked *as built*)
 Inspected: `gs_draw.h` (GsBackend), `gs_draw.c` (recording, pipeline_get, targets), `gs_gl.c` (replay, native passes,
@@ -540,6 +586,7 @@ with WebGL 2), browser console and device validation errors.
 - 2026-10-11 (7): shared renderer layer clean-up (behaviour-preserving). Commits 359653e, efb4deb, 0d760f9, 902869d.
 - 2026-10-11 (8): WebGPU back end: init (bf2196f), blit shader (122dd4e), shared screenshot writer (7a251db), bench
   --chrome-flags (25a1aab), the back end itself (c6a8aca); compared with WebGL 2 and measured (above).
+- 2026-10-11 (9): settings panel in the page, no ImGui in the browser build. Commits 65f1981, e36c449, 1fda3f3.
 
 ## 6. Next milestone
 
