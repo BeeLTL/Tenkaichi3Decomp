@@ -390,10 +390,20 @@ static bool sNetBusy;   // the lobby is waiting or connecting
 static int sQueue = -1; // the queue chosen: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20 DP
 
 static void quick_status(int state, int &lastState, const char *name) {
+    // A search ends by itself after three minutes: a window left open does not go on asking the service for hours,
+    // and the player is told that nobody was there instead of being left to wonder. One press searches again.
+    static const Uint64 kSearchMs = 180000;
+    static Uint64 since;
+    if (state == 3 && since != 0 && SDL_GetTicks() - since > kSearchMs) {
+        Port_LobbyCancel();
+        lastState = -5;
+        state = 0;
+    }
     if (state == 3 || state == 1) {
         ImGui::TextUnformatted(state == 1 ? "Found a player. Connecting..." : "Searching for a player in this queue...");
-        if (state == 3) {
-            ImGui::TextDisabled("This waits for as long as you do. Leave the window open.");
+        if (state == 3 && since != 0) {
+            Uint64 left = kSearchMs - (SDL_GetTicks() - since);
+            ImGui::TextDisabled("Searching for %d:%02d more. Leave the window open.", (int)(left / 60000), (int)(left / 1000 % 60));
         }
         if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
             Port_LobbyCancel();
@@ -407,8 +417,11 @@ static void quick_status(int state, int &lastState, const char *name) {
         ImGui::TextWrapped("The two games could not reach each other, directly or through the relay. Search again for another player.");
     } else if (lastState == -2) {
         ImGui::TextWrapped("The other player's game is a different version. Search again.");
+    } else if (lastState == -5) {
+        ImGui::TextWrapped("Nobody was searching this queue in the last three minutes. Search again, or try another queue.");
     }
-    if (ImGui::Button("Search for a match", ImVec2(200.0f, 0.0f))) {
+    if (ImGui::Button(lastState == -5 ? "Search again" : "Search for a match", ImVec2(200.0f, 0.0f))) {
+        since = SDL_GetTicks() + 1;
         // The same for everyone in a quick match, whoever turns out to be the host: rollback of up to 8 frames and
         // the input delay measured from the connection. (The Host tab's own choices are for matches with someone
         // you can agree them with; a stranger's saved ones were not to be inherited unseen.)

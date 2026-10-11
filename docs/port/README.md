@@ -1727,3 +1727,8 @@ match took the rollback and delay the host had saved on the Host tab, and who ho
 stranger's choices, unseen. Now fixed for quick matches: rollback of up to 8 frames, the input delay measured from
 the connection. Checked through the real service, two copies on one machine: both log "input delay 1 blanks,
 rollback of up to 8".
+
+**Quick match: a search ends after three minutes** (after 0.1.27; asked for by the user). The tab counts the time
+down, then says nobody was searching that queue and offers "Search again". It bounds what one search can ask of
+the service (about 60 requests) and replaces the open-ended wait, where a window left open asked for hours. Not
+seen on screen by me.
