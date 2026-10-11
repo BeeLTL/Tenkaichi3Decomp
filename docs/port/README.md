@@ -1519,3 +1519,25 @@ test on), and ground nearer than the fighter hides it. PCSX2 shows the same (che
 (BT3_PAD_PLAY) replayed with `BT3_UNCAPPED=1` gave the same pictures as at real speed (two frames compared
 byte for byte) and reaches a fight in six seconds: with BT3_GPU_CUT that makes a search for "the draw that
 paints this" a matter of minutes.
+
+## Windows: a crash when an online match starts, from files of two releases side by side (2026-10-11)
+
+Reported by the user from a Windows copy of 0.1.24: joining crashes, "exception 0xC0000005 ... msvcrt.dll, writing
+address 0x203364B0", the game running, an empty backtrace.
+
+- **The address is code in 0.1.24** (.text is 0x20001000 to 0x20338ED8 there) **and is the first line of
+  `Tenkaichi3Decomp.exe.mem` of releases 0.1.16 to 0.1.18** ("203364b0 1f4": checked in each release's Windows
+  package; 0.1.24's own list begins at 0x20339500 and fits its program). So that copy had the new program next to
+  an old list. The list says where the game's variables lie in the program (make_state.py, written at link time);
+  a state put back (the start of a session, a rollback) is copied to those addresses, here over code, which
+  Windows does not allow. Nothing reads the list before the first state is taken, so the copy played offline
+  without a sign of it.
+- **Now the list says which program it is for:** two first lines, "0 <address of gPortResim>" and
+  "1 <address of gPortVBlanks>". state.c compares them with its own two addresses; if they differ (or are not
+  there: an old list) the list is not used, the log and a line over the picture say that files of two releases
+  are mixed, and online play goes on the way it does without a list (the program starts again for the session,
+  no rollback).
+- Checked on Linux, two copies on one machine through the room-code lobby: with the right list they connect with
+  rollback; with a list whose first line was changed they connect without rollback and print the message, no
+  crash. Not checked: on Windows, by anyone; how that copy came to have an old list (only the .exe replaced is
+  the guess).
