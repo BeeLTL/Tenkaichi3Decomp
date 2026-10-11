@@ -394,6 +394,13 @@ static GLuint sSamplers[16];
 static GLuint sWhite;
 static GLuint sUboU, sUboParams;
 static GLuint sTgCol[MAX_TARGETS], sTgAux[MAX_TARGETS], sTgDep[MAX_TARGETS], sTgFbo[MAX_TARGETS];
+#ifdef __EMSCRIPTEN__
+/* The same colour attachments without the depth one. The depth table pass (native 3) samples the target's depth
+   texture while drawing into the target: a feedback loop WebGL refuses (INVALID_OPERATION, the draw is dropped:
+   found with the page's ?gldebug=1, "unit 0 = depth attachment"), which desktop GL tolerates. That pass neither tests
+   nor writes depth (set_pipe: fx pipelines), so drawing it here gives the same picture. */
+static GLuint sTgFboNoDepth[MAX_TARGETS];
+#endif
 static GLuint sDateCopy, sAuxCopy;
 static GLuint sScratchRead, sScratchDraw;
 static GLuint sFbTex[2], sFbFbo[2];
@@ -434,6 +441,16 @@ static void target_ensure(int i) {
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         fprintf(stderr, "bt3: gl: target %d framebuffer incomplete\n", i);
     }
+#ifdef __EMSCRIPTEN__
+    glGenFramebuffers(1, &sTgFboNoDepth[i]);
+    glBindFramebuffer(GL_FRAMEBUFFER, sTgFboNoDepth[i]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sTgCol[i], 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, sTgAux[i], 0);
+    glDrawBuffers(2, bufs);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        fprintf(stderr, "bt3: gl: target %d framebuffer without depth incomplete\n", i);
+    }
+#endif
 }
 
 static void target_drop(int i) {
@@ -442,6 +459,10 @@ static void target_drop(int i) {
     glDeleteTextures(1, &sTgDep[i]);
     glDeleteFramebuffers(1, &sTgFbo[i]);
     sTgCol[i] = sTgAux[i] = sTgDep[i] = sTgFbo[i] = 0;
+#ifdef __EMSCRIPTEN__
+    glDeleteFramebuffers(1, &sTgFboNoDepth[i]);
+    sTgFboNoDepth[i] = 0;
+#endif
 }
 
 static GsTex target_color(int i) { return (GsTex)sTgCol[i]; }
@@ -949,7 +970,14 @@ static void frame_end(void) {
         if (d->native == 3) {
             float params[4] = {(float)d->src, d->misc[0], 0.0f, 0.0f};
             if (!gsTargets[d->target].cleared) { continue; }
+#ifdef __EMSCRIPTEN__
+            /* the target without its depth attachment (sTgFboNoDepth): the next primitive binds the whole target */
+            bind_target(d->target, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, sTgFboNoDepth[d->target]);
+            cur = -1;
+#else
             if (cur != d->target) { bind_target(d->target, 0); cur = d->target; }
+#endif
             set_pipe(d->pipeline);
             set_textures(sTgDep[d->target], 6, sAuxCopy, 6, (GLuint)d->tex, 6);
             set_params(params, 16);
