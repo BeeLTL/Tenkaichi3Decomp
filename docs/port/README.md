@@ -1886,3 +1886,20 @@ thirds of the audible windows of the output are exact copies of the sound at 100
 pitch is the original's, and the output moves through the original 1.200 and 0.701 samples per sample. Not
 checked: by ear. A time stretch can be heard on some material (a faint flutter on long held notes, doubled
 attacks on drums); how this one sounds on the game's music nobody has listened to yet.
+
+## The online match speed is a number (2026-10-12)
+
+Players reported 120% here as "a bit faster than Dolphin": the competitive standard is 120% of the PAL version
+there, which is 60 pictures a second, where 120% of this (USA) version is 72. How fast the PAL game moves per
+picture is not known (the USA code has no PAL handling to read it from; a search found one forum recollection
+that the series runs "at the same speed with lower FPS" on PAL and nothing measured), so the right number on this
+version's scale is somewhere from 100 to 120 and has to be found by the players.
+
+So the speed is now a percentage in the rules word (bits 16..23; bit 12 stays "120%" for 0.1.29), the Host tab has
+a slider from 100% to 150% (setting `net_speed_percent`), and `NET_SPEED_STANDARD` in net.c is the one number a
+quick match runs at and the slider starts from: 120 until the players name another. Capability word: | 2 = knows
+the number.
+
+Checked with connected pairs, without a window, against the published 0.1.29 build: new and new at 110% both run
+blanks 15.16 ms apart; a new host at 110% with a 0.1.29 joining: both 100%; a new host at 120% with a 0.1.29:
+both 120%; a 0.1.29 hosting at 120% with a new one joining: both 120%. The regression replay passes.

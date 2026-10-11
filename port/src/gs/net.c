@@ -175,29 +175,50 @@ int Port_NetSideOptions(int *camera, int *shake) {
     return 1;
 }
 
-/* The match's speed: bit 12 of the rules word is "120%", the standard of competitive play for this game. It is
-   the vertical blanks' pace (plat_stub.c) and the pitch of what is heard (snd_adx.c, snd_se.c), nothing of the
-   game's state: every step is computed as always, there are just 72 of them a second and not 60. The host's
-   choice, like the other rules; taken back by the host if the one who joins is a release that does not know it
-   (0.1.28 and earlier: no capability word in its greeting), so that the two never run at different paces. */
+/* The match's speed, a percentage of the game's own (100 to 200). It is the vertical blanks' pace (plat_stub.c)
+   and nothing of the game's state: every step is computed as always, there are just more of them a second; the
+   sound keeps its pitch (snd_adx.c). The host's choice, like the other rules, in the rules word:
+     bits 16..23  the percentage (0 = not said)
+     bit 12       "120%", which is all 0.1.29 knows of this; set beside the number when the number is 120
+   What the one who joins knows is in the capability word of its greeting (CAP_MARK | 1: bit 12; | 2: the number;
+   0.1.28 and earlier send none). The host takes back what the other does not know before it answers, so the two
+   never run at different paces: a 0.1.29 gets 120% or 100%, anything older 100%.
+   NET_SPEED_STANDARD is what a quick match runs at and what the Host tab starts from. Competitive play of this
+   game is "120% on the PAL version in Dolphin"; what that is on this (the USA) version's scale is not known yet,
+   the number here is the first guess and the Host tab's slider is there to find it. */
 #define RULE_FAST 0x1000u
-#define CAP_MARK 0x43410000u /* the capability word behind the options in a greeting: CAP_MARK | 1 = knows RULE_FAST */
-static int sWantFast = 1;
+#define RULE_SPEED_SHIFT 16
+#define CAP_MARK 0x43410000u
+#define NET_SPEED_STANDARD 120
+static int sWantSpeed = NET_SPEED_STANDARD;
+
+static uint32_t speed_bits(int percent) {
+    return (uint32_t)percent << RULE_SPEED_SHIFT | (percent == 120 ? RULE_FAST : 0);
+}
 
 void Port_NetRulesSet(int type, int dp, int time) {
     sRules = (uint32_t)(type < 0 || type > 2 ? 0 : type) | (uint32_t)(dp < 0 || dp > 2 ? 0 : dp) << 4 | (uint32_t)(time < 0 || time > 4 ? 3 : time) << 8 |
-             (sWantFast ? RULE_FAST : 0);
+             speed_bits(sWantSpeed);
 }
 
-void Port_NetSpeedSet(int fast) {
-    sWantFast = fast != 0;
-    sRules = (sRules & ~RULE_FAST) | (sWantFast ? RULE_FAST : 0);
+void Port_NetSpeedSet(int percent) {
+    sWantSpeed = percent < 100 ? 100 : percent > 200 ? 200 : percent;
+    sRules = (sRules & ~(RULE_FAST | 0xFFu << RULE_SPEED_SHIFT)) | speed_bits(sWantSpeed);
+}
+
+int Port_NetSpeedStandard(void) {
+    return NET_SPEED_STANDARD;
+}
+
+static int rules_speed(void) {
+    int percent = (int)(sRules >> RULE_SPEED_SHIFT & 0xFF);
+    return percent >= 100 && percent <= 200 ? percent : (sRules & RULE_FAST) != 0 ? 120 : 100;
 }
 
 int Port_NetSession(void);
-/* 1000 = the game's own pace, 1200 = an online session at 120%. */
+/* 1000 = the game's own pace; only ever the match's, never the player's own setting. */
 int Port_NetSpeedMilli(void) {
-    return (Port_NetSession() || Port_NetActive()) && (sRules & RULE_FAST) != 0 ? 1200 : 1000;
+    return Port_NetSession() || Port_NetActive() ? rules_speed() * 10 : 1000;
 }
 
 void Port_NetRules(int *type, int *dp, int *time) {
@@ -435,7 +456,13 @@ static int receive(void) {
                 if (n >= 20 + NAME_LEN) {
                     memcpy(&cap, pkt + 16 + NAME_LEN, 4);
                 }
-                if ((cap & 0xFFFF0000u) != CAP_MARK || !(cap & 1)) {
+                if ((cap & 0xFFFF0000u) != CAP_MARK) {
+                    cap = 0;
+                }
+                if (!(cap & 2)) { /* does not know the number: 120% if it knows that and it is that, else 100% */
+                    sRules &= ~(0xFFu << RULE_SPEED_SHIFT);
+                }
+                if (!(cap & 1)) {
                     sRules &= ~RULE_FAST;
                 }
                 ack[5] = sRules;
@@ -570,7 +597,7 @@ static void net_start(int role, const char *host, const char *join) {
         sRules = (uint32_t)strtoul(getenv("BT3_NET_RULES"), NULL, 0);
     }
     if (getenv("BT3_NET_SPEED") != NULL) { /* testing: 120 or 100 */
-        Port_NetSpeedSet(atoi(getenv("BT3_NET_SPEED")) >= 120);
+        Port_NetSpeedSet(atoi(getenv("BT3_NET_SPEED")));
     }
     sAutoDelay = getenv("BT3_NET_DELAY") != NULL ? strcmp(getenv("BT3_NET_DELAY"), "auto") == 0 : sOptAuto;
     sDelay = getenv("BT3_NET_DELAY") != NULL && !sAutoDelay ? atoi(getenv("BT3_NET_DELAY")) : sOptDelay >= 0 ? sOptDelay : 2;
@@ -659,7 +686,7 @@ static void net_start(int role, const char *host, const char *join) {
             uint32_t hello[5 + NAME_LEN / 4] = {MAGIC, T_HELLO, NET_VERSION};
             memcpy(&hello[3], sMyName, NAME_LEN);
             hello[3 + NAME_LEN / 4] = sOpts[1];
-            hello[4 + NAME_LEN / 4] = CAP_MARK | 1;
+            hello[4 + NAME_LEN / 4] = CAP_MARK | 3;
             net_send(hello, sizeof(hello), &sPeer);
             last = now;
         }
@@ -735,7 +762,7 @@ static void net_start(int role, const char *host, const char *join) {
     sHave[0] = sHave[1] = (uint32_t)sDelay + 1;
     fprintf(stderr, "bt3: net: connected%s; input delay %d blanks, %s\n", sFromLobby && Port_LobbyRelayed() ? " through the relay" : sFromLobby ? " directly" : "", sDelay,
             sRollMax > 0 ? "rollback" : "waiting for each other");
-    fprintf(stderr, "bt3: net: game speed %d%%\n", (sRules & RULE_FAST) != 0 ? 120 : 100);
+    fprintf(stderr, "bt3: net: game speed %d%%\n", rules_speed());
     if (sOpts[0] != 0 && sOpts[1] != 0) {
         fprintf(stderr, "bt3: net: each player's own options: player 1 camera %u shake %u, player 2 camera %u shake %u\n", (unsigned)(sOpts[0] & 0xFF),
                 (unsigned)(sOpts[0] >> 8 & 0xFF), (unsigned)(sOpts[1] & 0xFF), (unsigned)(sOpts[1] >> 8 & 0xFF));
@@ -1538,7 +1565,7 @@ void Port_LobbyAuto(void) {
             }
             type = q == 0 ? 0 : q == 1 ? 1 : 2;
             dp = q >= 2 ? q - 2 : 0;
-            Port_NetSpeedSet(1);
+            Port_NetSpeedSet(NET_SPEED_STANDARD);
             Port_NetRulesSet(type, dp, 4); /* (a queue's rules: its battle type, no time limit, 120%) */
             if (getenv("BT3_NET_ROLLBACK") == NULL && getenv("BT3_NET_DELAY") == NULL) {
                 Port_NetOptions(Port_RollCan() ? 8 : 0, -2); /* (and a quick match's fixed rollback and delay, as the window sets them) */
