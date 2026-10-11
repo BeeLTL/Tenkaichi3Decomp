@@ -155,6 +155,8 @@ rooms.clear();
     const ok = await ask("host", { v: 3, rel: 129, name: "N", addrs: ["198.51.100.77:1"] });
     check("the release named, or a newer one, is let in", typeof ok.code === "string" && typeof (await ask("host", { v: 3, rel: 130, name: "N", addrs: ["198.51.100.77:1"] })).code === "string");
     check("a room under way is not touched (its poll is answered)", (await ask("poll", { code: ok.code, key: ok.key })).peer === null);
+    const hi = await (await worker.fetch(new Request("https://x/v1/hello", { method: "POST", headers: { "cf-connecting-ip": "198.51.100.77" }, body: JSON.stringify({ rel: 128 }) }), { DB, MIN_RELEASE: "129", LATEST_RELEASE: "131" })).json();
+    check("hello says the minimum and the newest", hi.min === 129 && hi.latest === 131 && (await post("hello", "198.51.100.78", { rel: 128 })).min === 0);
     check("no minimum set: everyone as before", typeof (await post("host", "198.51.100.78", { v: 3, name: "O", addrs: ["198.51.100.78:1"] })).code === "string");
 }
 console.log(fails === 0 ? "all passed" : fails + " failed");

@@ -1297,6 +1297,8 @@ int Port_LobbyStartQuick(int queue) {
 }
 
 void Port_LobbyQueuesAsk(void) { Match_QueuesAsk(NET_VERSION); }
+void Port_LobbyHelloAsk(void) { Match_HelloAsk(); }
+int Port_LobbyRelease(int *min, int *latest) { return Match_Release(min, latest); }
 int Port_LobbyQueueWaiting(int queue) { return Match_QueueWaiting(queue); }
 
 void Port_LobbyCancel(void) {

@@ -51,6 +51,8 @@ int Port_LobbyStart(int host, const char *address, int port); // gs/net.c
 int Port_LobbyStartCode(int host, const char *code);         // the same with a room code (the matchmaking service)
 int Port_LobbyStartQuick(int queue);                         // a quick match: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20
 void Port_LobbyQueuesAsk(void);                              // asks the service how many wait in each queue
+void Port_LobbyHelloAsk(void);                               // asks it whether this release is new enough
+int Port_LobbyRelease(int *min, int *latest);                // this release's number; the oldest let in and the newest (0: not known)
 int Port_LobbyQueueWaiting(int queue);                       // ... as last heard, -1 if not known
 const char *Port_LobbyCode(void);                            // the host's room code, "" until it is known
 const char *Port_LobbyError(void);                           // why the matchmaking failed (state -3)
@@ -382,6 +384,7 @@ extern volatile int gPortNetWindowClose; // gs/state.c
 static void net_open(void) {
     set_open(true);
     sNet = true;
+    Port_LobbyHelloAsk(); // (once per opening: is there a newer release, and is this one still let in)
     gPortInputCapture = 1; // the game takes no input at all while this is open (it sits on the main menu behind it)
 }
 
@@ -450,6 +453,20 @@ static void build_net(void) {
         open = false;
     }
     if (ImGui::Begin("Dragon Net Battle", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        {
+            int min = 0, latest = 0, mine = Port_LobbyRelease(&min, &latest);
+            if (min > mine) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
+                ImGui::TextWrapped("Update available. Online servers are unreachable until you update.");
+                ImGui::PopStyleColor();
+                ImGui::TextDisabled("You have 0.%d.%d; 0.%d.%d or newer is needed. github.com/z3xox/Tenkaichi3Decomp/releases", mine / 100, mine % 100, min / 100, min % 100);
+                ImGui::Separator();
+            } else if (latest > mine) {
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: release 0.%d.%d.", latest / 100, latest % 100);
+                ImGui::TextDisabled("github.com/z3xox/Tenkaichi3Decomp/releases");
+                ImGui::Separator();
+            }
+        }
         ImGui::TextWrapped("Fight a player on another computer. One of you hosts, the other joins with the host's address.");
         ImGui::Spacing();
         ImGui::SetNextItemWidth(260.0f);

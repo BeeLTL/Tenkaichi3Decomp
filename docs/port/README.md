@@ -1756,3 +1756,11 @@ release." Off unless the variable is set. What it does not do is in port/matchma
 still meet by typed address, and a changed copy can claim any number. Checked: the Worker's tests (5 new), and
 that a game sending `rel` still makes and joins rooms on the Worker as deployed (which ignores it). Not checked:
 the refusal against the deployed Worker (it has no such variable yet), the message on screen.
+
+**"Update available. Online servers are unreachable until you update."** (the user's words; the same day). When
+the online screen opens the game asks the service once (`/v1/hello`) for the oldest release it lets in and the
+newest there is, and says so at the top of the screen: the line above with the two numbers when it is too old; a
+milder "Update available: release 0.1.NN" when a newer one exists (`LATEST_RELEASE`, optional) and it is still let
+in. A refused room, join or search answers with the same words. Checked against the Worker behind a local server
+with a minimum above this build: host, join and quick match all stop with that line. Not seen: the banner in the
+window. One request more per opening of the online screen; none while it is closed.

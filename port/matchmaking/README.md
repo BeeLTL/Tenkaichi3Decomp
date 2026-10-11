@@ -48,6 +48,11 @@ Worker (Settings -> Variables and Secrets, a plain variable, e.g. `129`), a new 
 from an older game is refused, and so is one from a game that does not say (0.1.28 and earlier). Rooms under way
 are not touched. Without the variable, or at 0, everyone is let in.
 
+- When its online screen opens, a game of 0.1.29 or later asks (`/v1/hello`) and, if it is below the minimum,
+  shows at the top of that screen: "Update available. Online servers are unreachable until you update.", with its
+  own number and the one that is needed. The same words answer a refused room, join or search.
+- A second variable, `LATEST_RELEASE`, is optional: a game older than it, but not below the minimum, shows
+  "Update available: release 0.1.NN." there and goes on working.
 - Raise it when a release must be the minimum; it takes effect at the next request, with no new code.
 - A game of 0.1.29 or later that is refused says so: "This release is too old ... Get the newest release."
   An older one shows its own words for an answer it does not know ("gave no room", "gave no answer").

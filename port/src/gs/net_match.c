@@ -421,7 +421,7 @@ again:
             return 0;
         }
         if (SDL_strstr(answer, "\"role\":\"host\"") == NULL) {
-            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "This release is too old for online play through the matchmaking service. Get the newest release." :
+            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "Update available. Online servers are unreachable until you update." :
                           SDL_strstr(answer, "busy") != NULL ? "Too many searches from this address; try again in a few minutes." :
                           SDL_strstr(answer, "bad request") != NULL || SDL_strstr(answer, "error") != NULL ? "The matchmaking service does not know quick match yet." :
                           "The matchmaking service gave no answer.");
@@ -441,7 +441,7 @@ again:
             }
         }
         if (!json_str(answer, "code", sM.code, sizeof(sM.code)) || !json_str(answer, "key", key, sizeof(key))) {
-            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "This release is too old for online play through the matchmaking service. Get the newest release." :
+            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "Update available. Online servers are unreachable until you update." :
                           SDL_strstr(answer, "busy") != NULL ? "Too many rooms from this address; try again in a few minutes." : "The matchmaking service gave no room.");
             return 0;
         }
@@ -525,7 +525,7 @@ again:
         (void)you;
         SDL_memset(&st, 0, sizeof(st));
         if (!json_peer(answer, &st)) {
-            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "This release is too old for online play through the matchmaking service. Get the newest release." :
+            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "Update available. Online servers are unreachable until you update." :
                           SDL_strstr(answer, "version") != NULL ? "The host's game is a different version: both players need the same release." :
                           SDL_strstr(answer, "full") != NULL ? "Someone has already joined that room." :
                           SDL_strstr(answer, "no room") != NULL ? "No room with that code (codes last ten minutes)." :
@@ -608,6 +608,46 @@ static int SDLCALL queues_thread(void *arg) {
     }
     SDL_SetAtomicInt(&sQueueBusy, 0);
     return 0;
+}
+
+/* ---- is this release new enough? asked when the online screen opens ---- */
+static SDL_AtomicInt sRelMin, sRelLatest, sRelBusy;
+
+static int SDLCALL hello_thread(void *arg) {
+    char body[64], answer[256];
+    const char *p;
+
+    (void)arg;
+    SDL_snprintf(body, sizeof(body), "{\"rel\":%d}", PORT_RELEASE);
+    if (http_post("hello", body, answer, sizeof(answer)) && (p = SDL_strstr(answer, "\"min\":")) != NULL) {
+        SDL_SetAtomicInt(&sRelMin, SDL_atoi(p + 6));
+        p = SDL_strstr(answer, "\"latest\":");
+        SDL_SetAtomicInt(&sRelLatest, p != NULL ? SDL_atoi(p + 9) : 0);
+    }
+    SDL_SetAtomicInt(&sRelBusy, 0);
+    return 0;
+}
+
+void Match_HelloAsk(void) {
+    SDL_Thread *t;
+    if (SDL_GetAtomicInt(&sRelBusy)) {
+        return;
+    }
+    SDL_SetAtomicInt(&sRelBusy, 1);
+    t = SDL_CreateThread(hello_thread, "bt3-hello", NULL);
+    if (t == NULL) {
+        SDL_SetAtomicInt(&sRelBusy, 0);
+    } else {
+        SDL_DetachThread(t);
+    }
+}
+
+/* This release's number, and what the service last said: the oldest it lets in and the newest there is (0: not
+   said, or not asked yet). */
+int Match_Release(int *min, int *latest) {
+    *min = SDL_GetAtomicInt(&sRelMin);
+    *latest = SDL_GetAtomicInt(&sRelLatest);
+    return PORT_RELEASE;
 }
 
 /* Asks the service (nothing happens if an answer is still on its way). */

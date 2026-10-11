@@ -19,6 +19,7 @@
 //       does (poll, addrs, leave as for any room). `who` names the caller's game (a random text it made up), so that
 //       a room it left behind is not the one it is given. relay: false = it holds a relay address already.
 //   /v1/queues {v}                     -> {waiting: {S: n, T: n, D10: n, D15: n, D20: n}}
+//   /v1/hello  {rel}                   -> {min, latest}   (the variables MIN_RELEASE and LATEST_RELEASE, 0 if not set)
 // `turn` (only if the Worker has a TURN key: the secrets TURN_KEY_ID and TURN_KEY_TOKEN) is what the host needs to
 // get a relay address from Cloudflare's TURN service: {server, username, credential}, good for three hours. The
 // host publishes that address as "relay=ip:port" among its addresses; the other player's addresses carry
@@ -368,6 +369,9 @@ export default {
         // (0.1.28 and earlier do not). Rooms that are under way are not touched. An older game shows its own words
         // for an answer it does not know ("gave no room", "gave no answer"); a newer one says to get the new release.
         const minRelease = Number(env.MIN_RELEASE ?? 0) || 0;
+        if (what === "hello") { // a game asks, when its online screen opens, whether it is new enough (and what the newest is)
+            return reply({ min: minRelease, latest: Number(env.LATEST_RELEASE ?? 0) || 0 });
+        }
         if (minRelease > 0 && (what === "host" || what === "join" || what === "quick") && !(Number.isInteger(body.rel) && body.rel >= minRelease)) {
             return reply({ error: "old", need: minRelease }, 426);
         }

@@ -21,6 +21,8 @@ extern const char *const kMatchQueues[MATCH_QUEUES]; /* "S", "T", "D10", "D15", 
 /* role 1 makes a room, 2 joins room `code`, 3 is a quick match in the queue named by `code`. */
 void Match_Begin(int role, int sock, int localPort, const char *code, const char *name, int version);
 void Match_QueuesAsk(int version);
+void Match_HelloAsk(void);
+int Match_Release(int *min, int *latest);
 int Match_QueueWaiting(int queue);
 void Match_Poll(MatchStatus *out);
 void Match_Cancel(void);
