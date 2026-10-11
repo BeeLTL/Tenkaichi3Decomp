@@ -379,6 +379,34 @@ node port/tests/bench/bench.js --label <name> --headless --from 300 --to 2100 [-
   9 with no message (`node port/tests/wgsl/check.js`, adapter "nvidia blackwell"); the WebGL build with the edited
   sources keeps the fight trace (`8ad198bf58dbed33`), no GL errors, work 11.50 ms.
 
+### Shared renderer layer clean-up (2026-10-11) — behaviour-preserving, verified
+Before the WebGPU back end, the duplication between the back ends was removed from the shared layer; the GL back end
+(verifiable in the browser) uses it. The Vulkan back end (`gs_gpu.c`) is not changed: it cannot be built here and is
+out of the browser port's scope; it still carries its own copies of what is listed below (a follow-up for when a
+native build can be checked).
+
+| commit | change | files |
+|---|---|---|
+| 359653e | picture regression test: `bench.js --shots N`, `compare_shots.js A B`; page exposes `window.bt3Module` | port/web/index.html, port/tests/bench/{bench,compare_shots}.js |
+| efb4deb | one pipeline-key encoder/decoder (`GsPipeState`, named enums), one API-neutral blend description (`GsBlendDesc`) | port/src/gs/gs_pipekey.c (new), gs_draw.h, gs_draw.c, gs_gl.c, port/tests/pipekey/{test.c,run.py} (new) |
+| 0d760f9 | named constants: `GS_SAMPLER_*`, `GS_DISPLAY_W/H`, `VU_VERT_FLOATS/BYTES`, `GS_OUTLINE_DARKNESS` | gs_draw.h, gs_draw.c, gs_gl.c |
+| 902869d | shared `GsDraw_PollEvents`, `GsDraw_PictureSize`, `GsDraw_FrameReset` | gs_draw.c, gs_draw.h, ui.h, gs_gl.c |
+
+Tests after every commit: WebGL build; demo battle frames 300-2100 with screenshots every 150 frames
+(`node port/tests/bench/bench.js --label <x> --headless --shots 150 --env BT3_GS_VERBOSE=1`), compared with the
+pre-clean-up reference (`node port/tests/bench/compare_shots.js pre_cleanup_A <x>`): **12 of 12 screenshots identical,
+fight trace `8ad198bf58dbed33`, 0 GL errors**, at every step. The reference itself is reproducible: two runs before the
+clean-up, 12 of 12 identical. Pipeline key: `python port/tests/pipekey/run.py`, all **9,953,280** combinations of
+ALPHA / ABE / TEST / ZMSK / FBMSK / topology / vertex source: 0 keys differ from the old encoding (the old code is kept
+in the test as the reference), 0 change on decode + encode, 0 blends differ from the old OpenGL choice
+(`-Wall -Wextra -Werror`). F1 opens / closes the settings window through the shared event loop (seen).
+
+Left as they are, on purpose: where the letterboxed picture is placed (each back end's origin differs, and the GL back
+end's rounding of the centred position differs by one row from Vulkan's when the free height is odd); tuned
+thresholds in the widescreen layout code (not constants of the same kind). Still duplicated between the GL and Vulkan
+back ends: the `BT3_GPU_CUT` / `BT3_GPU_TAIL` debug switches and the PPM screenshot writer (the writer is to be shared
+when the WebGPU back end needs it).
+
 ## 5. Log
 
 - 2026-10-11 (1): repository identified, audit above, Emscripten installed. Blocked by the session folder's long path.
@@ -396,6 +424,7 @@ node port/tests/bench/bench.js --label <name> --headless --from 300 --to 2100 [-
   Commits 08c6117, ccdd15b, 4f4787e, 6a3a16d, 1b5f38a, 02a52f3.
 
 - 2026-10-11 (6): WGSL pipeline (naga 30.0.1 pinned), shared test driver. Commits c55c29c, 031c144.
+- 2026-10-11 (7): shared renderer layer clean-up (behaviour-preserving). Commits 359653e, efb4deb, 0d760f9, 902869d.
 
 ## 6. Next milestone
 
