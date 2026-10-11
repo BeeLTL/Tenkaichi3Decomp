@@ -101,6 +101,53 @@ if (report) setInterval(flush, 1000);
 addEventListener('error', (e) => stop('Uncaught error', (e.error && e.error.stack) || e.message));
 addEventListener('unhandledrejection', (e) => stop('Unhandled rejection', (e.reason && e.reason.stack) || String(e.reason)));
 
+// ?gldebug=1: every WebGL call is followed by getError(); the first errors are logged with the call, its arguments
+// and the stack (wasm function names), to find exactly which call fails. Slow: for diagnosis only.
+if (q.get('gldebug')) {
+  const proto = WebGL2RenderingContext.prototype, names = new Map([[0x500, 'INVALID_ENUM'], [0x501, 'INVALID_VALUE'],
+    [0x502, 'INVALID_OPERATION'], [0x505, 'OUT_OF_MEMORY'], [0x506, 'INVALID_FRAMEBUFFER_OPERATION']]);
+  const getError = proto.getError, counts = new Map();
+  let shown = 0;
+  for (const k of Object.getOwnPropertyNames(proto)) {
+    const d = Object.getOwnPropertyDescriptor(proto, k);
+    if (typeof d.value !== 'function' || k === 'getError' || k === 'constructor') continue;
+    const fn = d.value;
+    proto[k] = function (...a) {
+      const r = fn.apply(this, a);
+      const e = getError.call(this);
+      if (e) {
+        const key = `${k} ${names.get(e) || e}`;
+        counts.set(key, (counts.get(key) || 0) + 1);
+        if (shown++ < 12) {
+          const args = a.map((v) => typeof v === 'number' ? '0x' + v.toString(16) : v && v.constructor ? v.constructor.name : String(v));
+          if (/^draw/.test(k)) {  // a draw: is a texture being sampled also attached to the framebuffer drawn into?
+            const att = {}, fb = this.getParameter(this.DRAW_FRAMEBUFFER_BINDING);
+            if (fb) {
+              for (const [n, p] of [['color0', this.COLOR_ATTACHMENT0], ['color1', this.COLOR_ATTACHMENT0 + 1], ['depth', this.DEPTH_ATTACHMENT]]) {
+                att[n] = this.getFramebufferAttachmentParameter(this.DRAW_FRAMEBUFFER, p, this.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+              }
+            }
+            const active = this.getParameter(this.ACTIVE_TEXTURE), loops = [];
+            for (let u = 0; u < 8; u++) {
+              this.activeTexture(this.TEXTURE0 + u);
+              const t = this.getParameter(this.TEXTURE_BINDING_2D);
+              for (const [n, o] of Object.entries(att)) if (t && o === t) loops.push(`unit ${u} = ${n} attachment`);
+            }
+            this.activeTexture(active);
+            getError.call(this);  // (the queries above cannot fail, but keep the error state clean)
+            args.push(`feedback: ${loops.length ? loops.join(', ') : 'none'}; program ${this.getParameter(this.CURRENT_PROGRAM) ? 'bound' : 'none'}`);
+          }
+          const stack = (new Error().stack || '').split('\n').slice(2, 9).map((l) => l.trim().replace(/\(http.*?\)/, '')).join(' < ');
+          log(`gldebug: ${k}(${args.join(', ')}) -> ${names.get(e) || e}; ${stack}`);
+        }
+      }
+      return r;
+    };
+  }
+  proto.getError = function () { return 0; };  // (errors are taken above; the game's own check sees none)
+  setInterval(() => { if (counts.size) log('gldebug: counts ' + [...counts].map(([k, v]) => `${k}: ${v}`).join(', ')); }, 5000);
+}
+
 const data = new Bt3Data(dataBase, { log });
 setInterval(() => {
   const s = data.stats;

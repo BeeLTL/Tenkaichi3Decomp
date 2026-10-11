@@ -25,7 +25,7 @@ const browser = args.browser || 'C:/Program Files/Google/Chrome/Application/chro
 const from = Number(args.from || 600), to = Number(args.to || 1500);
 const port = 9300 + Math.floor(Math.random() * 500);
 const env = ['BT3_DEMO=1', 'BT3_FRAME_LOG=1', 'BT3_TRACE=60'].concat(args.env && args.env !== true ? args.env.split(',') : []);
-const url = `${args.url || 'http://127.0.0.1:8080/index.html'}?autostart=1&env=${env.join(',')}`;
+const url = `${args.url || 'http://127.0.0.1:8080/index.html'}?autostart=1${args.query ? '&' + args.query : ''}&env=${env.join(',')}`;
 const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bt3-bench-'));
 const outDir = path.join(__dirname, '../../build/bench');
 fs.mkdirSync(outDir, { recursive: true });
@@ -149,7 +149,10 @@ function summarize(profile) {
     interval: win.length > 1 ? stats(win.slice(1).map((r, i) => (r[8] - win[i][8]) * 1000)) : null,
     vblanksPerFrame: win.length > 1 ? (win[win.length - 1][1] - win[0][1]) / (win.length - 1) : null,
     traceLines: trace.length, traceHash: crypto.createHash('sha1').update(trace.join('\n')).digest('hex').slice(0, 16),
-    glErrors: log.filter((l) => /gl: frame error/.test(l)).length,
+    // (GL errors are only seen with BT3_GS_VERBOSE, once per frame, or with --query gldebug=1, per failing call:
+    //  the first dozen calls listed, then a running count every 5 s)
+    glErrors: log.filter((l) => /gl: frame error|^gldebug: [a-zA-Z]+\(/.test(l)).length,
+    glErrorCounts: log.filter((l) => l.startsWith('gldebug: counts')).pop() || '',
     profile: profile ? summarize(profile) : null,
   };
   fs.writeFileSync(path.join(outDir, `${label}.json`), JSON.stringify(result, null, 1));
@@ -163,7 +166,7 @@ function summarize(profile) {
   console.log(`  work   ${f(result.work)}\n  game   ${f(result.game)}\n  list   ${f(result.list)}\n  submit ${f(result.submit)}`);
   console.log(`  wall   ${result.fps ? result.fps.toFixed(1) : '-'} frames/s over ${result.wallSeconds ? result.wallSeconds.toFixed(1) : '-'} s; ` +
               `${result.vblanksPerFrame ? result.vblanksPerFrame.toFixed(2) : '-'} vblanks per frame; interval ${f(result.interval)}`);
-  console.log(`  trace: ${result.traceLines} lines, hash ${result.traceHash}; GL errors logged: ${result.glErrors}`);
+  console.log(`  trace: ${result.traceLines} lines, hash ${result.traceHash}; GL errors logged: ${result.glErrors} ${result.glErrorCounts}`);
   if (result.profile) {
     console.log('  profile (self time):');
     for (const c of result.profile.categories) console.log(`    ${c.pct.toFixed(1).padStart(5)}%  ${c.cat}`);
