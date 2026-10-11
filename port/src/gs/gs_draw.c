@@ -919,12 +919,12 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
         }
         if (type == 6 && !d.mode[0] && y1 - y0 >= 400.0f) {
             pivot = -1.0f;
-        } else if (x1 - x0 >= 480.0f) {
+        } else if (x1 - x0 >= 480.0f && gsAnchor != 5 && gsAnchor != 6) {
             /* as wide as the screen (the bands and streaks of READY / FIGHT, flashes, speed lines): meant to
                reach from edge to edge, so it keeps the full width */
             pivot = -1.0f;
         } else if (gsAnchor != 0) {
-            pivot = gsAnchor == 1 ? 0.0f : gsAnchor == 2 ? 512.0f : 256.0f;
+            pivot = (gsAnchor == 1 || gsAnchor == 5) ? 0.0f : (gsAnchor == 2 || gsAnchor == 6) ? 512.0f : 256.0f;
             if (gsAnchor == 4) { /* a part without a fixed side (captions: technique names): the side it is on */
                 float cx = (x0 + x1) * 0.5f;
                 pivot = x1 <= 300.0f || cx < 180.0f ? 0.0f : x0 >= 212.0f || cx > 332.0f ? 512.0f : 256.0f;
@@ -1193,6 +1193,10 @@ void GsGpu_Native(int effect) {
 
     /* 1 = outline. 2 (the see-through tint) is drawn by the generic table pass now (depth_clut), from the game's
        own table. */
+    if (effect == 0x15 || effect == 0x16) {
+        gsAnchor = effect - 0x10; /* 5/6: extended life bar, anchored left/right even beyond 480 pixels */
+        return;
+    }
     if (effect >= 0x10 && effect <= 0x14) {
         gsAnchor = effect == 0x13 ? 0 : effect == 0x14 ? 4 : effect - 0x0F; /* 1 left, 2 right, 3 centre, 4 by position */
         return;
