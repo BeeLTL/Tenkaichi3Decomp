@@ -507,9 +507,22 @@ static void build_net(void) {
                     sQueue = Port_Setting("net_queue", 0);
                     if (sQueue < 0 || sQueue > 4) { sQueue = 0; }
                 }
-                if (asked == 0 || SDL_GetTicks() - asked > 10000) { // how many wait: asked every ten seconds while this is shown
-                    asked = SDL_GetTicks() + 1;
-                    Port_LobbyQueuesAsk();
+                {
+                    // How many wait: asked when the tab is opened and then every thirty seconds, but only while the
+                    // player is doing something here (a window left open all day asks nothing after two minutes),
+                    // and not during a search (the search hears from the service anyway).
+                    static Uint64 active;
+                    bool moved = io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f || ImGui::IsAnyItemActive();
+                    for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END && !moved; k++) {
+                        moved = ImGui::IsKeyDown((ImGuiKey)k);
+                    }
+                    if (moved || active == 0) {
+                        active = SDL_GetTicks() + 1;
+                    }
+                    if (!sNetBusy && (asked == 0 || (SDL_GetTicks() - asked > 30000 && SDL_GetTicks() - active < 120000))) {
+                        asked = SDL_GetTicks() + 1;
+                        Port_LobbyQueuesAsk();
+                    }
                 }
                 ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit.");
                 ImGui::BeginDisabled(busy);

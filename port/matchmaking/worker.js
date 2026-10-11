@@ -385,9 +385,14 @@ export default {
         if (what === "queues") { // how many wait in each queue (for the window)
             const waiting = {};
             for (const q of QUEUES) {
-                const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM rooms WHERE queue = ? AND version = ? AND join_key IS NULL AND made >= ?")
-                    .bind(q, Number.isInteger(body.v) ? body.v : 0, now - ROOM_SECONDS).first();
-                waiting[q] = row ? row.n : 0;
+                waiting[q] = 0;
+            }
+            const rows = await env.DB.prepare("SELECT queue, COUNT(*) AS n FROM rooms WHERE queue IS NOT NULL AND version = ? AND join_key IS NULL AND made >= ? GROUP BY queue")
+                .bind(Number.isInteger(body.v) ? body.v : 0, now - ROOM_SECONDS).all();
+            for (const row of (rows && rows.results) || []) {
+                if (row.queue in waiting) {
+                    waiting[row.queue] = row.n;
+                }
             }
             return reply({ waiting });
         }

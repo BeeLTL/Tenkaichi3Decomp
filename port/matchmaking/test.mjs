@@ -10,6 +10,9 @@ const { worker, network, sameNetwork } = await import(copy);
 const rooms = new Map(), used = new Map();
 let rowids = 0;
 const DB = { prepare(sql) { return { args: [], bind(...a) { this.args = a; return this; },
+    async all() { const a = this.args;
+        if (sql.startsWith("SELECT queue, COUNT")) { const m = new Map(); for (const r of rooms.values()) { if (r.queue !== null && r.version === a[0] && r.join_key === null && r.made >= a[1]) m.set(r.queue, (m.get(r.queue) ?? 0) + 1); } return { results: [...m].map(([queue, n]) => ({ queue, n })) }; }
+        throw new Error("all: " + sql); },
     async first() { const a = this.args;
         if (sql.startsWith("SELECT COUNT(*) AS n FROM rooms WHERE queue") && sql.includes("rowid <")) { const mine = rooms.get(a[3]); return { n: [...rooms.values()].filter((r) => r.queue === a[0] && r.version === a[1] && r.join_key === null && r.made >= a[2] && mine && r.rowid < mine.rowid).length }; }
         if (sql.startsWith("SELECT COUNT(*) AS n FROM rooms WHERE queue")) { return { n: [...rooms.values()].filter((r) => r.queue === a[0] && r.version === a[1] && r.join_key === null && r.made >= a[2]).length }; }
