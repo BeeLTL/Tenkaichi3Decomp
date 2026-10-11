@@ -1966,3 +1966,13 @@ and off: three frames of a fight, three of the waterfall recording (the scene th
 integrated chip's Vulkan, and one of the waterfall on an Nvidia card's OpenGL. Not done: the remaining 8%, which
 is the draws that do write depth (sparing all of the GS's own primitives gives 110, but those then store
 fractions, which is the state the waterfall fault came from); a run on a display; Windows.
+
+## Disc Fusion is always unlocked (2026-10-12)
+
+The Disc Fusion screen (mode 24, src/menu/menu_o_b.c) asks for the discs of the two earlier games. It takes
+nothing from them: `Disc_Identify` (src/sys/file.c) looks for the boot file's name and the screen sets one bit per
+disc in `gProgress->discFlags` (kept for the session, not in the save); the two modes behind it are on this disc.
+Under PORT, `DiscFusion_UpdateHave` sets both bits, so both plates open their mode without the disc swap, which
+cannot work without a drive. (Bit 8 of the same word is something else: the ladder's "challenged a higher place".)
+Checked: it builds and the regression replay passes. Not checked: the screen itself, and what the two modes do
+from there.
