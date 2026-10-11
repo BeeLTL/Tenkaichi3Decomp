@@ -127,6 +127,64 @@ extern uint64_t gGpuTexNs, gGpuPipeNs, gGpuEndNs;
 #define GS_CC_B 4u
 #define GS_CC_A 8u
 
+/* ---- the pipeline key -------------------------------------------------------------------------------------
+   Everything a pipeline depends on, from GS state (gs_draw.c's pipeline_get): a back end makes one pipeline per key
+   value (GsBackend.pipeGet) and turns the key back into its own state with GsPipeKey_Decode. The values are kept
+   between runs (the pipelines file of the Vulkan back end), so the layout must not change:
+     bits 0..8    blend (GS_KEY_BLEND_*): enabled, source factor, destination factor, which C
+     bits 10..11  depth test (GsDepthTest)       bit 12  depth write
+     bits 13..14  topology (GsTopology)          bits 16..19  colour write mask (GS_CC_*)
+     bits 20..21  vertices (GsVertexSource)      bit 22  the full-screen table pass (dclut.frag), nothing else set
+   (gs_gpu.c still decodes these bits itself; it is out of the browser port's scope.) */
+
+/* What one side of ((A - B) * C >> 7) + D is multiplied by (the GS's ALPHA register: each of A, B, D is source,
+   destination or zero). */
+typedef enum { GS_BLEND_K_ZERO, GS_BLEND_K_ONE, GS_BLEND_K_C, GS_BLEND_K_MINUS_C, GS_BLEND_K_ONE_MINUS_C, GS_BLEND_K_ONE_PLUS_C } GsBlendK;
+/* ALPHA.C: where C comes from. The reserved value 3 is kept as it is (so the key stays what it was) and blends
+   like FIX. */
+typedef enum { GS_BLEND_C_SRC_ALPHA, GS_BLEND_C_DST_ALPHA, GS_BLEND_C_FIX, GS_BLEND_C_RESERVED } GsBlendC;
+typedef struct GsBlend {
+    int enabled;  /* PRIM.ABE */
+    GsBlendK src, dst;
+    GsBlendC c;
+} GsBlend;
+
+/* TEST.ZTST (with the test off counted as ALWAYS). */
+typedef enum { GS_DEPTH_NEVER, GS_DEPTH_ALWAYS, GS_DEPTH_GEQUAL, GS_DEPTH_GREATER } GsDepthTest;
+typedef enum { GS_TOPOLOGY_TRIANGLES, GS_TOPOLOGY_LINES, GS_TOPOLOGY_POINTS } GsTopology;
+/* Where a draw's vertices come from: the GS's own (gsVerts), or a vertex program's run as a shader (gsVuVerts). */
+typedef enum { GS_VERTS_GS, GS_VERTS_PROGRAM0, GS_VERTS_PROGRAM4, GS_VERTS_PROGRAM6 } GsVertexSource;
+
+typedef struct GsPipeState {
+    GsBlend blend;
+    GsDepthTest depthTest;
+    int depthWrite;
+    GsTopology topology;
+    uint32_t writeMask;  /* GS_CC_* */
+    GsVertexSource vertices;
+    int tablePass;       /* the full-screen table pass: blend and write mask only, no vertices, no depth */
+} GsPipeState;
+
+/* gs_pipekey.c. FromGs: the state of a draw from the GS registers of its context (ALPHA, PRIM.ABE, TEST, ZBUF, the
+   FBMSK half of FRAME); tablePass: the full-screen table pass, for which only blending and the write mask count. */
+GsPipeState GsPipeState_FromGs(uint64_t alpha, int abe, uint64_t test, uint64_t zbuf, uint32_t fbmsk, GsTopology topology,
+                               GsVertexSource vertices, int tablePass);
+uint32_t GsPipeKey_Encode(const GsPipeState *s);
+void GsPipeKey_Decode(uint32_t key, GsPipeState *s);
+
+/* The blend a GPU can do for a GsBlend: dst' = op(src * srcFactor, dst * dstFactor), factors from C. -C is the
+   subtracting operation; 1 + C is approximated by 1 (blend factors do not go above one). The alpha channel is not
+   blended: the frame buffer keeps the source alpha. Shared so that every back end blends the same way and only maps
+   these values to its own API. */
+typedef enum { GS_FACTOR_ZERO, GS_FACTOR_ONE, GS_FACTOR_C, GS_FACTOR_ONE_MINUS_C } GsBlendFactor;
+typedef enum { GS_OP_ADD, GS_OP_SUBTRACT /* src - dst */, GS_OP_REVERSE_SUBTRACT /* dst - src */ } GsBlendOp;
+typedef struct GsBlendDesc {
+    GsBlendFactor srcFactor, dstFactor;
+    GsBlendOp op;
+    GsBlendC c;
+} GsBlendDesc;
+GsBlendDesc GsBlend_Describe(GsBlend b); /* (meaningful when b.enabled) */
+
 /* The interface a back end implements (gs_gpu.c today, gs_gl.c in time). All GPU state stays the back
    end's: the shared layer only hands it handles and asks for the few numbers it must know (whether it can
    still take a texture this frame, a target's attachments). */

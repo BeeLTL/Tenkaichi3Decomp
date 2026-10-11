@@ -409,7 +409,7 @@ static const char *sGsSamplers[2] = {"tex", "dateTex"};
 static const char *sOneSampler[1] = {"aux"};
 static const char *sDclutSamplers[3] = {"depthTex", "auxTex", "clutTex"};
 
-typedef struct Pipe { uint32_t key, bkey, wmask; int ztst, zwrite, topo, vu, fx; } Pipe;
+typedef struct Pipe { uint32_t key; GsPipeState s; } Pipe; /* s: the key decoded (gs_draw.h) */
 static Pipe sPipes[1024];
 static int sPipeCount;
 
@@ -522,25 +522,36 @@ static void scale_changed(void) {
 }
 
 /* ---- pipelines ---------------------------------------------------------------------------------- */
-static void pipe_decode(Pipe *p, uint32_t key) {
-    p->key = key;
-    p->bkey = key & 0x1FF;
-    p->ztst = (int)((key >> 10) & 3);
-    p->zwrite = (int)((key >> 12) & 1);
-    p->topo = (int)((key >> 13) & 3);
-    p->vu = (int)((key >> 20) & 3);
-    p->fx = (int)((key >> 22) & 1);
-    p->wmask = (key >> 16) & 15;
-}
-
+/* GL has no pipeline objects: a "pipeline" here is the decoded key, applied as GL state by set_pipe. */
 static int pipe_get(uint32_t key) {
     int i;
     for (i = 0; i < sPipeCount; i++) {
         if (sPipes[i].key == key) { return i; }
     }
     if (sPipeCount == 1024) { return 0; }
-    pipe_decode(&sPipes[sPipeCount], key);
+    sPipes[sPipeCount].key = key;
+    GsPipeKey_Decode(key, &sPipes[sPipeCount].s);
     return sPipeCount++;
+}
+
+/* The shared state values (gs_draw.h) as GL's. */
+static const GLenum kGlDepthFunc[] = {[GS_DEPTH_NEVER] = GL_NEVER, [GS_DEPTH_ALWAYS] = GL_ALWAYS, [GS_DEPTH_GEQUAL] = GL_GEQUAL,
+                                      [GS_DEPTH_GREATER] = GL_GREATER};
+static const GLenum kGlTopology[] = {[GS_TOPOLOGY_TRIANGLES] = GL_TRIANGLES, [GS_TOPOLOGY_LINES] = GL_LINES,
+                                     [GS_TOPOLOGY_POINTS] = GL_POINTS};
+static const GLenum kGlBlendOp[] = {[GS_OP_ADD] = GL_FUNC_ADD, [GS_OP_SUBTRACT] = GL_FUNC_SUBTRACT,
+                                    [GS_OP_REVERSE_SUBTRACT] = GL_FUNC_REVERSE_SUBTRACT};
+
+static GLenum gl_blend_factor(GsBlendFactor f, GsBlendC c) {
+    GLenum fromC = c == GS_BLEND_C_SRC_ALPHA ? GL_SRC_ALPHA : c == GS_BLEND_C_DST_ALPHA ? GL_DST_ALPHA : GL_CONSTANT_COLOR;
+    switch (f) {
+    case GS_FACTOR_ZERO: return GL_ZERO;
+    case GS_FACTOR_ONE: return GL_ONE;
+    case GS_FACTOR_C: return fromC;
+    case GS_FACTOR_ONE_MINUS_C: break;
+    }
+    return c == GS_BLEND_C_SRC_ALPHA ? GL_ONE_MINUS_SRC_ALPHA : c == GS_BLEND_C_DST_ALPHA ? GL_ONE_MINUS_DST_ALPHA
+                                                                                         : GL_ONE_MINUS_CONSTANT_COLOR;
 }
 
 static GLuint sCurProgram;
@@ -551,12 +562,9 @@ static int haveScissor = 0;
 static int lastScissor[4];
 static float lastBlendc = -1.0f;
 
-static void apply_blend(uint32_t bkey) {
-    int k[2] = {(int)((bkey >> 1) & 7), (int)((bkey >> 4) & 7)}, C = (int)((bkey >> 7) & 3), i;
-    GLenum fc = C == 0 ? GL_SRC_ALPHA : C == 1 ? GL_DST_ALPHA : GL_CONSTANT_COLOR;
-    GLenum fi = C == 0 ? GL_ONE_MINUS_SRC_ALPHA : C == 1 ? GL_ONE_MINUS_DST_ALPHA : GL_ONE_MINUS_CONSTANT_COLOR;
-    GLenum f[2];
-    int enabled = (bkey & 1) != 0;
+static void apply_blend(GsBlend b) {
+    int enabled = b.enabled;
+    GsBlendDesc d;
     if (sHasIndexed) {
         if (enabled) { glEnablei(GL_BLEND, 0); glDisablei(GL_BLEND, 1); } else { glDisablei(GL_BLEND, 0); glDisablei(GL_BLEND, 1); }
     } else if (enabled) {
@@ -565,11 +573,9 @@ static void apply_blend(uint32_t bkey) {
         glDisable(GL_BLEND);
     }
     if (!enabled) { return; }
-    for (i = 0; i < 2; i++) {
-        f[i] = k[i] == 0 ? GL_ZERO : k[i] == 1 || k[i] == 5 ? GL_ONE : k[i] == 4 ? fi : fc;
-    }
-    glBlendFuncSeparate(f[0], f[1], GL_ONE, GL_ZERO);
-    glBlendEquationSeparate(k[0] == 3 ? GL_FUNC_REVERSE_SUBTRACT : k[1] == 3 ? GL_FUNC_SUBTRACT : GL_FUNC_ADD, GL_FUNC_ADD);
+    d = GsBlend_Describe(b);
+    glBlendFuncSeparate(gl_blend_factor(d.srcFactor, d.c), gl_blend_factor(d.dstFactor, d.c), GL_ONE, GL_ZERO);
+    glBlendEquationSeparate(kGlBlendOp[d.op], GL_FUNC_ADD);
 }
 
 static void apply_masks(uint32_t wmask) {
@@ -597,18 +603,18 @@ static void set_pipe(int pipe) {
     sCurPipe = pipe;
     p = &sPipes[pipe];
     {
-        GLuint prog = p->fx ? sDclutProg : sMainProg[p->vu];
+        GLuint prog = p->s.tablePass ? sDclutProg : sMainProg[p->s.vertices];
         if (sCurProgram != prog) { sCurProgram = prog; glUseProgram(prog); }
     }
-    apply_blend(p->bkey);
-    apply_masks(p->wmask);
-    if (p->fx) {
+    apply_blend(p->s.blend);
+    apply_masks(p->s.writeMask);
+    if (p->s.tablePass) {
         glDisable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
     } else {
         glEnable(GL_DEPTH_TEST);
-        glDepthMask(p->zwrite ? GL_TRUE : GL_FALSE);
-        glDepthFunc(p->ztst == 0 ? GL_NEVER : p->ztst == 1 ? GL_ALWAYS : p->ztst == 2 ? GL_GEQUAL : GL_GREATER);
+        glDepthMask(p->s.depthWrite ? GL_TRUE : GL_FALSE);
+        glDepthFunc(kGlDepthFunc[p->s.depthTest]);
     }
 }
 
@@ -1033,7 +1039,7 @@ static void frame_end(void) {
         if (d->vu) {
             glDrawElements(GL_TRIANGLES, (GLsizei)d->count, GL_UNSIGNED_INT, (const void *)(uintptr_t)(d->first * sizeof(uint32_t)));
         } else {
-            glDrawArrays(sPipes[d->pipeline].topo == 0 ? GL_TRIANGLES : sPipes[d->pipeline].topo == 1 ? GL_LINES : GL_POINTS, (GLint)d->first, (GLsizei)d->count);
+            glDrawArrays(kGlTopology[sPipes[d->pipeline].s.topology], (GLint)d->first, (GLsizei)d->count);
         }
     }
 

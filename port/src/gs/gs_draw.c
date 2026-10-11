@@ -346,45 +346,12 @@ static GsTex clut_texture(uint32_t cbp) {
     return tex;
 }
 
-/* ((A - B) * C >> 7) + D as the pipeline key's blend bits: ks * Cs + kd * Cd with ks, kd from
-   {0, 1, C, -C, 1 - C, 1 + C}. Each of A, B, D is source, destination or zero, so bit i of A/B decides
-   which side is scaled. Returns the key of pure GS state (bits 0..8); the back end turns it back into
-   blend factors. k[i]: 0 nothing, 1 one, 2 C, 3 -C, 4 1 - C, 5 1 + C; i = 0 source, 1 destination. */
-static uint32_t blend_key(uint64_t alpha, int abe) {
-    int A = alpha & 3, B = (alpha >> 2) & 3, C = (alpha >> 4) & 3, D = (alpha >> 6) & 3, k[2], i;
-
-    if (!abe) {
-        return 0;
-    }
-    for (i = 0; i < 2; i++) {
-        int c = (A == i) - (B == i), one = D == i;
-        k[i] = c == 0 ? one : c > 0 ? (one ? 5 : 2) : (one ? 4 : 3);
-    }
-    return 1u | (uint32_t)k[0] << 1 | (uint32_t)k[1] << 4 | (uint32_t)C << 7;
-}
-
-/* The pipeline a draw uses: everything a pipeline depends on is in the key (the back end makes and caches
-   one pipeline per key, so this is pure GS state -> an index):
-   bits 0..8 blend, 10..11 depth test, 12 depth write, 13..14 topology, 16..19 colour write mask,
-   20..21 vertices: 0 GS vertices, 1 program 0, 2 program 4, 3 program 6, 22 full-screen table pass. */
-static int pipeline_get(int ctx, int topo, int vu) {
-    uint64_t test = gGs.test[ctx], zb = gGs.zbuf[ctx];
-    int zte = (test >> 16) & 1, ztst = (test >> 17) & 3, zwrite = !((zb >> 32) & 1);
-    uint32_t bkey, key, wmask, m = (uint32_t)(gGs.frame[ctx] >> 32);
-
-    bkey = blend_key(gGs.alpha[ctx], (int)((gGs.prim >> 6) & 1));
-    if (!zte) {
-        ztst = 1;
-    }
-    /* FRAME.FBMSK, in the whole-channel forms ordinary drawing uses (alpha only, everything but alpha, ...):
-       a channel whose eight mask bits are all set is not written. Partial masks are not representable. */
-    wmask = ((m & 0xFF) != 0xFF ? GS_CC_R : 0) | ((m & 0xFF00) != 0xFF00 ? GS_CC_G : 0) |
-            ((m & 0xFF0000) != 0xFF0000 ? GS_CC_B : 0) | ((m & 0xFF000000u) != 0xFF000000u ? GS_CC_A : 0);
-    key = bkey | (uint32_t)ztst << 10 | (uint32_t)zwrite << 12 | (uint32_t)topo << 13 | wmask << 16 | (uint32_t)vu << 20;
-    if (vu == 4) { /* asked for by depth_clut: the table pass, which only depends on blending and the write mask */
-        key = bkey | wmask << 16 | 1u << 22;
-    }
-    return sBackend->pipeGet(key);
+/* The pipeline a draw uses: everything a pipeline depends on is in the key (gs_pipekey.c), so this is pure GS state ->
+   an index (the back end makes and caches one pipeline per key). */
+static int pipeline_get(int ctx, GsTopology topology, GsVertexSource vertices, int tablePass) {
+    GsPipeState s = GsPipeState_FromGs(gGs.alpha[ctx], (int)((gGs.prim >> 6) & 1), gGs.test[ctx], gGs.zbuf[ctx],
+                                       (uint32_t)(gGs.frame[ctx] >> 32), topology, vertices, tablePass);
+    return sBackend->pipeGet(GsPipeKey_Encode(&s));
 }
 
 /* The shared target table's entry for a frame-buffer address. The attachments are the back end's: a new
@@ -429,8 +396,6 @@ int GsDraw_TargetGet(uint32_t fbp, int create) {
     return slot;
 }
 
-static int pipeline_get(int ctx, int topo, int vu);
-
 /* GfxPost_DrawDepthClut as one full-screen pass (the game sends 16 strips; they become one draw). */
 static void depth_clut(int ctx) {
     uint64_t sc = gGs.scissor[ctx];
@@ -461,7 +426,7 @@ static void depth_clut(int ctx) {
     if (d.tex == 0) {
         return;
     }
-    d.pipeline = pipeline_get(ctx, 0, 4);
+    d.pipeline = pipeline_get(ctx, GS_TOPOLOGY_TRIANGLES, GS_VERTS_GS, 1);
     d.blendc = (float)((gGs.alpha[ctx] >> 32) & 0xFF) / 128.0f;
     d.misc[0] = ((gGs.zbuf[ctx] >> 24) & 15) == 0 ? 4294967295.0f : ((gGs.zbuf[ctx] >> 24) & 15) == 1 ? 16777215.0f : 65535.0f;
     d.scissor[0] = (int)(sc & 0x7FF) * SCALE;
@@ -615,7 +580,7 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
     if (d->tex != 0 && sLast != NULL && sLast->tex == d->tex && sLast->replaced) {
         d->sampler |= 1 | 8; /* (GsGpu_Draw takes the 8 off again for 2D art) */
     }
-    d->pipeline = pipeline_get(ctx, topo, vu);
+    d->pipeline = pipeline_get(ctx, (GsTopology)topo, (GsVertexSource)vu, 0);
     d->mode[0] = !tme ? 0 : d->tex_is_target ? 2 : 1; /* 2: a frame buffer as texture, its alpha is already rescaled */
     /* (BT3_TEX_ALPHA=0 switches the replacement's alpha treatment off, for telling which one a fault comes from) */
     if (d->mode[0] == 1 && sLast != NULL && sLast->tex == d->tex && sLast->replaced &&
