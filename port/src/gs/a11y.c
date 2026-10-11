@@ -1,0 +1,472 @@
+/*
+ * Screen reader output (accessibility): speech and braille through Prism (https://github.com/ethindp/prism,
+ * MPL-2.0), loaded at run time from prism.dll (libprism.so elsewhere) in the program's folder. Without that
+ * library, and without $BT3_A11Y_LOG, all of this stays off: no thread, no file, no key, nothing said.
+ *
+ * One speaker for the whole program. port/src/a11y_game.c (the game's thread, once per blank) says what changed on
+ * the game's screens; the render thread's event loops pass their events here for the repeat key and button. The
+ * library is only called from a thread of its own, so a slow screen reader never holds up a frame.
+ *
+ * A message either interrupts (it cuts what is being said and drops what is queued) or is queued after the one
+ * before. "Repeat" says again the last interrupting message and the ones queued after it.
+ *
+ *   bt3_settings.txt  a11y=0            off, even with the library there
+ *                     a11y_key_repeat   the repeat key, an SDL scancode (default F2); the controller's touchpad
+ *                                       click repeats too
+ *   $BT3_A11Y_LOG=<file>                writes what is said, one line each with the blank (tests without a screen
+ *                                       reader: the headless build has no library)
+ *   $BT3_A11Y_LANG=es|en                the language of the labels the game draws as pictures (default: the
+ *                                       system's preferred language)
+ *   a11y_es.txt                         in Spanish, lines to say instead of the game's own text where the disc has
+ *                                       it in English (see "the game's lines in Spanish" below)
+ *   $BT3_A11Y_MISSING=<file>            in Spanish, writes once each line of the game's said without one
+ *
+ * The screen reader is chosen by trying them: NVDA, then JAWS, then the others in Prism's order. A screen reader
+ * is used only when it starts (prism_backend_initialize), not because it is installed: Prism's own "best" choice
+ * took NVDA while NVDA was not running (0.16.5).
+ */
+#include <SDL3/SDL.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern int Port_Setting(const char *name, int def); /* plat_settings.c */
+
+#define A11Y_INTERRUPT 1 /* (the same in a11y_game.c) */
+#define A11Y_TEXT 1024
+#define A11Y_QUEUE 8
+
+/* ---- Prism's C interface: the part used here (include/prism.h of release 0.18.3) ---- */
+
+#ifdef _WIN32
+#define PRISM_CALL __cdecl
+#define PRISM_LIB "prism.dll"
+#else
+#define PRISM_CALL
+#define PRISM_LIB "libprism.so"
+#endif
+
+typedef struct PrismContext PrismContext;
+typedef struct PrismBackend PrismBackend;
+typedef struct {
+    uint8_t version;
+    void *registry;
+    void *availability_callback, *availability_userdata;
+    uint32_t availability_poll_interval_ms, availability_debounce_samples, availability_backoff_max_ms;
+    bool availability_auto_power_manage;
+    void *availability_baseline_callback;
+} PrismConfig;
+
+#define PRISM_OK 0
+#define PRISM_SUPPORTS_SPEAK (1ULL << 2)
+#define PRISM_SUPPORTS_OUTPUT (1ULL << 5)
+#define PRISM_NVDA 0x89CC19C5C4AC1A56ULL
+#define PRISM_JAWS 0xAC3D60E9BD84B53EULL
+
+static struct {
+    PrismConfig(PRISM_CALL *config_init)(void);
+    PrismContext *(PRISM_CALL *init)(PrismConfig *cfg);
+    size_t(PRISM_CALL *count)(PrismContext *ctx);
+    uint64_t(PRISM_CALL *id_at)(PrismContext *ctx, size_t index);
+    const char *(PRISM_CALL *name)(PrismContext *ctx, uint64_t id);
+    PrismBackend *(PRISM_CALL *create)(PrismContext *ctx, uint64_t id);
+    void(PRISM_CALL *free_backend)(PrismBackend *backend);
+    uint64_t(PRISM_CALL *features)(PrismBackend *backend);
+    int(PRISM_CALL *initialize)(PrismBackend *backend);
+    int(PRISM_CALL *output)(PrismBackend *backend, const char *text, bool interrupt);
+    int(PRISM_CALL *speak)(PrismBackend *backend, const char *text, bool interrupt);
+} P;
+
+static SDL_SharedObject *sLib;
+
+static int load_prism(void) {
+    static const char *const names[] = {"prism_config_init", "prism_init", "prism_registry_count",
+                                        "prism_registry_id_at", "prism_registry_name", "prism_registry_create",
+                                        "prism_backend_free", "prism_backend_get_features",
+                                        "prism_backend_initialize", "prism_backend_output", "prism_backend_speak"};
+    SDL_FunctionPointer *slot = (SDL_FunctionPointer *)&P;
+    char path[1024];
+    const char *base = SDL_GetBasePath(); /* (the program's folder only: not the current one, not the search path) */
+    size_t i;
+
+    if (base == NULL) {
+        return 0;
+    }
+    snprintf(path, sizeof(path), "%s%s", base, PRISM_LIB);
+    sLib = SDL_LoadObject(path);
+    if (sLib == NULL) {
+        return 0;
+    }
+    for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        slot[i] = SDL_LoadFunction(sLib, names[i]);
+        if (slot[i] == NULL) {
+            fprintf(stderr, "a11y: %s has no %s\n", path, names[i]);
+            SDL_UnloadObject(sLib);
+            sLib = NULL;
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* The screen reader `id` if it starts and can speak, or NULL. */
+static PrismBackend *try_backend(PrismContext *ctx, uint64_t id) {
+    PrismBackend *b = P.create(ctx, id);
+
+    if (b == NULL) {
+        return NULL;
+    }
+    if (P.initialize(b) != PRISM_OK || !(P.features(b) & (PRISM_SUPPORTS_OUTPUT | PRISM_SUPPORTS_SPEAK))) {
+        P.free_backend(b);
+        return NULL;
+    }
+    return b;
+}
+
+static PrismBackend *choose_backend(PrismContext *ctx) {
+    static const uint64_t first[] = {PRISM_NVDA, PRISM_JAWS};
+    PrismBackend *b;
+    uint64_t id;
+    size_t i, n = P.count(ctx);
+
+    for (i = 0; i < 2; i++) {
+        if ((b = try_backend(ctx, first[i])) != NULL) {
+            fprintf(stderr, "a11y: speaking through %s\n", P.name(ctx, first[i]));
+            return b;
+        }
+    }
+    for (i = 0; i < n; i++) {
+        id = P.id_at(ctx, i);
+        if (id != PRISM_NVDA && id != PRISM_JAWS && (b = try_backend(ctx, id)) != NULL) {
+            fprintf(stderr, "a11y: speaking through %s\n", P.name(ctx, id));
+            return b;
+        }
+    }
+    fprintf(stderr, "a11y: no screen reader or voice started\n");
+    return NULL;
+}
+
+/* ---- the speaker ---- */
+
+static volatile int sOn; /* set once by the game's thread before the speaker starts; read by the render thread */
+static int sSpanish, sRepeatKey;
+static int sFrame; /* blanks since the start (only for the log) */
+static FILE *sLog;
+static SDL_Mutex *sLock;
+static SDL_Condition *sWake;
+static struct {
+    char text[A11Y_TEXT];
+    int interrupt, frame;
+} sQueue[A11Y_QUEUE];
+static int sHead, sCount;
+static char sLast[A11Y_TEXT * 2]; /* what "repeat" says */
+
+/* Adds a message to the queue (the lock is held). */
+static void push(const char *text, int interrupt) {
+    int k;
+
+    if (interrupt) {
+        sCount = 0;
+    }
+    if (sCount == A11Y_QUEUE) {
+        return;
+    }
+    k = (sHead + sCount) % A11Y_QUEUE;
+    snprintf(sQueue[k].text, sizeof(sQueue[k].text), "%s", text);
+    sQueue[k].interrupt = interrupt;
+    sQueue[k].frame = sFrame;
+    sCount++;
+    SDL_SignalCondition(sWake);
+}
+
+static int SDLCALL speaker(void *unused) {
+    PrismContext *ctx = NULL;
+    PrismBackend *b = NULL;
+    PrismConfig cfg;
+    char text[A11Y_TEXT];
+    int interrupt, frame;
+
+    (void)unused;
+    if (sLib != NULL) {
+        cfg = P.config_init();
+        ctx = P.init(&cfg);
+        b = ctx != NULL ? choose_backend(ctx) : NULL;
+    }
+    for (;;) {
+        SDL_LockMutex(sLock);
+        while (sCount == 0) {
+            SDL_WaitCondition(sWake, sLock);
+        }
+        memcpy(text, sQueue[sHead].text, sizeof(text));
+        interrupt = sQueue[sHead].interrupt;
+        frame = sQueue[sHead].frame;
+        sHead = (sHead + 1) % A11Y_QUEUE;
+        sCount--;
+        SDL_UnlockMutex(sLock);
+        if (b != NULL && P.output(b, text, interrupt != 0) != PRISM_OK) {
+            (void)P.speak(b, text, interrupt != 0); /* (a voice without braille) */
+        }
+        if (sLog != NULL) {
+            fprintf(sLog, "%d %s%s\n", frame, interrupt ? "" : "+ ", text);
+            fflush(sLog);
+        }
+    }
+    return 0;
+}
+
+/* ---- the game's lines in Spanish ----
+ *
+ * Where the Spanish translation of a disc did not reach (the memory card's messages, the main menu guides' lines),
+ * the game's own text is in English. a11y_es.txt, in the program's folder, gives a line to say instead, one per
+ * line: the FNV-1a hash (64 bits, 16 hex digits) of the English line as it would be said (UTF-8, on one line, as
+ * PortA11y_Utf8 makes it), a tab, and the Spanish line. Lines starting with '#' are notes. Only the hash of the
+ * English is needed, so the file need not carry the game's text. */
+
+typedef struct {
+    uint64_t hash;
+    const char *text;
+} A11yLine;
+
+static A11yLine *sLines; /* by hash */
+static int sLineCount;
+static FILE *sMissing;
+static uint64_t sMissed[1024]; /* the lines already in $BT3_A11Y_MISSING */
+static int sMissedCount;
+
+static uint64_t fnv1a(const char *s) {
+    uint64_t h = 0xCBF29CE484222325ULL;
+
+    for (; *s != '\0'; s++) {
+        h = (h ^ (uint8_t)*s) * 0x100000001B3ULL;
+    }
+    return h;
+}
+
+static int by_hash(const void *a, const void *b) {
+    uint64_t x = ((const A11yLine *)a)->hash, y = ((const A11yLine *)b)->hash;
+
+    return x < y ? -1 : x > y;
+}
+
+/* Reads a11y_es.txt (kept for the whole run: the lines point into it). */
+static void load_lines(void) {
+    char path[1024], *data, *s, *next, *tab;
+    const char *base = SDL_GetBasePath();
+    int count = 0, max = 1;
+    size_t len;
+
+    if (base == NULL) {
+        return;
+    }
+    snprintf(path, sizeof(path), "%sa11y_es.txt", base);
+    data = SDL_LoadFile(path, NULL); /* (ends in a terminator) */
+    if (data == NULL) {
+        return;
+    }
+    for (s = data; *s != '\0'; s++) {
+        max += *s == '\n';
+    }
+    if ((sLines = SDL_calloc(max, sizeof(*sLines))) == NULL) {
+        SDL_free(data);
+        return;
+    }
+    s = data;
+    if ((uint8_t)s[0] == 0xEF && (uint8_t)s[1] == 0xBB && (uint8_t)s[2] == 0xBF) {
+        s += 3; /* (the mark Notepad writes) */
+    }
+    for (; s != NULL; s = next) {
+        if ((next = strchr(s, '\n')) != NULL) {
+            *next++ = '\0';
+        }
+        if ((len = strlen(s)) > 0 && s[len - 1] == '\r') {
+            s[len - 1] = '\0';
+        }
+        tab = strchr(s, '\t');
+        if (s[0] != '#' && tab != NULL && tab - s == 16 && tab[1] != '\0') {
+            sLines[count].hash = strtoull(s, NULL, 16);
+            sLines[count].text = tab + 1;
+            count++;
+        }
+    }
+    qsort(sLines, count, sizeof(*sLines), by_hash);
+    sLineCount = count;
+}
+
+/* In Spanish: the line from a11y_es.txt for `out` (one of the game's lines, n bytes of UTF-8) into out, if there is
+   one. Returns the length. */
+static int spanish_line(char *out, int cap, int n) {
+    A11yLine key, *line;
+    int i;
+
+    if (!sSpanish || n == 0) {
+        return n;
+    }
+    key.hash = fnv1a(out);
+    line = sLineCount > 0 ? bsearch(&key, sLines, sLineCount, sizeof(*sLines), by_hash) : NULL;
+    if (line != NULL) {
+        n = (int)strlen(line->text);
+        if (n >= cap) { /* (cut between letters, not inside one) */
+            for (n = cap - 1; n > 0 && ((uint8_t)line->text[n] & 0xC0) == 0x80; n--) {
+            }
+        }
+        memcpy(out, line->text, n);
+        out[n] = '\0';
+        return n;
+    }
+    if (sMissing != NULL && sMissedCount < (int)(sizeof(sMissed) / sizeof(sMissed[0]))) {
+        for (i = 0; i < sMissedCount && sMissed[i] != key.hash; i++) {
+        }
+        if (i == sMissedCount) {
+            sMissed[sMissedCount++] = key.hash;
+            fprintf(sMissing, "%016llx\t%s\n", (unsigned long long)key.hash, out);
+            fflush(sMissing);
+        }
+    }
+    return n;
+}
+
+static void start(void) {
+    const char *lang = getenv("BT3_A11Y_LANG");
+    SDL_Locale **loc;
+    int n = 0;
+
+    if (!Port_Setting("a11y", 1)) {
+        return;
+    }
+    if (getenv("BT3_A11Y_LOG") != NULL) {
+        sLog = fopen(getenv("BT3_A11Y_LOG"), "w");
+    }
+    if (!load_prism() && sLog == NULL) {
+        return;
+    }
+    if (lang != NULL) {
+        sSpanish = strncmp(lang, "es", 2) == 0;
+    } else if ((loc = SDL_GetPreferredLocales(&n)) != NULL) {
+        sSpanish = n > 0 && loc[0]->language != NULL && strcmp(loc[0]->language, "es") == 0;
+        SDL_free(loc);
+    }
+    if (sSpanish) {
+        load_lines();
+        if (getenv("BT3_A11Y_MISSING") != NULL) {
+            sMissing = fopen(getenv("BT3_A11Y_MISSING"), "w");
+        }
+    }
+    sRepeatKey = Port_Setting("a11y_key_repeat", SDL_SCANCODE_F2);
+    sLock = SDL_CreateMutex();
+    sWake = SDL_CreateCondition();
+    if (sLock == NULL || sWake == NULL || SDL_CreateThread(speaker, "a11y", NULL) == NULL) {
+        fprintf(stderr, "a11y: the speaker did not start: %s\n", SDL_GetError());
+        return;
+    }
+    sOn = 1;
+}
+
+/* Once per blank, before anything is said in it: 1 while the accessibility is on. The first call starts it. */
+int PortA11y_Begin(void) {
+    static int tried;
+
+    if (!tried) {
+        tried = 1;
+        start();
+    }
+    sFrame++;
+    return sOn;
+}
+
+/* 1: the labels the game draws as pictures are said in Spanish. */
+int PortA11y_Spanish(void) {
+    return sSpanish;
+}
+
+/* Says a message (UTF-8). flags: A11Y_INTERRUPT, or 0 to queue it after the one before. */
+void PortA11y_Say(const char *text, int flags) {
+    size_t len;
+
+    if (!sOn || text == NULL || text[0] == '\0') {
+        return;
+    }
+    SDL_LockMutex(sLock);
+    if (flags & A11Y_INTERRUPT) {
+        snprintf(sLast, sizeof(sLast), "%s", text);
+    } else if ((len = strlen(sLast)) + strlen(text) + 3 < sizeof(sLast)) {
+        /* (a pause between the two when said again: a full stop unless the first ends a sentence already) */
+        snprintf(sLast + len, sizeof(sLast) - len, "%s%s", len > 0 && strchr(".!?:", sLast[len - 1]) == NULL ? ". " : " ",
+                 text);
+    }
+    push(text, flags & A11Y_INTERRUPT);
+    SDL_UnlockMutex(sLock);
+}
+
+/* Says again what was said last. */
+void PortA11y_Repeat(void) {
+    if (!sOn) {
+        return;
+    }
+    SDL_LockMutex(sLock);
+    if (sLast[0] != '\0') {
+        push(sLast, 1);
+    }
+    SDL_UnlockMutex(sLock);
+}
+
+/* The render thread's events (gs_gpu.c, gs_gl.c): the repeat key and the controller's touchpad click. Nothing is
+   taken from the game: neither is bound to a button of it. */
+void PortA11y_Event(const SDL_Event *ev) {
+    if (!sOn) {
+        return;
+    }
+    if ((ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat && (int)ev->key.scancode == sRepeatKey) ||
+        (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && ev->gbutton.button == SDL_GAMEPAD_BUTTON_TOUCHPAD)) {
+        PortA11y_Repeat();
+    }
+}
+
+/* One of the game's strings (UTF-16 in the machine's order, U+FEFF first, '\n' between lines) as UTF-8 on one
+   line, into out (cap bytes with the terminator); in Spanish, the line from a11y_es.txt instead when it has one.
+   Returns the length. */
+int PortA11y_Utf8(char *out, int cap, const uint16_t *str) {
+    int n = 0, i, space = 0, need;
+    uint32_t c;
+
+    for (i = 0; str[i] != 0 && i < 4096; i++) {
+        c = str[i];
+        if (c >= 0xD800 && c < 0xDC00 && str[i + 1] >= 0xDC00 && str[i + 1] < 0xE000) {
+            c = 0x10000 + ((c - 0xD800) << 10) + (str[i + 1] - 0xDC00);
+            i++;
+        } else if (c == 0xFEFF || (c >= 0xD800 && c < 0xE000)) {
+            continue;
+        }
+        if (c <= ' ') { /* line breaks and spaces: one space between words */
+            space = n > 0;
+            continue;
+        }
+        need = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+        if (n + space + need >= cap) {
+            break;
+        }
+        if (space) {
+            out[n++] = ' ';
+            space = 0;
+        }
+        if (need == 1) {
+            out[n++] = (char)c;
+        } else if (need == 2) {
+            out[n++] = (char)(0xC0 | c >> 6);
+            out[n++] = (char)(0x80 | (c & 0x3F));
+        } else if (need == 3) {
+            out[n++] = (char)(0xE0 | c >> 12);
+            out[n++] = (char)(0x80 | (c >> 6 & 0x3F));
+            out[n++] = (char)(0x80 | (c & 0x3F));
+        } else {
+            out[n++] = (char)(0xF0 | c >> 18);
+            out[n++] = (char)(0x80 | (c >> 12 & 0x3F));
+            out[n++] = (char)(0x80 | (c >> 6 & 0x3F));
+            out[n++] = (char)(0x80 | (c & 0x3F));
+        }
+    }
+    if (cap > 0) {
+        out[n] = '\0';
+    }
+    return spanish_line(out, cap, n);
+}
