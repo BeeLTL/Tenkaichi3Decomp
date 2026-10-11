@@ -534,9 +534,9 @@ static void build_net(void) {
                         }
                         ImGui::SetNextItemWidth(260.0f);
                         ImGui::Combo("Game speed", &speed, kSpeed, 2);
-                        ImGui::SetItemTooltip("120% is what competitive play of this game uses: the whole match runs a fifth\n"
+                        ImGui::SetItemTooltip("120%% is what competitive play of this game uses: the whole match runs a fifth\n"
                                               "faster, sound included. If the other player's release does not know it\n"
-                                              "(0.1.28 or earlier), the match runs at 100%.");
+                                              "(0.1.28 or earlier), the match runs at 100%%.");
                     }
                 }
                 ImGui::TextDisabled("The host's choices apply to both players.");
@@ -568,7 +568,7 @@ static void build_net(void) {
                         Port_LobbyQueuesAsk();
                     }
                 }
-                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit and run at 120% speed, the competitive standard.");
+                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit and run at 120%% speed, the competitive standard.");
                 ImGui::BeginDisabled(busy);
                 for (int i = 0; i < 5; i++) {
                     char label[80];
