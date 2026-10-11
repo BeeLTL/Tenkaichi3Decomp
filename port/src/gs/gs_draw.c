@@ -92,6 +92,12 @@ int gsAnchor;
      1  the same, with the health bars drawn longer, up to the timer (hud_b.c, pull request #28)
      2  everything about the middle of the screen: the 4:3 layout as it is, with the scene wider around it */
 static int sHudLayout;
+static unsigned sHudFrame;
+static int sHudSeen;
+/* 1 = the HUD's side panels were drawn within the last few frames (a few: frames left out by frame skipping). */
+int GsDraw_HudShown(void) {
+    return sHudSeen && gGsFrame - sHudFrame <= 6;
+}
 int Port_HudLayout(void) {
     return sHudLayout;
 }
@@ -902,6 +908,18 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
                 gsVerts[k].b = (uint8_t)(gsVerts[k].b * gsGlowPercent / 100 > 255 ? 255 : gsVerts[k].b * gsGlowPercent / 100);
             }
         }
+    }
+    /* A piece of a side panel of the HUD (a health bar, a portrait) that can be seen was drawn: the frame it was
+       in. What the overlay shows with the HUD (the players' names of an online fight, ui.cpp) asks through
+       GsDraw_HudShown, and is not there in an intro or wherever else the game leaves the HUD out. */
+    if ((gsAnchor == 1 || gsAnchor == 2 || gsAnchor == 5 || gsAnchor == 6) && (type == 6 || fst) && v[type == 6 ? 1 : 0].a != 0) {
+        if (gGsFrame - sHudFrame > 6 || !sHudSeen) { /* BT3_HUD_LOG (testing): when the HUD comes back */
+            static int log = -1;
+            if (log < 0) { log = getenv("BT3_HUD_LOG") != NULL; }
+            if (log) { fprintf(stderr, "hud: drawn from frame %u (last at %u)\n", gGsFrame, sHudSeen ? sHudFrame : 0); }
+        }
+        sHudFrame = gGsFrame;
+        sHudSeen = 1;
     }
     /* (Not the cross-fade's picture: it is the whole frame as it was shown, wide view and all, drawn back over the
        whole frame in strips. Each strip is narrower than the screen, so the rule below took it for a piece of 2D

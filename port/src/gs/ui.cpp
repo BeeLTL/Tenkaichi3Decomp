@@ -27,6 +27,7 @@ void Port_NetNameSet(const char *name);         // gs/net.c: this player's name 
 int Port_IsWide(void);                         // plat_stub.c: the picture is wider than 4:3
 int Port_AspectMilli(void);
 int Port_HudLayout(void);                      // gs_draw.c: 2 = the HUD is about the middle of the screen
+int GsDraw_HudShown(void);                     // ... and 1 while the game is drawing the HUD's side panels
 const char *Port_NetName(int player);          // the name of the player of side 0 or 1 ("" outside a match)
 int Port_HudSwap(void);                        // the two sides of the HUD are in each other's places on this copy
 int Port_NetActive(void);
@@ -1459,7 +1460,7 @@ static bool frame_build(void) {
     if (meter) {
         meter_draw();
     }
-    if (names && gUiPresentW > 0 && gUiPresentH > 0) {
+    if (names && GsDraw_HudShown() && gUiPresentW > 0 && gUiPresentH > 0) { // (with the HUD: not over an intro)
         // Under each side's health bar (the game's 512 x 448 page: the bars end at about y 50). The left place is
         // side 0's, or this player's own side when the HUD's sides are swapped.
         ImDrawList *dl = ImGui::GetBackgroundDrawList();

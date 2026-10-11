@@ -1923,3 +1923,15 @@ them when it writes the file). The first one is `net_name`: the "Player name" of
 screen is first built and saved when the field is left after an edit and when a match is started. Checked: a
 settings file with `net_name="Goku 99"` shows that name in the field (offscreen screenshot). Not checked on
 screen: that typing a name writes it.
+
+## The online names: with the HUD, and where (2026-10-12)
+
+- **Only while the HUD is drawn.** The names were shown whenever a fight existed, so also over the intro.
+  GsGpu_Draw notes the frame in which a visible piece of a side panel was drawn (a 2D piece between the HUD's
+  left / right markers with a colour that is not fully transparent); `GsDraw_HudShown()` is true within 6 frames
+  of that (frame skipping leaves frames out), and ui.cpp draws the names only then. BT3_HUD_LOG=1 prints the
+  frame the HUD starts at. In a recorded fight: no HUD at the versus screen or in the fade, the log says frame
+  2257, and the screenshot of 2262 has the HUD. Not seen: an online intro itself.
+- **106 HUD pixels in from the outer edge** (was 62 picture pixels, which sat on the panel of a team's waiting
+  fighters), narrowed and placed like the HUD in a wide picture, including the "in the middle" style. Not seen on
+  screen yet.
