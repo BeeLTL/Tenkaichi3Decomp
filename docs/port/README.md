@@ -1839,3 +1839,20 @@ the next one that starts.
 Checked: it builds, the regression replay passes, and a replay with sound logging uses stream players 0, 1, 2, 4
 and 5, as the table says. Not checked: by ear, at all. In particular what the fighters' banks hold besides voices
 (a fighter's own effects would follow the Voices slider) and what a stage's bank holds was not looked at.
+
+## A fight's display in a wide picture: three layouts (2026-10-11)
+
+Setting `hud_layout` (F1, Video: "Fight display, widescreen"; BT3_HUD=<n> for a test), `Port_HudLayout()`:
+
+- **0, at the screen's edges**: as since widescreen, the default.
+- **1, at the edges with long health bars**: pull request #28 (victor-g-lima), merged behind this setting. hud_b.c
+  draws the bar's frame and the bar in pieces and stretches a straight middle piece by half the extra width, so
+  the bars reach the timer as they do at 4:3; markers 0x15 / 0x16 (anchors 5 and 6) keep a piece wider than 480
+  pixels from being taken for a full-screen flash.
+- **2, in the middle, as in 4:3**: every part of the HUD is narrowed about the middle of the screen
+  (GsGpu_Draw: the pivot is 256 whatever side the part is marked with), which is the 4:3 arrangement as it is,
+  with the scene wider around it.
+
+Checked from screenshots of a recorded fight (offscreen): the three at 16:9, the long bars and the middle at 21:9,
+both sides, at full health. Not checked: a bar that is losing health (the moving mask over the longer bar),
+several bars in reserve, a team's portraits, split screen, Survival's counter, other aspect ratios.

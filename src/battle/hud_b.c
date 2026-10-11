@@ -810,8 +810,9 @@ static void HudGauge_HpAnchor(s32 stretch) {
 
 /* Adds half the extra screen width before the renderer narrows the panel, bringing the bar to the timer. */
 static s32 HudGauge_WideHpExtra(void) {
+    extern int Port_HudLayout(void); /* gs_draw.c: 1 = the long bars were asked for in the settings */
     s32 aspect = Port_AspectMilli();
-    return aspect > 1340 ? (256 * (aspect * 3 - 4000) + 2000) / 4000 : 0;
+    return Port_HudLayout() == 1 && aspect > 1340 ? (256 * (aspect * 3 - 4000) + 2000) / 4000 : 0;
 }
 
 /* Extends the life-bar frame and its flash mask through a plain strip; the portrait and lower gauges stay put. */

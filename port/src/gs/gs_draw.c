@@ -87,6 +87,14 @@ unsigned gsFxOff;
 int gsGlowPercent = GLOW_DEFAULT;
 static int sTexPackOn = 1; /* the setting: use the texture pack (if one was found) */
 int gsAnchor;
+/* A fight's HUD in a picture wider than 4:3 (setting hud_layout, BT3_HUD=<n> for a test):
+     0  the side panels at the screen's edges (as since widescreen)
+     1  the same, with the health bars drawn longer, up to the timer (hud_b.c, pull request #28)
+     2  everything about the middle of the screen: the 4:3 layout as it is, with the scene wider around it */
+static int sHudLayout;
+int Port_HudLayout(void) {
+    return sHudLayout;
+}
 int gsDepthByteIsFog;
 unsigned gsNative;
 unsigned gsSkipped;
@@ -925,6 +933,9 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
             pivot = -1.0f;
         } else if (gsAnchor != 0) {
             pivot = (gsAnchor == 1 || gsAnchor == 5) ? 0.0f : (gsAnchor == 2 || gsAnchor == 6) ? 512.0f : 256.0f;
+            if (sHudLayout == 2) {
+                pivot = 256.0f;
+            } else
             if (gsAnchor == 4) { /* a part without a fixed side (captions: technique names): the side it is on */
                 float cx = (x0 + x1) * 0.5f;
                 pivot = x1 <= 300.0f || cx < 180.0f ? 0.0f : x0 >= 212.0f || cx > 332.0f ? 512.0f : 256.0f;
@@ -1343,6 +1354,7 @@ void GsGpu_GetSettings(PortVideo *v) {
     v->smooth2d = sSmooth2d;
     v->vsync = Port_Setting("vsync", 0) != 0;
     v->frameSkip = GsDraw_FrameSkip();
+    v->hudLayout = sHudLayout;
 }
 
 /* Applies what differs from the current state, all of it at once, and keeps it for the next run. */
@@ -1368,6 +1380,9 @@ void GsGpu_SetSettings(const PortVideo *v) {
         gPortStagePercent = v->stage;
         Port_AudioRefresh();
     }
+    if (v->hudLayout != now.hudLayout) {
+        sHudLayout = v->hudLayout < 0 || v->hudLayout > 2 ? 0 : v->hudLayout;
+    }
     if (v->frameSkip != now.frameSkip) {
         GsDraw_FrameSkipSet(v->frameSkip);
     }
@@ -1389,6 +1404,7 @@ void GsGpu_SetSettings(const PortVideo *v) {
     Port_SettingSave("music", gPortMusicPercent);
     Port_SettingSave("effects", gPortSePercent);
     Port_SettingSave("voices", gPortVoicePercent);
+    Port_SettingSave("hud_layout", sHudLayout);
     Port_SettingSave("stage_sounds", gPortStagePercent);
     Port_SettingSave("display", sDisplaySetting);
     Port_SettingsWrite();
@@ -1445,6 +1461,8 @@ int GsGpu_Init(void) {
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;
     gPortMusicPercent = Port_Setting("music", 100);
     gPortSePercent = Port_Setting("effects", 100);
+    sHudLayout = getenv("BT3_HUD") != NULL ? atoi(getenv("BT3_HUD")) : Port_Setting("hud_layout", 0);
+    sHudLayout = sHudLayout < 0 || sHudLayout > 2 ? 0 : sHudLayout;
     gPortVoicePercent = Port_Setting("voices", gPortSePercent); /* (one slider before 0.1.30: what it was set to) */
     gPortStagePercent = Port_Setting("stage_sounds", gPortSePercent);
     TexPack_Init();

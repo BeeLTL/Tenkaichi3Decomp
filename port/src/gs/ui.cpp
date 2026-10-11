@@ -829,6 +829,13 @@ static void video_tab(PortVideo &v) {
     ImGui::SetItemTooltip("How the display of a fight, the menus and text are drawn above 1x internal resolution.\n"
                           "Sharp: each of the PlayStation 2's pixels is a block. Smooth: as an emulator shows them.\n"
                           "No difference at 1x.");
+    {
+        static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
+        ImGui::Combo("Fight display, widescreen", &v.hudLayout, kHud, 3);
+        ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
+                              "Long health bars: the bars reach from the edges to the timer.\n"
+                              "In the middle: the original 4:3 arrangement, next to the timer.");
+    }
     bool full = v.fullscreen != 0;
     if (ImGui::Checkbox("Full screen", &full)) { v.fullscreen = full; }
     ImGui::SameLine();

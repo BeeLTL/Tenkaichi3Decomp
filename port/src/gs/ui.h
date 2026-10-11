@@ -18,6 +18,7 @@ typedef struct PortVideo {
     int texPackCount; /* read only: replacement textures found in the textures folder */
     int vsync;       /* 1 = a picture waits for the display's refresh (no tearing where the driver has no other way) */
     int frameSkip;   /* 1 = a tick's picture is left out when the machine is behind, instead of the game slowing down */
+    int hudLayout;   /* a fight's HUD in a wide picture: 0 at the edges, 1 at the edges with long health bars, 2 in the middle as in 4:3 */
     int smooth2d;    /* "2D filtering": 0 sharp (a PS2 pixel is a block), 1 smooth (sampled per output pixel) */
 } PortVideo;
 
