@@ -28,7 +28,13 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) =>
 }, []));
 const label = args.label || 'run';
 const from = Number(args.from || 300), to = Number(args.to || 2100);
-const env = ['BT3_DEMO=1', 'BT3_FRAME_LOG=1', `BT3_TRACE=${TRACE_EVERY_VBLANKS}`].concat(args.env && args.env !== true ? args.env.split(',') : []);
+// --shots N: the shown render target every N frames of the window (the back ends' BT3_SHOT), copied out of the
+// engine's in-memory file system at the end, for picture comparisons (port/tests/bench/compare_shots.js).
+const SHOT_DIR = 'port/build/shots';  // where the back ends write them (gs_gl.c, gs_gpu.c), relative to the engine's cwd
+const shotEvery = args.shots ? Number(args.shots) : 0;
+const env = ['BT3_DEMO=1', 'BT3_FRAME_LOG=1', `BT3_TRACE=${TRACE_EVERY_VBLANKS}`]
+  .concat(shotEvery ? [`BT3_SHOT=${shotEvery}`, `BT3_SHOT_FROM=${from}`, `BT3_SHOT_TO=${to - 1}`] : [])
+  .concat(args.env && args.env !== true ? args.env.split(',') : []);
 const url = `${args.url || 'http://127.0.0.1:8080/index.html'}?autostart=1${args.query ? '&' + args.query : ''}&env=${env.join(',')}`;
 const outDir = path.join(__dirname, '../../build/bench');
 
@@ -72,6 +78,26 @@ function summarize(profile) {
   return { totalMs: total / 1000, categories: [...cats].sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ cat: k, pct: 100 * v / total })), top };
 }
 
+// Copies the screenshots out of the engine's file system into port/build/bench/<label>.shots/. Returns their hashes.
+async function copyShots(send) {
+  const dir = path.join(outDir, `${label}.shots`);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const names = await evaluate(send, `window.bt3Module.FS.readdir(${JSON.stringify(SHOT_DIR)}).filter((n) => n.endsWith('.ppm'))`);
+  const hashes = {};
+  for (const name of names.sort()) {
+    const base64 = await evaluate(send, `new Promise((done) => {
+      const reader = new FileReader();
+      reader.onload = () => done(reader.result.slice(reader.result.indexOf(',') + 1));
+      reader.readAsDataURL(new Blob([window.bt3Module.FS.readFile(${JSON.stringify(SHOT_DIR + '/')} + ${JSON.stringify(name)})]));
+    })`);
+    const bytes = Buffer.from(base64, 'base64');
+    fs.writeFileSync(path.join(dir, name), bytes);
+    hashes[name] = crypto.createHash('sha1').update(bytes).digest('hex').slice(0, 16);
+  }
+  return hashes;
+}
+
 function write(result, frames, trace, log, profile) {
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, `${label}.json`), JSON.stringify(result, null, 1));
@@ -89,6 +115,7 @@ function print(result) {
   console.log(`  wall   ${result.fps ? result.fps.toFixed(1) : '-'} frames/s over ${result.wallSeconds ? result.wallSeconds.toFixed(1) : '-'} s; ` +
               `${result.vblanksPerFrame ? result.vblanksPerFrame.toFixed(2) : '-'} vblanks per frame; interval ${f(result.interval)}`);
   console.log(`  trace: ${result.traceLines} lines, hash ${result.traceHash}; GL errors logged: ${result.glErrors} ${result.glErrorCounts}`);
+  if (result.shots) console.log(`  shots: ${Object.keys(result.shots).length} saved in ${label}.shots/`);
   if (result.profile) {
     console.log('  profile (self time):');
     for (const c of result.profile.categories) console.log(`    ${c.pct.toFixed(1).padStart(5)}%  ${c.cat}`);
@@ -105,10 +132,15 @@ function print(result) {
 
   // The page queues its log lines with their time (index.html, window.bt3Out); they are collected a few times a
   // second, so that the measurement does not go through the console inside the measured frames.
+  let shotDirMade = false;
   async function handle(t, line) {
     if (line.startsWith('frame ')) {
       const f = parseFrame(line, t);
       frames.push(f);
+      if (shotEvery && !shotDirMade) {  // (the engine runs from here on; its first screenshot is at `from`)
+        await evaluate(send, `window.bt3Module.FS.mkdirTree(${JSON.stringify(SHOT_DIR)})`);
+        shotDirMade = true;
+      }
       if (f.frame >= from && !profiling && args.profile) {
         profiling = true;
         await send('Profiler.setSamplingInterval', { interval: PROFILE_SAMPLING_US });
@@ -139,6 +171,7 @@ function print(result) {
     }
   }
   const profile = profiling ? (await send('Profiler.stop')).profile : null;
+  const shots = shotEvery && shotDirMade ? await copyShots(send) : null;
   const win = frames.filter((f) => f.frame >= from && f.frame < to);
   const first = win[0], last = win[win.length - 1];
   const result = {
@@ -157,6 +190,7 @@ function print(result) {
     glErrors: log.filter((l) => /gl: frame error|^gldebug: [a-zA-Z]+\(/.test(l)).length,
     glErrorCounts: log.filter((l) => l.startsWith('gldebug: counts')).pop() || '',
     profile: profile ? summarize(profile) : null,
+    shots,  // { file name: sha1 } of the screenshots, saved in port/build/bench/<label>.shots/
   };
   write(result, frames, trace, log, profile);
   print(result);

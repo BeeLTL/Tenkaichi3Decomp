@@ -232,6 +232,7 @@ async function start() {
     return;
   }
   data.module = mod;
+  window.bt3Module = mod;  // for test tools (port/tests/bench: screenshots the engine writes to its file system)
   mod.bt3Data = data;
   s(`instantiated in ${(performance.now() - t0).toFixed(0)} ms; memory ${(mod.HEAPU8.length / 1048576).toFixed(0)} MB; ` +
     'constructors done (memory map, game data tables)', 'ok');
