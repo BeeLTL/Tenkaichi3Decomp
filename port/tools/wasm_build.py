@@ -11,8 +11,11 @@ wasm32 already aligns long long / double to 8 bytes (what -malign-double gives t
 Usage (emcc on PATH):
   python port/tools/wasm_build.py one <source.c>...   compile those game sources only (objects in port/build/obj_wasm)
   python port/tools/wasm_build.py game                compile every game source (portsrc.sources())
+  python port/tools/wasm_build.py port [file...]      compile the port's code (port/src, gs/, web/, newlib maths, ImGui)
+  python port/tools/wasm_build.py data                the data tables (wasm_data.py) and their disc-run list
+  python port/tools/wasm_build.py link                stubs for what nobody defines, wasm_sig.py, link -> port/build/web
 """
-import concurrent.futures, os, pathlib, subprocess, sys
+import concurrent.futures, os, pathlib, re, subprocess, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import eeconst, portsrc, wasm_sf
@@ -24,33 +27,43 @@ EMCC = "emcc"
 GAME = ["-std=gnu89", "-fno-strict-aliasing", "-ffp-contract=off", "-fcommon", "-w", "-fno-builtin",
         "-Wno-error=return-mismatch", "-Wno-error=incompatible-function-pointer-types", "-Wno-error=int-conversion",
         "-Wno-error=implicit-function-declaration", "-Wno-error=incompatible-pointer-types"]
+# Per-file definitions for this target only (each explained where its replacement is defined).
+GAME_DEFS = {"src/main.c": ["-DMainMenu_StartBallLoops=gPortOverlayLoadArea"],  # port/src/web/web_plat.c
+             "src/sys/heap.c": ["-DD_3BE71C=(*gPortAbs3BE71C)"]}                   # port/src/web/web_plat.c
+# The ELF linker's names for the start of the data and the end of the bss (headless.c's memory dump); wasm-ld's.
+PORT_DEFS = {"headless.c": ["-D__data_start=__global_base", "-D_end=__data_end"]}
 FORCED = ["-include", "port_libm.h", "-Iinclude", "-Iport/include", "-include", "port_compat.h"]
 OPT = ["-O2"]
 
 def run(cmd):
     return subprocess.run([str(c) for c in cmd], cwd=ROOT, capture_output=True, text=True, encoding="latin-1")
 
-def compile_soft(src, o, extra=(), r2l=True):
-    """One software-float source -> wasm object. Returns (ok, message, lowered operation count)."""
+def compile_soft(src, o, extra=(), r2l=True, flags=GAME, forced=FORCED, ee=True):
+    """One software-float source -> wasm object. Returns (ok, message, lowered operation count).
+    flags: the compiler flags (GAME for the game's sources); forced: -include / -I options of the preprocessing step
+    only (the preprocessed text contains them); ee: the PS2 compiler's float constants (eeconst.transform), which
+    undefined.py applies to every software-float file except the vector-library references."""
     extra = list(extra)
-    r = run([EMCC, "-E"] + GAME + FORCED + extra + [src])
+    r = run([EMCC, "-E"] + flags + forced + extra + [src])
     if r.returncode:
         return False, "preprocess: " + r.stderr.strip()[-600:], 0
     # Windows: line markers carry paths with single backslashes, which a second parse reads as escape sequences
-    text = eeconst.transform(LINE_MARK.sub(lambda m: m.group(1) + m.group(2).replace("\\", "/") + '"', r.stdout))
+    text = LINE_MARK.sub(lambda m: m.group(1) + m.group(2).replace("\\", "/") + '"', r.stdout)
+    if ee:
+        text = eeconst.transform(text)
     i = o.with_suffix(".i")
     if r2l:
         import ptr32
         i.write_text(text, encoding="latin-1", newline="\n")
         try:
             text = ptr32.r2l(i.read_bytes(), ["-x", "cpp-output", "--target=wasm32-unknown-emscripten",
-                                               GAME[0], "-w", "-Wno-error=return-mismatch",
+                                               flags[0], "-w", "-Wno-error=return-mismatch",
                                                "-Wno-error=return-type"]).decode("latin-1")
         except RuntimeError as e:
             return False, f"r2l: {e}", 0
     i.write_text(text, encoding="latin-1", newline="\n")
     ll = o.with_suffix(".ll")
-    r = run([EMCC, "-S", "-emit-llvm", "-O0", "-Xclang", "-disable-O0-optnone"] + GAME + extra +
+    r = run([EMCC, "-S", "-emit-llvm", "-O0", "-Xclang", "-disable-O0-optnone"] + flags + extra +
             ["-x", "cpp-output", i, "-o", ll])
     if r.returncode:
         return False, "compile: " + "\n".join(l for l in r.stderr.splitlines() if "error" in l)[:800], 0
@@ -77,11 +90,184 @@ def game_object(f):
     f = pathlib.Path(f).resolve()
     o = OBJ / (str(f.relative_to(ROOT / "src")).replace("\\", "/").replace("/", "_")[:-2] + ".o")
     src, done, missing = portsrc.prepare(f)
-    ok, msg, n = compile_soft(src, o, [f"-I{f.parent}"])
+    ok, msg, n = compile_soft(src, o, [f"-I{f.parent}"] + GAME_DEFS.get(f.relative_to(ROOT).as_posix(), []))
     return f, o if ok else None, msg, n, missing
+
+# ---- the port's own code (the rules of undefined.py, for this target) -------------------------------------------
+# Online play (gs/net*.c) is not part of the first browser build: sockets, threads and the matchmaking service do not
+# exist there in this form. The Vulkan back end (gs/gs_gpu.c) has no browser back end in SDL3: the GL back end is used.
+# The setup window (port/setup) is not needed: the browser build has no installer.
+WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c", "imgui_impl_sdlgpu3.cpp"}
+HARD = {"plat_libm.c", "plat_fastvec.c"}  # host floats on purpose (undefined.py)
+SDL = ["-sUSE_SDL=3"]
+PC = ["-std=gnu99", "-fno-strict-aliasing", "-ffp-contract=off", "-fno-builtin", "-w", "-Iinclude", "-Iport/include", "-Iport/src"]
+SOFT_FORCED = ["-DSF_FAST_CALLS", "-include", "math.h", "-include", "stdlib.h", "-include", "port_libm.h"]
+GEN = ROOT / "port/build/gen_wasm"
+
+def shaders_header():
+    """port/build/gen_wasm/shaders.h: the GLSL sources for gs_gl.c, as undefined.py embeds them (NUL-terminated).
+    No SPIR-V: the Vulkan back end is not built for the browser."""
+    GEN.mkdir(parents=True, exist_ok=True)
+    arrays = []
+    for src in sorted((ROOT / "port/src/gs/shaders").glob("*")):
+        if src.suffix in (".vert", ".frag"):
+            name = "k" + src.stem.capitalize() + src.suffix[1:].capitalize() + "Glsl"
+            arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in src.read_bytes() + b"\0") + "};\n")
+    (GEN / "shaders.h").write_text("/* generated from port/src/gs/shaders by port/tools/wasm_build.py */\n" + "".join(arrays))
+
+def port_jobs():
+    """(kind, source, object) for every file of the port's side."""
+    jobs = []
+    for f in sorted((ROOT / "port/third_party/newlib_libm").glob("*.c")):
+        jobs.append(("libm", f, OBJ / ("nl_" + f.stem + ".o")))
+    for f in [ROOT / "src/port/vu0_a.c", ROOT / "src/port/vu0_b.c"] + sorted((ROOT / "port/src").glob("*.c")):
+        kind = "vu0ref" if f.parent.name == "port" and f.parent.parent.name == "src" else "hard" if f.name in HARD else "soft"
+        jobs.append((kind, f, OBJ / ("pc_" + f.stem + ".o")))
+    for f in sorted((ROOT / "port/src/gs").glob("*.c")):
+        if f.name not in WASM_SKIP:
+            jobs.append(("gs", f, OBJ / ("gs_" + f.stem + ".o")))
+    for f in sorted((ROOT / "port/src/web").glob("*.c")):  # the browser build's own files
+        jobs.append(("hard", f, OBJ / ("web_" + f.stem + ".o")))
+    imgui = ROOT / "port/third_party/imgui"
+    for f in sorted(imgui.glob("*.cpp")) + sorted((ROOT / "port/src/gs").glob("*.cpp")):
+        if f.name not in WASM_SKIP:
+            jobs.append(("cxx", f, OBJ / ("cxx_" + f.stem + ".o")))
+    return jobs
+
+def port_object(job):
+    kind, f, o = job
+    rel = f.relative_to(ROOT)
+    if kind == "libm":  # the PS2's maths library with the game's float model and constants
+        ok, msg, n = compile_soft(f, o, [f"-I{f.parent}"], r2l=False,
+                                  flags=["-std=gnu89", "-fno-strict-aliasing", "-ffp-contract=off", "-fno-builtin", "-w"],
+                                  forced=["-Iport/include", "-include", "newlib_shim.h"])
+    elif kind == "vu0ref":  # the vector library's C references, under the game's names; written for a host compiler
+        ok, msg, n = compile_soft(f, o, r2l=False, flags=PC, forced=SOFT_FORCED +
+                                  ["-include", "vu0_names.h", "-DREF_VU0_EXTERN_ARITH"], ee=False)
+    elif kind == "soft":  # the port's software-float files: PS2 constants, PS2 arithmetic
+        ok, msg, n = compile_soft(f, o, PORT_DEFS.get(f.name, []), r2l=False, flags=PC, forced=SOFT_FORCED)
+    else:
+        n = 0
+        if kind == "hard":
+            cmd = [EMCC, "-c"] + OPT + PC
+        elif kind == "gs":
+            cmd = [EMCC, "-c"] + OPT + SDL + ["-std=gnu99", "-fno-strict-aliasing", "-Wall", "-Wno-unused",
+                                             "-Wno-misleading-indentation", f"-I{GEN}"]
+        else:
+            cmd = ["em++", "-c"] + OPT + SDL + ["-std=c++17", "-fno-exceptions", "-fno-rtti", "-w", "-DIMGUI_IMPL_OPENGL_ES3",
+                                               f"-I{ROOT / 'port/third_party/imgui'}", f"-I{ROOT / 'port/src/gs'}"]
+        # through LLVM IR like every other file, so that wasm_sig.py can repair calls in it (see there)
+        ll = o.with_suffix(".ll")
+        r = run([c for c in cmd if c != "-c"] + ["-S", "-emit-llvm", f, "-o", ll])
+        if r.returncode == 0:
+            r = run([cmd[0], "-c"] + OPT + [ll, "-o", o])
+        ok = r.returncode == 0
+        msg = "\n".join(l for l in r.stderr.splitlines() if "error" in l)[:1500] if not ok else ""
+    return rel, kind, o if ok else None, msg, n
+
+# ---- data tables and link -----------------------------------------------------------------------------------------
+DATA_OBJ = ROOT / "port/build/obj_wasm_data"
+GEN_OBJ = ROOT / "port/build/obj_wasm_gen"
+WEB = ROOT / "port/build/web"
+# Memory: see BROWSER_PORT_STATUS.md (layout B). The PS2 regions lie below GLOBAL_BASE at their own addresses; memory
+# ends at the scratchpad's address (0x70000000), so an access there traps.
+LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000), "-sALLOW_MEMORY_GROWTH=1",
+        "-sMAXIMUM_MEMORY=" + str(0x70000000), "-sSTACK_SIZE=16MB", "-sABORTING_MALLOC=0",
+        "-sUSE_SDL=3", "-sMIN_WEBGL_VERSION=2", "-sMAX_WEBGL_VERSION=2",
+        "-sJSPI=1",  # the game's own loop waits for the vertical blank and for files: those waits suspend (plat_stub.c)
+        "-sMODULARIZE=1", "-sEXPORT_NAME=createBt3", "-sENVIRONMENT=web",
+        "-sFORCE_FILESYSTEM=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV,HEAPU8,UTF8ToString,callMain",
+        "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext", "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
+        "-Wl,--wrap=Progress_Main", "-Wl,--error-limit=0", "--profiling-funcs", "-sASSERTIONS=1"]
+
+def data():
+    """The data tables (wasm_data.py) assembled, with the compiled-in list of their disc runs."""
+    r = subprocess.run([sys.executable, str(ROOT / "port/tools/wasm_data.py"), str(OBJ)], cwd=ROOT, capture_output=True, text=True)
+    print((r.stdout + r.stderr).strip())
+    if r.returncode:
+        sys.exit(1)
+    DATA_OBJ.mkdir(parents=True, exist_ok=True)
+    for old in DATA_OBJ.glob("*.o"):
+        old.unlink()
+    srcs = sorted((GEN / "data").glob("*.s")) + [GEN / "data_list.c"]
+    def one(s):
+        return s, run([EMCC, "-c"] + OPT + [s, "-o", DATA_OBJ / (s.stem + ".o")])
+    with concurrent.futures.ThreadPoolExecutor(16) as ex:
+        bad = [(s, r.stderr) for s, r in ex.map(one, srcs) if r.returncode]
+    for s, e in bad:
+        print("FAILED", s.name, e.strip()[:300])
+    print(f"data: {len(srcs) - len(bad)} of {len(srcs)} assembled")
+    if bad:
+        sys.exit(1)
+
+def link():
+    """Links port/build/web/bt3.js + bt3.wasm. Symbols nobody defines get a stub that says so and aborts (as link.py
+    does natively: running the program shows what it still needs); calls of mismatched types are repaired first."""
+    WEB.mkdir(parents=True, exist_ok=True)
+    GEN_OBJ.mkdir(parents=True, exist_ok=True)
+    for old in GEN_OBJ.glob("*"):
+        old.unlink()
+    objs = lambda: [str(o) for d in (OBJ, DATA_OBJ, GEN_OBJ) for o in sorted(d.glob("*.o"))]
+    rsp = ROOT / "port/build/wasm_link.rsp"
+    def em(extra):
+        rsp.write_text("\n".join('"' + a.replace("\\", "/") + '"' for a in objs() + LINK + extra))
+        return run(["em++", "@" + str(rsp), "-o", WEB / "bt3.js"])
+    need = set()
+    for attempt in range(4):  # (one probe has been seen to leave out a symbol: probe until none is missing)
+        r = em([])
+        more = set(re.findall(r"undefined symbol: (\w+)", r.stderr)) - need
+        if not more:
+            break
+        need |= more
+        need_sorted = sorted(need)
+        lines = ["/* Generated by port/tools/wasm_build.py: one stub per symbol the browser build does not provide.",
+                 "   A stub says which one was reached and aborts (link.py does the same for the native builds). */",
+                 "#include <stdio.h>", "#include <stdlib.h>",
+                 'static void missing(const char *n) { fprintf(stderr, "bt3: not implemented yet: %s\\n", n); abort(); }']
+        lines += [f'void {s}(void) {{ missing("{s}"); }}' for s in need if re.fullmatch(r"\w+", s)]
+        odd = [s for s in need if not re.fullmatch(r"\w+", s)]
+        if odd:
+            print("undefined symbols that cannot be stubbed:", " ".join(odd))
+            sys.exit(1)
+        (GEN / "stubs.c").write_text("\n".join(lines) + "\n")
+        (ROOT / "port/build/wasm_stubs.txt").write_text("\n".join(need) + "\n")
+        r2 = run([EMCC, "-c", "-O2", GEN / "stubs.c", "-o", GEN_OBJ / "stubs.o"])
+        if r2.returncode:
+            print(r2.stderr[-1500:])
+            sys.exit(1)
+    s = run([sys.executable, str(ROOT / "port/tools/wasm_sig.py"), str(OBJ), str(DATA_OBJ), str(GEN_OBJ)])
+    print(s.stdout.strip())
+    if s.returncode:
+        sys.exit(1)
+    r = em([])
+    mism = re.findall(r"signature mismatch: (\S+)", r.stderr)
+    errs = [l for l in r.stderr.splitlines() if "error" in l]
+    print(f"{len(need)} stubs (port/build/wasm_stubs.txt); {len(mism)} signature mismatches left; link "
+          f"{'OK -> ' + str((WEB / 'bt3.js').relative_to(ROOT)) if r.returncode == 0 else 'FAILED'}")
+    for l in (errs + [f"signature mismatch: {m}" for m in mism])[:30]:
+        print("  " + l[-200:])
+    sys.exit(0 if r.returncode == 0 and not mism else 1)
 
 def main():
     OBJ.mkdir(parents=True, exist_ok=True)
+    if sys.argv[1:2] == ["data"]:
+        data()
+        return
+    if sys.argv[1:2] == ["link"]:
+        link()
+        return
+    if sys.argv[1:2] == ["port"]:
+        shaders_header()
+        jobs = [j for j in port_jobs() if len(sys.argv) == 2 or j[1].name in sys.argv[2:]]
+        with concurrent.futures.ProcessPoolExecutor(min(16, os.cpu_count() or 4)) as ex:
+            res = list(ex.map(port_object, jobs))
+        bad = [r for r in res if r[2] is None]
+        for rel, kind, o, msg, n in res:
+            if o is None or "-v" in sys.argv:
+                print(f"{'ok    ' if o else 'FAILED'} {rel} [{kind}]" + (f"\n       {msg}".replace("\n", "\n       ") if msg else ""))
+        print(f"port: {len(res) - len(bad)} of {len(res)} compiled, {sum(r[4] for r in res)} float operations lowered; "
+              f"not built for the browser: {', '.join(sorted(WASM_SKIP))}")
+        sys.exit(1 if bad else 0)
     if (len(sys.argv) > 2 and sys.argv[1] == "one") or sys.argv[1:] == ["game"]:
         # (portsrc.REPLACED holds "/" paths and relative_to() gives "\" ones on Windows: filtered here as well)
         fs = sys.argv[2:] if sys.argv[1] == "one" else \

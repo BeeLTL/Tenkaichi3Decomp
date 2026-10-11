@@ -1312,6 +1312,18 @@ int GsGpu_Init(void) {
     gsVuIdx = malloc(MAX_VU_IDX * sizeof(uint32_t));
     gsVuUni = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
     gsDraws = malloc(MAX_DRAWS * sizeof(GsDraw));
+#ifdef __EMSCRIPTEN__
+    /* The browser build has one renderer: the OpenGL back end on WebGL 2 (SDL3 has no browser back end for its GPU
+       API, and gs_gpu.c is not built). */
+    (void)api;
+    sb = &sGlBackend;
+    sBackend = sb;
+    if (!sb->init()) {
+        fprintf(stderr, "bt3: the WebGL 2 renderer could not start\n");
+        sBackend = NULL;
+        return 0;
+    }
+#else
     /* BT3_GPU_API=vulkan|gl|auto picks the back end. Both are complete renderers of the same list, so a
        picture from either should be the same (see the frame-by-frame compare in the port's docs). */
     if (api == NULL || strcmp(api, "auto") == 0) {
@@ -1344,6 +1356,7 @@ int GsGpu_Init(void) {
             return 0;
         }
     }
+#endif
     gsWhite = sb->whiteTex();
     gsFxOff = (unsigned)(getenv("BT3_FX_OFF") != NULL ? atoi(getenv("BT3_FX_OFF")) : Port_Setting("fx_off", 0)) & 63;
     gsGlowPercent = getenv("BT3_GLOW") != NULL ? atoi(getenv("BT3_GLOW")) : Port_Setting("glow", GLOW_DEFAULT);

@@ -130,6 +130,20 @@ __attribute__((constructor(101))) static void crash_init(void) {
     setvbuf(stderr, NULL, _IONBF, 0);
     AddVectoredExceptionHandler(1, on_crash);
 }
+#elif defined(__EMSCRIPTEN__)
+/* Browser: a crash is a WebAssembly trap (or an abort), caught by the page, which prints the JavaScript stack (with
+   function names when the build keeps them). This hands the page what the native report adds to the stack: how far
+   the start got, and whether the data is the original disc's. */
+#include <emscripten.h>
+#include <stdio.h>
+extern const char *Port_DataSummary(void); /* plat_verify.c */
+extern const char *volatile gPortStage;   /* plat_mem.c */
+
+EMSCRIPTEN_KEEPALIVE const char *Port_CrashContext(void) {
+    static char buf[512];
+    snprintf(buf, sizeof(buf), "stage: %s%s%s", gPortStage, Port_DataSummary()[0] != '\0' ? "; " : "", Port_DataSummary());
+    return buf;
+}
 #else
 #include <execinfo.h>
 #include <fcntl.h>
