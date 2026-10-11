@@ -30,8 +30,11 @@
 #define A11Y_TEXT 1024
 extern int PortA11y_Begin(void), PortA11y_Spanish(void);
 extern void PortA11y_Say(const char *text, int flags);
+extern void PortA11y_Note(const char *text);
 extern int PortA11y_Utf8(char *out, int cap, const uint16_t *str);
 extern int gPortResim; /* gs/state.c: blanks being run again */
+extern int Port_Setting(const char *name, int def); /* plat_settings.c */
+extern void Port_AudioRefresh(void);                /* gs/snd_adx.c: the streams take their volume again */
 
 /* include/menu/menu_a.h: MenuProgress; the modes are in docs/systems/menu_overlay.md */
 extern struct { int unk0[2]; int loadPack, loadRes, loadSprites; int flags; int mode; } GAME_PTR gProgress;
@@ -230,7 +233,7 @@ static const char *const kMainMenuItems[2][11] = { /* by item id: src/menu/menu_
      "Ultimate Training", "Data Center", "Character Reference", "Options", "Shenron"},
     {"Historia Dragón", "Batalla definitiva", "Torneo mundial Dragón", "Duelo", "Batalla Dragón en línea",
      "Evolución Z", "Entrenamiento definitivo", "Centro de datos", "Referencia de personajes", "Opciones",
-     "Shenron"},
+     "Shenlon"},
 };
 static const char *const kTitleItems[2][2] = {{"New Game", "Continue"}, {"Partida nueva", "Continuar"}};
 static const char *const kYesNo[2][2] = {{"Yes", "No"}, {"Sí", "No"}};
@@ -243,14 +246,14 @@ static const char *const kStageNames[2][CHARSEL_STAGE_RANDOM + 1] = {
      "Mount Paozu", "Wasteland - Evening", "Wasteland - Night", "Rocky Area - Evening", "Rocky Area - Night",
      "World Tournament Stage - Evening", "Cell Game - Noon", "City Ruins - Evening", "City Ruins - Night",
      "Desert - Evening", "Desert - Night", "Mountain Road - Evening", "Planet - Evening", "Random"},
-    /* As the Spanish mod's name pictures say them, with their abbreviations written out. */
+    /* As the Spanish mod's name pictures say them, with their abbreviations written out and "Cell" kept. */
     {"Páramo, mediodía", "Área rocosa, mediodía", "Planeta Namek", "Namek agonizante",
-     "Escenario Torneo Mundial, mediodía", "Atalaya de Kami", "Pista Juegos Célula, tarde", "Mundo Kaiyoshin",
+     "Escenario Torneo Mundial, mediodía", "Atalaya de Kami", "Pista Juegos Cell, tarde", "Mundo Kaiyoshin",
      "Habitación del tiempo", "Ciudad en ruinas, mediodía", "Carretera montañosa, mediodía", "Islas",
      "Kame House", "Planeta, noche", "Glaciar", "Tierra en ruinas", "Espacio exterior", "Aldea Pingüino",
      "Infierno", "Desierto, mediodía", "Castillo del rey", "Torre Músculo", "Monte Paozu", "Yermos, tarde",
      "Yermos, noche", "Área rocosa, tarde", "Área rocosa, noche", "Escenario Torneo Mundial, tarde",
-     "Juegos Célula, mediodía", "Ciudad en ruinas, tarde", "Ciudad en ruinas, noche", "Desierto, tarde",
+     "Juegos Cell, mediodía", "Ciudad en ruinas, tarde", "Ciudad en ruinas, noche", "Desierto, tarde",
      "Desierto, noche", "Carretera montañosa, tarde", "Planeta, tarde", "Aleatorio"},
 };
 /* By music-list value 0x00..0x13 (gs/namefont.c, kSongNames); titles, the same in both languages. */
@@ -289,7 +292,7 @@ static const char *const kDuelCpu[2][5] = {
 };
 static const char *const kDuelReferee[2][7] = {
     {"Ox-King", "Videl", "Supreme Kai", "Shenron", "Announcer 1", "Announcer 2", "Announcer 3"},
-    {"Rey Ox", "Videl", "Kaiyoshin", "Shenron", "Locutor 1", "Locutor 2", "Locutor 3"},
+    {"Rey Ox", "Videl", "Kaiyoshin", "Shenlon", "Locutor 1", "Locutor 2", "Locutor 3"},
 };
 
 static int sEs;           /* Spanish labels */
@@ -776,34 +779,356 @@ static void duel_menu(void) {
     }
 }
 
-/* The message window's line, whenever it shows another one; queued behind the item it is about. */
+/* ---- the voices, and the text on screens without a reader of their own ---- */
+
+/* include/battle/battle.h: BattleWork; `running` is 1 between Battle_Main's entry and exit (src/battle/battle.c). */
+extern struct { char unk0[0x19F8]; int running; } gBattleWork;
+
+/* include/sys/file.h: AdxPlayer, one per channel (include/sys/adx.h); `adxt` is the port's player
+   (gs/snd_adx.c, ADXT_Create). */
+typedef struct {
+    char unk0[0x10];
+    void GAME_PTR adxt; /* 0x10 */
+} A11yAdxPlayer;
+_Static_assert(sizeof(A11yAdxPlayer) == 0x14, "AdxPlayer");
+extern A11yAdxPlayer gAdxPlayerTbl[6];
+#define ADX_CH_VOICE0 4
+#define ADX_CH_VOICE1 5
+
+/* Voices by id of partition 2 (file number + 0xD48, gs/snd_adx.c): the story's lines and the menu guides' (both
+   voice sets) are the ones the game also shows as text; the fighters' and the announcer's come after them. */
+#define VOICE_SUBTITLED_FIRST 0xD48
+#define VOICE_SUBTITLED_END 0x8D4E
+
+#define SUBTITLE_BEFORE 10 /* blanks: a line shown this soon after such a voice started is what it says */
+#define TEXT_STABLE 20     /* blanks a line is shown before it is said (its voice may start late; a line typed in
+                              letter by letter is whole by then) */
+#define TEXT_FORGET 30     /* blanks a line must be gone to be new when it shows again */
+#define TEXT_SLOTS 64
+
+static int sOn;                  /* set by the first blank with the speaker on */
+static int sBlank;               /* blanks counted since then */
+static int sVoiceBlank = -1000;  /* the blank the last voice with a shown line started in */
+static int sMenuVoices = 100;    /* bt3_settings.txt a11y_menu_voices, percent */
+
+/* gs/snd_adx.c, ADXT_StartAfs: the game started a stream (path: its file). */
+void PortA11y_StreamStart(const char *path) {
+    const char *dir;
+    char note[64];
+    int id;
+
+    if (!sOn || gPortResim || path == NULL || (dir = strstr(path, "pzs3us2/")) == NULL ||
+        sscanf(dir + 8, "%d.bin", &id) != 1) {
+        return;
+    }
+    id += 0xD48;
+    if (id >= VOICE_SUBTITLED_FIRST && id < VOICE_SUBTITLED_END) {
+        sVoiceBlank = sBlank;
+        snprintf(note, sizeof(note), "voice %#x", id);
+        PortA11y_Note(note);
+    }
+}
+
+/* gs/a11y.c, PortA11y_StreamGain (for gs/snd_adx.c, apply_volume): the percent of the game's own volume one of its
+   players gets, or -1 to leave it alone. Outside a fight the two voice channels play at a11y_menu_voices percent, so
+   the screen reader can be heard over the guides. An int, not a gain: this file is built soft-float and gs/ is not,
+   so a float returned from here would not reach the caller (it would read another register). */
+int PortA11y_VoicePercent(const void *player) {
+    if (!sOn || gBattleWork.running || player == NULL) {
+        return -1;
+    }
+    if (player == (const void *)gAdxPlayerTbl[ADX_CH_VOICE0].adxt ||
+        player == (const void *)gAdxPlayerTbl[ADX_CH_VOICE1].adxt) {
+        return sMenuVoices;
+    }
+    return -1;
+}
+
+/* 1: a line first shown at blank `first` is what a voice says (it started a little before or since). */
+static int subtitle(int first) {
+    return sVoiceBlank >= first - SUBTITLE_BEFORE;
+}
+
+/* The message window's line, whenever it shows another one: once it has stayed TEXT_STABLE blanks, and not when a
+   voice says it (the main menu's guides); queued behind the item it is about. */
 static void msg_window(void) {
-    static uint16_t GAME_PTR said;
+    static uint16_t GAME_PTR shown;
+    static int first, done;
     A11yMsgWin GAME_PTR w = gMsgWin;
+    uint16_t GAME_PTR str = w != NULL && w->text != NULL ? w->str : NULL;
     char text[A11Y_TEXT];
 
-    if (w == NULL) {
-        said = NULL;
+    if (str != shown) {
+        shown = str;
+        first = sBlank;
+        done = 0;
         return;
     }
-    if (w->str == said) {
+    if (done || shown == NULL || sBlank - first < TEXT_STABLE) {
         return;
     }
-    said = w->str;
-    if (said == NULL || w->text == NULL || said[0] != 0xFEFF) {
+    done = 1;
+    if (shown[0] != 0xFEFF) {
         return;
     }
-    if (PortA11y_Utf8(text, sizeof(text), (const uint16_t *)said) > 0) {
+    if (subtitle(first)) {
+        PortA11y_Note("message window: a voice says it");
+    } else if (PortA11y_Utf8(text, sizeof(text), (const uint16_t *)shown) > 0) {
         PortA11y_Say(text, 0);
+    }
+}
+
+/* Screens with no reader of their own, by mode (docs/systems/menu_overlay.md): the main menu's name for the first
+   screen of a mode (item), or a short description. "Not read yet" where a choice is made that is not read. */
+static const struct {
+    int mode, item;
+    const char *text[2];
+} kModeNames[] = {
+    {6, 0, {"choose a saga", "elige una saga"}},
+    {7, -1, {"Episode list", "Lista de episodios"}},
+    {8, -1, {"Episode result", "Resultado del episodio"}},
+    {9, -1, {"Saga ending", "Final de la saga"}},
+    {10, -1, {"Save", "Guardar"}},
+    {13, 1, {NULL, NULL}},
+    {14, -1, {"Choose a mission", "Elige una misión"}},
+    {15, -1, {"Choose your fighters, not read yet", "Elige a tus luchadores, todavía sin lectura"}},
+    {16, -1, {"Mission result", "Resultado de la misión"}},
+    {17, -1, {"Survival", "Supervivencia"}},
+    {18, -1, {"Choose your fighter, not read yet", "Elige a tu luchador, todavía sin lectura"}},
+    {19, -1, {"Survival result", "Resultado de supervivencia"}},
+    {20, -1, {"Sim Dragon", "Simulador Dragón"}},
+    {21, -1, {"Choose your fighter, not read yet", "Elige a tu luchador, todavía sin lectura"}},
+    {22, -1, {"Sim Dragon, the day", "Simulador Dragón, jornada"}},
+    {23, -1, {"Day result", "Resultado de la jornada"}},
+    {24, -1, {"Disc Fusion", "Fusión de discos"}},
+    {25, -1, {"Choose your fighter, not read yet", "Elige a tu luchador, todavía sin lectura"}},
+    {26, -1, {"Ranking", "Clasificación"}},
+    {27, -1, {"Result", "Resultado"}},
+    {28, -1, {"Choose a course", "Elige un recorrido"}},
+    {29, -1, {"Choose your fighter, not read yet", "Elige a tu luchador, todavía sin lectura"}},
+    {30, -1, {"Result", "Resultado"}},
+    {33, 2, {NULL, NULL}},
+    {34, -1, {"Entry: choose your fighter, not read yet", "Inscripción: elige a tu luchador, todavía sin lectura"}},
+    {35, -1, {"Tournament bracket", "Cuadro del torneo"}},
+    {40, -1, {"Team select, not read yet", "Selección por equipos, todavía sin lectura"}},
+    {44, 6, {NULL, NULL}},
+    {48, 5, {NULL, NULL}},
+    {53, 7, {NULL, NULL}},
+    {60, 8, {NULL, NULL}},
+    {62, 9, {NULL, NULL}},
+    {70, 10, {NULL, NULL}},
+};
+#define MODE_DUEL_MENU 38
+#define MODE_DUEL_CHARSEL 39
+#define MODE_TRAIN_CHARSEL 45
+
+/* 1: the game set this mode as it left for a fight, whose result it shows after (the episode's, the mission's...):
+   said when the fight is over, not before. */
+static int after_fight(int mode) {
+    return mode == 8 || mode == 16 || mode == 19 || mode == 23 || mode == 27 || mode == 30;
+}
+
+/* The description of a mode into out; 0 when it has none. */
+static int mode_text(char *out, int cap, int mode) {
+    size_t i;
+    int n;
+
+    for (i = 0; i < sizeof(kModeNames) / sizeof(kModeNames[0]); i++) {
+        if (kModeNames[i].mode != mode) {
+            continue;
+        }
+        n = snprintf(out, cap, "%s", kModeNames[i].item >= 0 ? kMainMenuItems[sEs][kModeNames[i].item] : "");
+        if (kModeNames[i].text[sEs] != NULL) {
+            snprintf(out + n, cap - n, "%s%s", n > 0 ? ", " : "", kModeNames[i].text[sEs]);
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/* Notes (in the log) where the game goes; the description of a screen with no reader of its own; the voices' volume
+   when a fight starts or ends. */
+static void screen_change(void) {
+    static int mode = -1, fight = -1;
+    char text[256];
+    int m = gProgress != NULL ? gProgress->mode : -1, f = gBattleWork.running != 0;
+
+    if (f != fight) {
+        if (fight != -1) {
+            PortA11y_Note(f ? "fight" : "fight over");
+            Port_AudioRefresh();
+            if (!f && mode_text(text, sizeof(text), m)) {
+                heading(text);
+            }
+        }
+        fight = f;
+    }
+    if (m != mode) {
+        snprintf(text, sizeof(text), "mode %d", m);
+        PortA11y_Note(text);
+        mode = m;
+        if (!f && !after_fight(m) && mode_text(text, sizeof(text), m)) {
+            heading(text);
+        }
+    }
+}
+
+/* 1: one of the readers above has this screen (what it draws is not read again from the text). */
+static int own_screen(void) {
+    int m;
+
+    if (gDialog != NULL && (gDialog->flags & DIALOG_FLAG_OPEN)) {
+        return 1;
+    }
+    if (gBattleWork.running || gProgress == NULL) {
+        return 0;
+    }
+    m = gProgress->mode;
+    return m == MODE_TITLE || m == MODE_MAIN_MENU || m == MODE_DUEL_MENU || m == MODE_DUEL_CHARSEL ||
+           m == MODE_TRAIN_CHARSEL;
+}
+
+/* The game's strings drawn lately (PortA11y_FontText), by their hash. */
+typedef struct {
+    uint64_t hash;
+    uint32_t str;      /* the game's address */
+    int len;           /* UTF-16 units drawn */
+    int oneLine;       /* drawn to the first line break */
+    int first, last;   /* blanks it was first and last drawn in */
+    int order;         /* when it was first drawn, among the others */
+    int done;          /* said, or left to another reader */
+} A11yShown;
+static A11yShown sShown[TEXT_SLOTS];
+static int sShownOrder;
+
+/* A letter of some script: a string without one (a counter, a line of dashes) is not said. */
+static int is_letter(uint32_t c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= 0xC0 && c < 0x2000 && c != 0xD7 && c != 0xF7) ||
+           (c >= 0x3040 && c < 0xA000) || (c >= 0xAC00 && c < 0xD7A4);
+}
+
+/* FNV-1a over the first `len` units of a string; *len is set to how many are drawn (to the terminator, or to the
+   first line break when the style draws one line) and *letters to whether there is a letter. */
+static uint64_t string_hash(const uint16_t *s, int oneLine, int *len, int *letters) {
+    uint64_t h = 0xCBF29CE484222325ULL;
+    int n;
+
+    *letters = 0;
+    for (n = 0; n < 1024 && s[n] != 0 && !(oneLine && (s[n] == '\n' || s[n] == '\r')); n++) {
+        h = (h ^ s[n]) * 0x100000001B3ULL;
+        *letters |= is_letter(s[n]);
+    }
+    *len = n;
+    return h;
+}
+
+/* src/battle/col_c.c, Font_NewCmd: the game queued a string to draw (kind 0: UTF-16 at `arg`; flags bit 0: one
+   line). Only noted here; said at the blank (shown_text). */
+void PortA11y_FontText(int kind, int arg, int flags) {
+    A11yShown *e, *old = NULL;
+    uint64_t h;
+    int i, len, letters;
+
+    if (!sOn || gPortResim || kind != 0 || arg == 0) {
+        return;
+    }
+    h = string_hash((const uint16_t *)(uintptr_t)(uint32_t)arg, flags & 1, &len, &letters);
+    if (!letters) {
+        return;
+    }
+    for (i = 0; i < TEXT_SLOTS; i++) {
+        e = &sShown[i];
+        if (e->hash == h && e->last >= sBlank - TEXT_FORGET) {
+            e->str = (uint32_t)arg;
+            e->last = sBlank;
+            return;
+        }
+        if (old == NULL || e->last < old->last) {
+            old = e;
+        }
+    }
+    old->hash = h;
+    old->str = (uint32_t)arg;
+    old->len = len;
+    old->oneLine = flags & 1;
+    old->first = old->last = sBlank;
+    old->order = sShownOrder++;
+    old->done = 0;
+}
+
+/* The strings that showed up on a screen no reader has, in the order they were first drawn, once they have
+   stayed TEXT_STABLE blanks: together as one message. Not the message window's line (msg_window) nor a line a
+   voice says. */
+static void shown_text(void) {
+    A11yMsgWin GAME_PTR w = gMsgWin;
+    uint32_t skip = w != NULL ? (uint32_t)(uintptr_t)w->str : 0;
+    uint16_t buf[1025];
+    char text[A11Y_TEXT], line[A11Y_TEXT];
+    int idx[TEXT_SLOTS], n = 0, own = own_screen(), i, j, k, len, letters;
+    A11yShown *e;
+    const uint16_t *s;
+    size_t used;
+
+    for (i = 0; i < TEXT_SLOTS; i++) {
+        e = &sShown[i];
+        if (e->hash == 0 || e->done || e->last < sBlank - 2) { /* (a frame can last two blanks) */
+            continue;
+        }
+        if (own || e->str == skip) {
+            e->done = 1;
+            continue;
+        }
+        if (sBlank - e->first < TEXT_STABLE) {
+            continue;
+        }
+        e->done = 1;
+        if (subtitle(e->first)) {
+            PortA11y_Note("text: a voice says it");
+            continue;
+        }
+        for (j = n++; j > 0 && sShown[idx[j - 1]].order > e->order; j--) {
+            idx[j] = idx[j - 1];
+        }
+        idx[j] = i;
+    }
+    text[0] = '\0';
+    used = 0;
+    for (k = 0; k < n; k++) {
+        e = &sShown[idx[k]];
+        s = (const uint16_t *)(uintptr_t)e->str;
+        if (string_hash(s, e->oneLine, &len, &letters) != e->hash) {
+            continue; /* (the string changed since it was drawn) */
+        }
+        for (i = j = 0; i < e->len && j < 1024; i++) {
+            if (s[i] < 0xE000 || s[i] >= 0xF900) { /* (not the private use area: the font's own marks) */
+                buf[j++] = s[i];
+            }
+        }
+        buf[j] = 0;
+        if (PortA11y_Utf8(line, sizeof(line), buf) > 0 && used + strlen(line) + 3 < sizeof(text)) {
+            used += snprintf(text + used, sizeof(text) - used, "%s%s", used > 0 && strchr(".!?:", text[used - 1]) == NULL ? ". " : used > 0 ? " " : "", line);
+        }
+    }
+    if (text[0] != '\0') {
+        PortA11y_Say(text, follow());
     }
 }
 
 /* Once per blank (plat_stub.c: Port_VBlank). */
 void PortA11y_GameTick(void) {
+    int v;
+
     if (!PortA11y_Begin() || gPortResim) {
         return;
     }
+    if (!sOn) {
+        sOn = 1;
+        v = Port_Setting("a11y_menu_voices", 50);
+        sMenuVoices = v < 0 ? 0 : v > 100 ? 100 : v;
+    }
+    sBlank++;
     sEs = PortA11y_Spanish();
+    screen_change();
     dialog();
     if (gProgress != NULL) {
         title();
@@ -812,4 +1137,5 @@ void PortA11y_GameTick(void) {
     duel_menu();
     char_select();
     msg_window();
+    shown_text();
 }

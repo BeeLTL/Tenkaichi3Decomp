@@ -13,8 +13,10 @@
  *   bt3_settings.txt  a11y=0            off, even with the library there
  *                     a11y_key_repeat   the repeat key, an SDL scancode (default F2); the controller's touchpad
  *                                       click repeats too
+ *                     a11y_log=1        the log below, into a11y_log.txt in the program's folder (for a report)
  *   $BT3_A11Y_LOG=<file>                writes what is said, one line each with the blank (tests without a screen
- *                                       reader: the headless build has no library)
+ *                                       reader: the headless build has no library), and notes on what changed on
+ *                                       the screen, marked "#"
  *   $BT3_A11Y_LANG=es|en                the language of the labels the game draws as pictures (default: the
  *                                       system's preferred language)
  *   a11y_es.txt                         in Spanish, lines to say instead of the game's own text where the disc has
@@ -327,7 +329,8 @@ static int spanish_line(char *out, int cap, int n) {
 }
 
 static void start(void) {
-    const char *lang = getenv("BT3_A11Y_LANG");
+    const char *lang = getenv("BT3_A11Y_LANG"), *base;
+    char path[1024];
     SDL_Locale **loc;
     int n = 0;
 
@@ -336,6 +339,9 @@ static void start(void) {
     }
     if (getenv("BT3_A11Y_LOG") != NULL) {
         sLog = fopen(getenv("BT3_A11Y_LOG"), "w");
+    } else if (Port_Setting("a11y_log", 0) && (base = SDL_GetBasePath()) != NULL) {
+        snprintf(path, sizeof(path), "%sa11y_log.txt", base);
+        sLog = fopen(path, "w");
     }
     if (!load_prism() && sLog == NULL) {
         return;
@@ -396,6 +402,23 @@ void PortA11y_Say(const char *text, int flags) {
     }
     push(text, flags & A11Y_INTERRUPT);
     SDL_UnlockMutex(sLock);
+}
+
+/* Writes a note to the log only ("# text" after the blank): what changed on the screen, to follow a report. */
+void PortA11y_Note(const char *text) {
+    if (sOn && sLog != NULL) {
+        fprintf(sLog, "%d # %s\n", sFrame, text); /* (stdio locks the file against the speaker's lines) */
+        fflush(sLog);
+    }
+}
+
+/* snd_adx.c, apply_volume: the gain on top of the game's own for one of its players. a11y_game.c decides it as a
+   percent: it is built soft-float, so it cannot hand a float to this side. */
+float PortA11y_StreamGain(const void *player) {
+    extern int PortA11y_VoicePercent(const void *player);
+    int percent = PortA11y_VoicePercent(player);
+
+    return percent < 0 ? 1.0f : (float)percent / 100.0f;
 }
 
 /* Says again what was said last. */
