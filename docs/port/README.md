@@ -1721,3 +1721,9 @@ saying that a direct connection lets the other player see one's address.
 - Not checked: the Worker on Cloudflare with its real database (the `rowid` tie-break and the two ALTER TABLE
   lines among it), the window itself (nobody has looked at the tab), two players on two networks, the relay path
   of a quick match, Windows.
+
+**Quick match: the same rollback and input delay for everyone** (the same day, before 0.1.27 was published). A quick
+match took the rollback and delay the host had saved on the Host tab, and who hosts is whoever searched first: a
+stranger's choices, unseen. Now fixed for quick matches: rollback of up to 8 frames, the input delay measured from
+the connection. Checked through the real service, two copies on one machine: both log "input delay 1 blanks,
+rollback of up to 8".

@@ -1444,6 +1444,9 @@ void Port_LobbyAuto(void) {
             type = q == 0 ? 0 : q == 1 ? 1 : 2;
             dp = q >= 2 ? q - 2 : 0;
             Port_NetRulesSet(type, dp, 4); /* (a queue's rules: its battle type, no time limit) */
+            if (getenv("BT3_NET_ROLLBACK") == NULL && getenv("BT3_NET_DELAY") == NULL) {
+                Port_NetOptions(Port_RollCan() ? 8 : 0, -2); /* (and a quick match's fixed rollback and delay, as the window sets them) */
+            }
             Port_LobbyStartQuick(q);
         } else {
             Port_LobbyStartCode(strncmp(what, "join:", 5) != 0, strncmp(what, "join:", 5) == 0 ? what + 5 : "");

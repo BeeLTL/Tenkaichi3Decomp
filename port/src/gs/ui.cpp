@@ -409,9 +409,10 @@ static void quick_status(int state, int &lastState, const char *name) {
         ImGui::TextWrapped("The other player's game is a different version. Search again.");
     }
     if (ImGui::Button("Search for a match", ImVec2(200.0f, 0.0f))) {
-        int delay = Port_Setting("net_delay2", -1);
-        // (whoever turns out to be the host: its saved rollback and input delay; the queue's rules, no time limit)
-        Port_NetOptions(Port_RollCan() ? Port_Setting("net_rollback2", 8) : 0, delay < 0 ? -2 : delay);
+        // The same for everyone in a quick match, whoever turns out to be the host: rollback of up to 8 frames and
+        // the input delay measured from the connection. (The Host tab's own choices are for matches with someone
+        // you can agree them with; a stranger's saved ones were not to be inherited unseen.)
+        Port_NetOptions(Port_RollCan() ? 8 : 0, -2);
         Port_NetRulesSet(sQueue == 0 ? 0 : sQueue == 1 ? 1 : 2, sQueue >= 2 ? sQueue - 2 : 0, 4);
         Port_NetNameSet(name);
         Port_SettingSave("net_queue", sQueue);
