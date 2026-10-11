@@ -28,6 +28,12 @@ SDL_Window *GsDraw_Window(void);
 void GsDraw_WindowShape(void);
 void GsDraw_FullscreenSet(int on);
 void GsDraw_FullscreenToggle(void); /* F11: switch, save it, write the settings */
+/* Once a frame, by the back end: the window's title and its events (quit, Esc, the settings window's hotkeys and its
+   input, F9 smooth motion, F11 full screen). */
+void GsDraw_PollEvents(void);
+/* The size of the picture in a window of windowW x windowH pixels: as large as fits at the game's aspect (4:3, or
+   16:9 in widescreen). Where it goes (centred) is the back end's: their origins differ. */
+void GsDraw_PictureSize(int windowW, int windowH, int *w, int *h);
 
 /* gs_input.c: bindings of both players. Actions 0..15 are the pad's buttons, 16..23 the two sticks' directions. */
 #define PORT_ACTIONS 24

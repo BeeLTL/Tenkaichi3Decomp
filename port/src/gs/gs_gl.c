@@ -844,30 +844,12 @@ void GsGl_StripTextureFree(unsigned id) {
 
 /* ---- the frame ---------------------------------------------------------------------------------- */
 static void frame_end(void) {
-    SDL_Event ev;
     int cur = -1, best = -1, i;
     uint32_t n;
     struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } fu, lastFu;
     int haveFu = 0;
 
-    GsGpu_TitlePoll();
-    while (SDL_PollEvent(&ev)) {
-        if (ev.type == SDL_EVENT_QUIT) { exit(0); }
-        if (PortInput_Hotkey(&ev)) { Ui_Toggle(); continue; }
-        if (Ui_Event(&ev)) { continue; }
-        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { exit(0); }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
-            extern int gsInterp;
-            extern void Port_SettingSave(const char *name, int value);
-            extern void Port_SettingsWrite(void);
-            static int was = 1; /* (the same setting as F1, Video, Smooth motion: off, or back to what it was) */
-            if (gsInterp > 0) { was = gsInterp; gsInterp = 0; } else { gsInterp = was; }
-            Port_SettingSave("interp", gsInterp);
-            Port_SettingsWrite();
-            fprintf(stderr, "bt3: smooth motion %s\n", gsInterp == 0 ? "off" : gsInterp == 1 ? "60" : gsInterp == 2 ? "120" : "240");
-        }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F11) { GsDraw_FullscreenToggle(); }
-    }
+    GsDraw_PollEvents();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
         fprintf(stderr, "gpu: frame %u: %u draws, %u vertices, %d targets, %d textures, %d pipelines, %u primitives of PS2-only passes dropped, %u native effects\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sPipeCount, gsSkipped, gsNative);
@@ -1058,9 +1040,8 @@ static void frame_end(void) {
         glClear(GL_COLOR_BUFFER_BIT);
         glEnable(GL_SCISSOR_TEST);
         if (best >= 0 && gsTargets[best].cleared) {
-            float want = (float)Port_AspectMilli() / 1000.0f;
-            int w = sw, h = sh, dx, dy;
-            if ((float)sw > (float)sh * want) { w = (int)((float)sh * want + 0.5f); } else { h = (int)((float)sw / want + 0.5f); }
+            int w, h, dx, dy;
+            GsDraw_PictureSize(sw, sh, &w, &h);
             dx = (sw - w) / 2;
             dy = (sh - h) / 2;
             if (getenv("BT3_GS_VERBOSE") != NULL) {
@@ -1160,15 +1141,7 @@ static void frame_end(void) {
         }
     }
 
-    for (i = 0; i < gsTargetCount; i++) { gsTargets[i].draws = 0; }
-    gsVertCount = 0;
-    gsVuVertCount = 0;
-    gsVuIdxCount = 0;
-    gsVuUniCount = 0;
-    gsDrawCount = 0;
-    gsAnchor = 0;
-    gsSkipped = 0;
-    gsNative = 0;
+    GsDraw_FrameReset();
 }
 
 /* Target i's picture, reduced to the GS's display area (as the Vulkan back end's). */

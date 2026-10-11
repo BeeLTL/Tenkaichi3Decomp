@@ -1204,6 +1204,76 @@ void GsDraw_FullscreenToggle(void) {
     Port_SettingsWrite();
 }
 
+/* F9: in-between pictures on and off (the same setting as F1, Video, Smooth motion: off, or back to what it was). */
+static void smooth_motion_toggle(void) {
+    extern int gsInterp;
+    static int was = 1;
+    if (gsInterp > 0) {
+        was = gsInterp;
+        gsInterp = 0;
+    } else {
+        gsInterp = was;
+    }
+    Port_SettingSave("interp", gsInterp);
+    Port_SettingsWrite();
+    fprintf(stderr, "bt3: smooth motion %s\n", gsInterp == 0 ? "off" : gsInterp == 1 ? "60" : gsInterp == 2 ? "120" : "240");
+}
+
+void GsDraw_PollEvents(void) {
+    SDL_Event ev;
+
+    GsGpu_TitlePoll();
+    while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_EVENT_QUIT) {
+            exit(0);
+        }
+        if (PortInput_Hotkey(&ev)) { /* F1, START + SELECT, or what the settings window's list says */
+            Ui_Toggle();
+            continue;
+        }
+        if (Ui_Event(&ev)) { /* the settings window is open and used it (Esc closes it) */
+            continue;
+        }
+        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) {
+            exit(0);
+        }
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) {
+            smooth_motion_toggle();
+        }
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F11) {
+            GsDraw_FullscreenToggle();
+        }
+    }
+}
+
+void GsDraw_PictureSize(int windowW, int windowH, int *w, int *h) {
+    /* The picture keeps its shape whatever the window's: 4:3, or 16:9 in widescreen (the 512 x 448 buffer is not
+       square-pixelled: it always fills a 4:3 or 16:9 screen). */
+    float want = (float)Port_AspectMilli() / 1000.0f;
+    *w = windowW;
+    *h = windowH;
+    if ((float)windowW > (float)windowH * want) {
+        *w = (int)((float)windowH * want + 0.5f);
+    } else {
+        *h = (int)((float)windowW / want + 0.5f);
+    }
+}
+
+void GsDraw_FrameReset(void) {
+    int i;
+    for (i = 0; i < gsTargetCount; i++) {
+        gsTargets[i].draws = 0;
+    }
+    gsVertCount = 0;
+    gsVuVertCount = 0;
+    gsVuIdxCount = 0;
+    gsVuUniCount = 0;
+    gsDrawCount = 0;
+    gsAnchor = 0;
+    gsSkipped = 0;
+    gsNative = 0;
+}
+
 /* ------------------------------------------------------------------------------------------- the settings window
    F1 opens it (ui.cpp, Dear ImGui). What the user changes there reaches the renderer through these two: the
    scale, the effects switched off and the glow are shared state; the shape, the full screen and the display

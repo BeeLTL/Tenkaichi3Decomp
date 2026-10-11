@@ -112,7 +112,7 @@ typedef struct GsDraw {
 #define GS_TEXFMT_BC3 3
 
 /* The frame being recorded. A back end's frameEnd reads these, uploads the vertices, replays the list and
-   clears the counters for the next frame. */
+   clears them for the next frame with GsDraw_FrameReset. */
 extern GsDraw *gsDraws;
 extern uint32_t gsDrawCount;
 extern Vtx *gsVerts;            /* MAX_VERTS of them, malloc'd in GsGpu_Init */
@@ -239,5 +239,6 @@ extern GsBackend sGlBackend;     /* gs_gl.c */
 int GsDraw_TargetGet(uint32_t fbp, int create);
 
 void GsGpu_TitlePoll(void); /* gs_draw.c */
+void GsDraw_FrameReset(void); /* gs_draw.c: the frame was replayed: an empty list for the next one */
 
 #endif
