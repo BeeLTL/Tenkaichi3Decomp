@@ -89,6 +89,14 @@ class Bt3Settings {
     document.getElementById('settings-close').addEventListener('click', () => this.close());
     document.getElementById('fullscreen').addEventListener('click', () => this.fullscreen());
     document.addEventListener('keydown', (e) => this.onKey(e));
+    // The engine quits on Escape (a desktop program's rule, gs_draw.c GsDraw_PollEvents). A browser tab has no "quit",
+    // and Escape is how a page leaves full screen: it is kept from the game (caught on the way to the canvas), except
+    // while a binding is being taken, where Escape means "keep it".
+    stage.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || this.capturing) return;
+      e.stopPropagation();
+      if (document.fullscreenElement) document.exitFullscreen();
+    }, true);
     document.addEventListener('fullscreenchange', () => this.fitStage());
   }
 
