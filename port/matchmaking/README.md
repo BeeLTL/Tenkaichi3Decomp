@@ -88,6 +88,16 @@ Without the two secrets the Worker works as before, without a relay. The key nev
 handed a name and password that are good for three hours. Cloudflare's TURN is free for the first 1,000 GB a month
 (a match is about 50 MB an hour, and only matches that cannot connect directly use it).
 
+## A relay login only when a match needs one (from 0.1.29)
+
+A game of 0.1.29 or later gets no relay login with its room. The two games first try to reach each other directly;
+if they have not after four seconds, the host asks (`/v1/relay`, answered only once someone has joined), takes a
+relay address, adds it to the room, and the one who joined learns it by asking the room again (`/v1/poll`). Logins
+are then used by matches that need the relay, not by rooms: with a login for every room, the first day of quick
+match used up the day's 500 on searches that never played through the relay, and the relay was off for everyone
+until midnight UTC. An older game is still given its login with the room. `TURN_DAILY_MAX` (a plain variable)
+raises the day's count if it is ever reached again; what protects the bill is the measuring below, not that count.
+
 ## A ceiling on the relay's use
 
 Cloudflare has no spending limit for its TURN service (a budget alert only sends an e-mail, a day late), and a

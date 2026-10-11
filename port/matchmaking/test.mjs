@@ -146,6 +146,21 @@ rooms.clear();
     DB.prepare = realPrepare;
     check("two at once: the later one gives its room up and joins the earlier", second.role === "join" && second.code === first.code && rooms.size === 1);
 }
+// a relay login only when it is needed (0.1.29 and later)
+{
+    const later = await postCap("host", "192.0.2.120", { v: 3, rel: 129, name: "H", addrs: ["192.0.2.120:1"] });
+    check("a game that asks later gets no login with its room", typeof later.code === "string" && !later.turn && !later.noRelay);
+    check("... and none before anyone has joined", (await postCap("relay", "192.0.2.120", { code: later.code, key: later.key })).error === "bad request");
+    const jn = await postCap("join", "192.0.2.121", { v: 3, rel: 129, code: later.code, name: "J", addrs: ["192.0.2.121:1"] });
+    check("... nor for the one who joined", (await postCap("relay", "192.0.2.121", { code: later.code, key: jn.key })).error === "bad request");
+    const asked = await postCap("relay", "192.0.2.120", { code: later.code, key: later.key });
+    check("the host asks once someone has joined: answered (a login, or why not)", (asked.turn && typeof asked.turn.username === "string") || typeof asked.noRelay === "string");
+    await postCap("addrs", "192.0.2.120", { code: later.code, key: later.key, addrs: ["192.0.2.120:1", "relay=104.30.1.9:5000"] });
+    const again = await postCap("poll", "192.0.2.121", { code: later.code, key: jn.key });
+    check("the one who joined learns the relay address by its poll", again.peer.addrs.includes("relay=104.30.1.9:5000"));
+    const old = await postCap("host", "192.0.2.122", { v: 3, name: "H", addrs: ["192.0.2.122:1"] });
+    check("an older game is answered as before (a login or a reason with its room)", !!old.turn || typeof old.noRelay === "string");
+}
 // only the newest release
 {
     const strict = { DB, MIN_RELEASE: "129" };

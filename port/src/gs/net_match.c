@@ -37,6 +37,7 @@ static struct {
     SDL_Mutex *lock;
     SDL_Thread *thread;
     SDL_AtomicInt cancel, gen; /* gen: which search is the current one (a thread of an earlier one writes nothing) */
+    SDL_AtomicInt sockBusy;    /* the thread is talking to the relay on the match's socket: the lobby keeps off it */
     MatchStatus st;
     int role, sock, localPort, version;
     char code[8], name[20]; /* (role 3, a quick match: `code` is the queue's name until the service gives a room) */
@@ -418,7 +419,9 @@ again:
             sM.st.role = 2;
             sM.st.state = 3;
             SDL_UnlockMutex(sM.lock);
-            return 0;
+            json_str(answer, "code", sM.code, sizeof(sM.code));
+            json_str(answer, "key", key, sizeof(key));
+            goto joined;
         }
         if (SDL_strstr(answer, "\"role\":\"host\"") == NULL) {
             set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "Update available. Online servers are unreachable until you update." :
@@ -452,8 +455,8 @@ again:
             /* A relay address, if the service gives access to one: published with the others, for a player who
                cannot reach this one directly. The code is shown only after this, so nobody joins before. */
             char server[128], user[160], pass[160], relay[64];
-            if (SDL_getenv("BT3_RELAY_LOG") != NULL) {
-                char why[160] = "";
+            if (SDL_getenv("BT3_RELAY_LOG") != NULL && (SDL_strstr(answer, "\"turn\"") != NULL || SDL_strstr(answer, "noRelay") != NULL)) {
+                char why[160] = ""; /* (a service that hands a login out with the room: one that is asked later says nothing here) */
                 json_str(answer, "noRelay", why, sizeof(why));
                 fprintf(stderr, "relay: the service %s%s\n", SDL_strstr(answer, "\"turn\"") != NULL ? "gave access" : "gave no access: ", why);
             }
@@ -498,7 +501,50 @@ again:
                     sM.st.peerCount = st.peerCount;
                     sM.st.state = 3;
                     SDL_UnlockMutex(sM.lock);
-                    http_post("leave", body, answer, sizeof(answer)); /* the room has done its work: it is given up at once */
+                    if (relayAddr[0] != '\0' || SDL_getenv("BT3_NO_RELAY") != NULL) {
+                        http_post("leave", body, answer, sizeof(answer)); /* the room has done its work: it is given up at once */
+                        return 0;
+                    }
+                    /* No relay address yet (it is asked for only when it is needed). The lobby now tries the direct
+                       ways; it ends this search when the two are connected. If that has not happened in a few
+                       seconds, a login is asked for, the address is added to the room (the one who joined learns it
+                       by its poll), and the lobby is told to let the other player through. The room is kept until
+                       the lobby is done, so that the other side can still ask. */
+                    {
+                        int w, wait = SDL_getenv("BT3_RELAY_ONLY") != NULL ? 2 : 40;
+                        char server[128], user[160], pass[160], relay[64];
+                        for (w = 0; w < wait && !STOPPED(); w++) {
+                            SDL_Delay(100);
+                        }
+                        if (!STOPPED() && http_post("relay", body, answer, sizeof(answer))) {
+                            if (SDL_getenv("BT3_RELAY_LOG") != NULL) {
+                                char why[160] = "";
+                                json_str(answer, "noRelay", why, sizeof(why));
+                                fprintf(stderr, "relay: asked for when the direct ways stayed silent: the service %s%s\n",
+                                        SDL_strstr(answer, "\"turn\"") != NULL ? "gave access" : "gave no access: ", why);
+                            }
+                            if (json_str(answer, "server", server, sizeof(server)) && json_str(answer, "username", user, sizeof(user)) &&
+                                json_str(answer, "credential", pass, sizeof(pass)) && !STOPPED()) {
+                                int got;
+                                SDL_SetAtomicInt(&sM.sockBusy, 1);
+                                SDL_Delay(80); /* (the lobby is between two looks at the socket by then) */
+                                got = !STOPPED() && Relay_Allocate(sM.sock, server, user, pass, relay, sizeof(relay));
+                                SDL_SetAtomicInt(&sM.sockBusy, 0);
+                                if (got && !STOPPED()) {
+                                    char more[512];
+                                    SDL_snprintf(more, sizeof(more), "{\"code\":\"%s\",\"key\":\"%s\",\"addrs\":[%s,\"relay=%s\"]}", sM.code, key, addrs, relay);
+                                    http_post("addrs", more, answer, sizeof(answer));
+                                    SDL_LockMutex(sM.lock);
+                                    sM.st.relayGen++;
+                                    SDL_UnlockMutex(sM.lock);
+                                }
+                            }
+                        }
+                        for (w = 0; w < 250 && !STOPPED(); w++) { /* (the lobby gives up after 25 seconds at the latest) */
+                            SDL_Delay(100);
+                        }
+                    }
+                    http_post("leave", body, answer, sizeof(answer));
                     return 0;
                 }
                 if (SDL_strstr(answer, "no room") != NULL) {
@@ -541,6 +587,41 @@ again:
         sM.st.peerCount = st.peerCount;
         sM.st.state = 3;
         SDL_UnlockMutex(sM.lock);
+        json_str(answer, "key", key, sizeof(key));
+        goto joined;
+    }
+    return 0;
+joined:
+    /* The one who joined. If the host's direct addresses stay silent, the host asks for a relay address and adds it
+       to the room: asked for here every two seconds, from the third second on, until the lobby ends this search
+       (connected, or given up) or the address has come. */
+    if (key[0] != '\0' && sM.code[0] != '\0') {
+        MatchStatus st;
+        int round, w, known;
+        SDL_LockMutex(sM.lock);
+        known = sM.st.peerCount;
+        SDL_UnlockMutex(sM.lock);
+        SDL_snprintf(body, sizeof(body), "{\"code\":\"%s\",\"key\":\"%s\"}", sM.code, key);
+        for (round = 0; round < 11 && !STOPPED(); round++) {
+            for (w = 0; w < (round == 0 ? 30 : 20) && !STOPPED(); w++) {
+                SDL_Delay(100);
+            }
+            if (STOPPED() || !http_post("poll", body, answer, sizeof(answer))) {
+                continue;
+            }
+            if (SDL_strstr(answer, "no room") != NULL) {
+                break; /* (the host has given the room up: it is connected, or gone) */
+            }
+            SDL_memset(&st, 0, sizeof(st));
+            if (json_peer(answer, &st) && SDL_strstr(answer, "relay=") != NULL && st.peerCount != known && !STOPPED()) {
+                SDL_LockMutex(sM.lock);
+                SDL_memcpy(sM.st.peerAddr, st.peerAddr, sizeof(st.peerAddr));
+                sM.st.peerCount = st.peerCount;
+                sM.st.addrGen++;
+                SDL_UnlockMutex(sM.lock);
+                break;
+            }
+        }
     }
     return 0;
 }
@@ -669,6 +750,10 @@ void Match_QueuesAsk(int version) {
 /* Players waiting in queue i as last heard, -1 if not known. */
 int Match_QueueWaiting(int i) {
     return i >= 0 && i < MATCH_QUEUES ? SDL_GetAtomicInt(&sQueueCount[i]) - 1 : -1;
+}
+
+int Match_SocketBusy(void) {
+    return SDL_GetAtomicInt(&sM.sockBusy);
 }
 
 /* Where it stands. */

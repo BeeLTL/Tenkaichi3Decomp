@@ -1192,6 +1192,8 @@ static uint64_t sLobbyLast;
 static int sCodeMode, sCodeAddrs;
 static int sCodeRelay = -1; /* which of sCodeAddr is the host's relay address (the one who joins) */
 static int sCodeVia;        /* the match was reached through the relay (for the window) */
+static struct sockaddr_in sCodeSeen; /* the address the service saw the other player under (for the relay's permission) */
+static int sCodeSeenSet, sCodeGen, sCodeRelayGen; /* ... and which of the search's later news the lobby has taken in */
 
 int Port_LobbyRelayed(void) { return sCodeVia; }
 static struct sockaddr_in sCodeAddr[MATCH_ADDRS];
@@ -1274,6 +1276,8 @@ int Port_LobbyStartCode(int host, const char *code) {
     sLobbyRole = host ? 1 : 2;
     sCodeMode = 1;
     sCodeAddrs = 0;
+    sCodeSeenSet = 0;
+    sCodeGen = sCodeRelayGen = 0;
     sCodeText[0] = sCodeError[0] = '\0';
     sCodeLocalPort = ntohs(local.sin_port);
     sLobbyPort = sCodeLocalPort;
@@ -1314,6 +1318,59 @@ void Port_LobbyCancel(void) {
     sLobby = 0;
 }
 
+/* The other player's addresses as the matchmaking service gave them: where to knock, which of them is the host's
+   relay address, and whom this side's relay (if it holds one) lets through. Called again when they change. */
+static void lobby_take_addrs(const MatchStatus *st) {
+    int i;
+
+    sCodeAddrs = 0;
+    sCodeRelay = -1;
+    for (i = 0; i < st->peerCount && sCodeAddrs < MATCH_ADDRS; i++) {
+        char text[64], *colon;
+        const char *addr = st->peerAddr[i];
+        struct sockaddr_in *a = &sCodeAddr[sCodeAddrs];
+        memset(a, 0, sizeof(*a));
+        a->sin_family = AF_INET;
+        if (strncmp(addr, "seen=", 5) == 0) { /* the address the service saw the other player under: for the relay only */
+            if (inet_pton(AF_INET, addr + 5, &a->sin_addr) == 1) {
+                Relay_Permit(sSock, a);
+                sCodeSeen = *a;
+                sCodeSeenSet = 1;
+            }
+            continue;
+        }
+        if (strncmp(addr, "relay=", 6) == 0) { /* the host's relay address: tried when the direct ones stay silent */
+            addr += 6;
+            sCodeRelay = sCodeAddrs;
+        }
+        snprintf(text, sizeof(text), "%s", addr);
+        colon = strrchr(text, ':');
+        if (colon != NULL) {
+            *colon = '\0';
+            a->sin_port = htons((uint16_t)atoi(colon + 1));
+            if (inet_pton(AF_INET, text, &a->sin_addr) == 1 && a->sin_port != 0) {
+                Relay_Permit(sSock, a); /* (the host, if it holds a relay address: this player may come in through it) */
+                sCodeAddrs++;
+            } else if (sCodeRelay == sCodeAddrs) {
+                sCodeRelay = -1;
+            }
+        }
+    }
+}
+
+/* This side has got a relay address after the other player was known: he is let through it now. */
+static void lobby_permit_again(void) {
+    int i;
+    for (i = 0; i < sCodeAddrs; i++) {
+        if (i != sCodeRelay) {
+            Relay_Permit(sSock, &sCodeAddr[i]);
+        }
+    }
+    if (sCodeSeenSet) {
+        Relay_Permit(sSock, &sCodeSeen);
+    }
+}
+
 /* 0 idle, 1 still waiting, 2 the other player is there, -1 it cannot work (port in use, unknown address). */
 int Port_LobbyPoll(void) {
     uint8_t pkt[256];
@@ -1336,37 +1393,9 @@ int Port_LobbyPoll(void) {
             snprintf(sCodeError, sizeof(sCodeError), "%s", st.error);
             sLobby = -3;
         } else if (st.state == 3) {
-            sCodeAddrs = 0;
-            sCodeRelay = -1;
-            for (i = 0; i < st.peerCount && sCodeAddrs < MATCH_ADDRS; i++) {
-                char text[64], *colon;
-                const char *addr = st.peerAddr[i];
-                struct sockaddr_in *a = &sCodeAddr[sCodeAddrs];
-                memset(a, 0, sizeof(*a));
-                a->sin_family = AF_INET;
-                if (strncmp(addr, "seen=", 5) == 0) { /* the address the service saw the other player under: for the relay only */
-                    if (inet_pton(AF_INET, addr + 5, &a->sin_addr) == 1) {
-                        Relay_Permit(sSock, a);
-                    }
-                    continue;
-                }
-                if (strncmp(addr, "relay=", 6) == 0) { /* the host's relay address: tried when the direct ones stay silent */
-                    addr += 6;
-                    sCodeRelay = sCodeAddrs;
-                }
-                snprintf(text, sizeof(text), "%s", addr);
-                colon = strrchr(text, ':');
-                if (colon != NULL) {
-                    *colon = '\0';
-                    a->sin_port = htons((uint16_t)atoi(colon + 1));
-                    if (inet_pton(AF_INET, text, &a->sin_addr) == 1 && a->sin_port != 0) {
-                        Relay_Permit(sSock, a); /* (the host, if it holds a relay address: this player may come in through it) */
-                        sCodeAddrs++;
-                    } else if (sCodeRelay == sCodeAddrs) {
-                        sCodeRelay = -1;
-                    }
-                }
-            }
+            lobby_take_addrs(&st);
+            sCodeGen = st.addrGen;
+            sCodeRelayGen = st.relayGen;
             sCodeSince = now;
             sLobby = sCodeAddrs > 0 ? 1 : -4;
         }
@@ -1375,13 +1404,29 @@ int Port_LobbyPoll(void) {
     if (sLobby != 1) {
         return sLobby;
     }
+    if (sCodeMode) {
+        MatchStatus st;
+        if (Match_SocketBusy()) {
+            return sLobby; /* (the search's thread is getting a relay address on this socket: not touched meanwhile) */
+        }
+        Match_Poll(&st);
+        if (st.state == 3 && st.addrGen != sCodeGen) { /* the host's relay address has come: knocked at from now on */
+            sCodeGen = st.addrGen;
+            lobby_take_addrs(&st);
+        }
+        if (st.state == 3 && st.relayGen != sCodeRelayGen) { /* this side has a relay address now */
+            sCodeRelayGen = st.relayGen;
+            lobby_permit_again();
+        }
+    }
     if (sCodeMode && now - sLobbyLast > 200000000ull) {
         /* to every address the other player may be reached at: the one who joins greets, the host only knocks */
         uint32_t hello[3] = {MAGIC, T_HELLO, NET_VERSION}, punch[2] = {MAGIC, T_PUNCH};
         int i;
         for (i = 0; i < sCodeAddrs; i++) {
-            if (i == sCodeRelay ? now - sCodeSince < 3000000000ull && getenv("BT3_RELAY_ONLY") == NULL : sCodeRelay >= 0 && getenv("BT3_RELAY_ONLY") != NULL) {
-                continue; /* three seconds for the direct ways first (BT3_RELAY_ONLY: the relay at once, and nothing else) */
+            if (i == sCodeRelay ? now - sCodeSince < 3000000000ull && getenv("BT3_RELAY_ONLY") == NULL : getenv("BT3_RELAY_ONLY") != NULL) {
+                continue; /* three seconds for the direct ways first (BT3_RELAY_ONLY, testing: the relay at once, and
+                             nothing else, also while there is no relay address yet) */
             }
             if (sLobbyRole == 2) {
                 net_send(hello, sizeof(hello), &sCodeAddr[i]);
@@ -1390,8 +1435,9 @@ int Port_LobbyPoll(void) {
             }
         }
         sLobbyLast = now;
-        if (now - sCodeSince > 20000000000ull) {
-            sLobby = -4; /* twenty seconds of knocking: the routers do not let the two through to each other */
+        if (now - sCodeSince > 24000000000ull) {
+            sLobby = -4; /* 24 seconds of knocking (a relay address is asked for after four of them, see net_match.c):
+                            the two cannot reach each other */
             return sLobby;
         }
     } else if (!sCodeMode && sLobbyRole == 2 && now - sLobbyLast > 200000000ull) {

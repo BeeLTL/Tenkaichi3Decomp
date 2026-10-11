@@ -1775,3 +1775,25 @@ first run, or whatever the settings file said then). The same at the session's e
 state too. Now PORT_HOST, like the other things of plat_stub.c that are the player's and not the game's. Checked:
 before, the variable's address lies inside the ranges of the `.mem` list; after, outside; two copies still connect,
 reach a scripted battle and agree at tick 400; the regression replay passes. Not checked: on screen, by anyone.
+
+## The relay was off for everyone: a login was taken with every room (2026-10-11)
+
+A player with a VPN reported that quick match failed with "could not reach each other, directly or through the
+relay" while rooms with codes worked. My first reading (the VPN gives the one who joins no stable address) was
+wrong: he then said joining by code works too. A test that forced the relay showed the cause: the service
+answered "the day's relay logins are used up". The Worker handed a login out with every room, and since quick
+match every search that waits makes a room; the day's 500 were gone, and every pair that could not connect
+directly failed until midnight UTC. (My own tests of the day used some of them.)
+
+- **Now a login is asked for when a match needs it.** net_match.c: the host, once the other player is known, waits
+  four seconds for the lobby to connect (the lobby ends the search when it has); if not, it asks `/v1/relay`,
+  allocates on the match's socket (the lobby keeps off it meanwhile: `Match_SocketBusy`), adds `relay=` to the
+  room and raises `relayGen`, on which the lobby permits the other player's addresses again. The one who joined
+  asks the room every two seconds from the third on and takes the new address (`addrGen`). The room is kept until
+  the lobby is done. The knocking lasts 24 seconds instead of 20.
+- The Worker gives a game that sends `rel` >= 129 no login with its room; older games as before.
+- Checked against the Worker behind a local server (no relay key there): by code and by quick match, direct: the
+  two connect, `/v1/relay` is never asked, the room is left at once. With BT3_RELAY_ONLY: the host asks after the
+  direct ways stayed silent, is told why there is no relay, the one who joined asks the room eleven times, both
+  give up. The Worker's tests (7 new) pass. **Not checked: a relay address actually taken late and a match played
+  through it** (needs the Worker deployed with its key and logins left for the day).

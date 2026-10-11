@@ -13,6 +13,9 @@
 //   /v1/join   {v, code, name, addrs}  -> {key, you, peer: {name, addrs}}
 //   /v1/poll   {code, key}             -> {peer: {name, addrs} | null}     (the host asks until someone has joined)
 //   /v1/leave  {code, key}             -> {}
+//   /v1/relay  {code, key}             -> {turn} | {noRelay}   (the host, once someone has joined and the two did not
+//       reach each other directly: a relay login, asked for only then. A game that sends `rel` >= 129 gets none
+//       with its room; an older one does, as before. The one who joined learns the relay address by its poll.)
 //   /v1/quick  {v, name, addrs, queue, who, relay?}  -> {role: "join", code, key, you, peer} | {role: "host", code, key, you, turn?}
 //       quick match: the caller is put with whoever waits longest in `queue` ("S" single, "T" team, "D10" / "D15" /
 //       "D20" DP battle), or, if nobody waits, is given a room of its own in that queue and waits there as a host
@@ -338,6 +341,13 @@ async function makeRoom(env, ip, now, v, name, addrs, queue, who, wantRelay) {
     return null;
 }
 
+// A game of 0.1.29 or later asks for a relay login only when a match turns out to need one (/v1/relay), so it is
+// not given one with its room. (Given with every room, a day's logins were used up by searches that never played
+// through the relay: found on the first day of quick match, and the relay was off for everyone until midnight.)
+function asksLater(body) {
+    return Number.isInteger(body.rel) && body.rel >= 129;
+}
+
 export default {
     async fetch(request, env) {
         const url = new URL(request.url);
@@ -392,7 +402,7 @@ export default {
                 await env.DB.prepare("DELETE FROM used WHERE slot < ? AND slot > 0 AND what != 'relayoff'").bind(now - 2 * 86400).run().catch(() => {});
                 await env.DB.prepare("DELETE FROM used WHERE slot = 0 AND what LIKE 'ended:%' AND n < ?").bind(now - 2 * 86400).run().catch(() => {});
             }
-            const made = await makeRoom(env, ip, now, body.v, body.name, addrs, null, null, true);
+            const made = await makeRoom(env, ip, now, body.v, body.name, addrs, null, null, !asksLater(body));
             return made ? reply(made) : reply({ error: "busy" }, 503);
         }
         if (what === "queues") { // how many wait in each queue (for the window)
@@ -436,7 +446,7 @@ export default {
                 if (open && open.n >= ROOMS_PER_ADDRESS) {
                     return reply({ error: "busy" }, 429);
                 }
-                const made = await makeRoom(env, ip, now, body.v, body.name, addrs, queue, who, body.relay !== false);
+                const made = await makeRoom(env, ip, now, body.v, body.name, addrs, queue, who, body.relay !== false && !asksLater(body));
                 if (!made) {
                     return reply({ error: "busy" }, 503);
                 }
@@ -492,6 +502,14 @@ export default {
                 return reply({ peer: room.join_key !== null ? { name: room.join_name, addrs: shown(JSON.parse(room.join_addrs), true) } : null });
             }
             return reply({ peer: { name: room.host_name, addrs: shown(JSON.parse(room.host_addrs), JSON.parse(room.join_addrs).includes("same=1")) } });
+        }
+        if (what === "relay") { // the host: the two could not reach each other directly, a relay login is needed after all
+            if (!isHost || room.join_key === null) {
+                return reply({ error: "bad request" }, 400); // (only once someone has joined: nobody waits with a login)
+            }
+            const refused = await relayAllowed(env, ip, now);
+            const turn = refused ? { why: refused } : await turnAccess(env);
+            return reply(turn.server ? { turn } : { noRelay: turn.why });
         }
         if (what === "addrs") { // the host has found out more about how it can be reached
             const addrs = cleanAddrs(body.addrs);
