@@ -31,6 +31,10 @@ void main() {
     // The PS2 only divides by it; a GPU would clip everything as "behind the eye". The same point with w > 0:
     if (u.misc.w == 2.0 && s.w < 0.0) s = -s;
     gl_Position = vec4((s.x - u.misc.x * s.w) / 512.0 - s.w, s.w - (s.y - u.misc.y * s.w) / 512.0, s.z / u.misc.z, s.w);
+    // The vertex program hands the GS a whole-number depth (it converts s.z / s.w to an integer), and the GS
+    // compares whole numbers at every pixel (gs.frag). Here: that whole number plus a half, so that what is
+    // interpolated between vertices never sits on the edge between two whole numbers.
+    if (s.w > 0.0) gl_Position.z = (floor(s.z / s.w) + 0.5) / u.misc.z * s.w;
     if (u.misc.w == 2.0) {
         // programs 2a / 2b (flat-colour model for the shadow): their "screen" matrix is the shadow camera's, whose
         // depth is not kept inside the depth range; the PS2 just stores whatever integer comes out. Keep every

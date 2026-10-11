@@ -5,6 +5,7 @@ layout(location = 0) in vec4 vColor;
 layout(location = 1) in vec3 vStq;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outAux; // .r: the alpha byte exactly as the GS stores it (object numbers live there)
+layout(depth_less) out float gl_FragDepth; // (only ever made smaller: the early depth test stays valid)
 layout(set = 2, binding = 0) uniform sampler2D tex;
 layout(set = 2, binding = 1) uniform sampler2D dateTex; // a copy of the target's alpha bytes, for the destination alpha test
 layout(set = 3, binding = 0) uniform Params {
@@ -16,6 +17,7 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 rect;   // textured from a frame buffer (mode.x == 2): the uv range that may be sampled
     vec4 orig;   // a texture pack's replacement: xy = the original texture's size (2D art, misc.w < 0);
                  // z = the original's largest alpha
+    vec4 extra;  // x: the depth buffer's largest value (0xFFFFFF for 24 bits)
 } p;
 // 1.0 where v is not negative
 vec2 step2(vec2 v) { return vec2(v.x >= 0.0 ? 1.0 : 0.0, v.y >= 0.0 ? 1.0 : 0.0); }
@@ -113,6 +115,11 @@ void main() {
                     f == 4 ? abs(ag - p.misc.x) < tol : f == 5 ? ag >= ref : f == 6 ? ag > ref : abs(ag - p.misc.x) >= tol;
         if (!pass) discard;
     }
+    // The GS keeps and compares depth as whole numbers. Two surfaces in one plane (a waterfall on its rock, a
+    // decal on the ground) then tie and the later one is drawn over the earlier; with fractions kept, one of them
+    // wins by a hair, here this triangle and there that one, and it changes as the camera moves. (Not with 32
+    // bits: a float has no room for those.)
+    gl_FragDepth = p.extra.x > 0.0 && p.extra.x < 2.0e7 ? floor(gl_FragCoord.z * p.extra.x) / p.extra.x : gl_FragCoord.z;
     outColor = vec4(clamp(rgb, 0.0, 1.0), clamp(a, 0.0, 1.0));
     float ab = clamp(a * 128.0 / 255.0, 0.0, 1.0);
     if (p.misc.z != 0.0) ab = (float(int(ab * 255.0 + 0.5) | 128)) / 255.0; // FBA

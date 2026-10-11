@@ -61,6 +61,8 @@ typedef struct GsTarget {
 
 /* One recorded primitive. Everything inside is GS state or a handle a back end made (`tex`, `pipeline`); a
    back end replays the list by rebuilding its passes around the current target and calling the pipeline. */
+extern float gsZMax; /* gs_draw.c */
+
 typedef struct GsDraw {
     int vu;      /* 1, 2, 3: vertex programs' vertices (gsVuVerts, uniform block at `uniform`); 0: gsVerts */
     int uniform;

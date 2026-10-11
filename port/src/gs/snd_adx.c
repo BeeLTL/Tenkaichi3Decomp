@@ -232,7 +232,10 @@ int gPortMusicPercent = 100, gPortSePercent = 100; /* the settings overlay's vol
 
 static void apply_volume(Player *p) {
     if (p->stream != NULL) {
-        SDL_SetAudioStreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)gPortMusicPercent / 100.0f);
+        /* The game's first player is the music's ("BGM"); the others carry stage sounds, effects and the voices
+           ("MAP", "SE", "VIC"), which go with the other slider. */
+        int percent = p == &sPlayers[0] ? gPortMusicPercent : gPortSePercent;
+        SDL_SetAudioStreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)percent / 100.0f);
     }
 }
 
@@ -363,8 +366,8 @@ static void start(Player *p, const char *path) {
         return;
     }
     if (getenv("BT3_SND_VERBOSE") != NULL) {
-        fprintf(stderr, "adx: start %s: %u ch, %u Hz, %.1f s, loop %d, volume %d (0.1 dB), paused %d\n", path, p->channels, p->rate,
-                (double)p->total / (double)p->rate, p->loop, p->vol, p->paused);
+        fprintf(stderr, "adx: player %d: start %s: %u ch, %u Hz, %.1f s, loop %d, volume %d (0.1 dB), paused %d\n", (int)(p - sPlayers), path,
+                p->channels, p->rate, (double)p->total / (double)p->rate, p->loop, p->vol, p->paused);
     }
     p->stat = ADXT_STAT_PLAYING;
     apply_volume(p);

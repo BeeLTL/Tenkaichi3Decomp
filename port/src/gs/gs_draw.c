@@ -637,11 +637,14 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
     return 1;
 }
 
+float gsZMax = 16777215.0f; /* the depth buffer's largest value, as the frame's draws had it (the fragment shader rounds with it) */
+
 static void put(const GsVertex *v, float x, float y, float s, float t, float q, uint8_t r, uint8_t g, uint8_t b, uint8_t a, float zmax) {
     Vtx *o = &gsVerts[gsVertCount++];
     o->x = x;
     o->y = y;
-    o->z = (float)((double)v->z / zmax);
+    o->z = (float)(((double)v->z + 0.5) / zmax); /* (the whole number plus a half: see gs.frag, the vertex programs do the same) */
+    gsZMax = zmax;
     o->r = r; o->g = g; o->b = b; o->a = a;
     o->s = s; o->t = t; o->q = q;
 }
@@ -1261,6 +1264,7 @@ void GsGpu_GetSettings(PortVideo *v) {
     v->texPack = sTexPackOn;
     v->texPackCount = TexPack_Count();
     v->smooth2d = sSmooth2d;
+    v->vsync = Port_Setting("vsync", 0) != 0;
 }
 
 /* Applies what differs from the current state, all of it at once, and keeps it for the next run. */
@@ -1279,10 +1283,15 @@ void GsGpu_SetSettings(const PortVideo *v) {
     }
     gsFxOff = (unsigned)v->fxOff & 63;
     gsGlowPercent = v->glow;
-    gPortSePercent = v->effects;
-    if (v->music != now.music) {
+    if (v->music != now.music || v->effects != now.effects) { /* (the streams that are playing follow at once: music, voices) */
         gPortMusicPercent = v->music;
+        gPortSePercent = v->effects;
         Port_AudioRefresh();
+    }
+    if (v->vsync != now.vsync) { /* (whichever back end draws) */
+        GsGpu_Vsync(v->vsync);
+        GsGl_Vsync(v->vsync);
+        Port_SettingSave("vsync", v->vsync);
     }
     sDisplaySetting = v->display;
     sTexPackOn = v->texPack != 0;
@@ -3156,6 +3165,40 @@ static void interp_counts_restore(void) {
     }
 }
 
+/* A machine that cannot show the asked number of pictures in the time of a tick gets fewer of them, or none: each
+   in-between picture costs what a real one does, so asking for more than fit made the whole game run slowly (on
+   an integrated GPU at 8x and "240": a picture every 186 ms, the fight at an eighth of its speed), and every
+   in-between picture, its faults included, then stood for that long. sInterpCostNs: what showing one picture
+   takes, smoothed; sInterpCap: the most pictures a 33 ms tick may have now (8, 4, 2 or 1). */
+static uint64_t sInterpCostNs;
+static int sInterpCap = 8;
+
+static void interp_cost(uint64_t ns) {
+    static int said;
+    int was = sInterpCap;
+
+    if (ns > 100000000ull) { /* (one long pause, a load or a stall, does not count for more than this) */
+        ns = 100000000ull;
+    }
+    sInterpCostNs = sInterpCostNs == 0 ? ns : (sInterpCostNs * 7 + ns) / 8;
+    if (getenv("BT3_INTERP_NOCAP") != NULL) {
+        return;
+    }
+    /* down when the pictures take more than 70% of the tick (the rest is the game's own work), up again when one
+       step more would take less than half of it */
+    while (sInterpCap > 1 && sInterpCostNs * (uint64_t)sInterpCap > 33366700ull * 7 / 10) {
+        sInterpCap /= 2;
+    }
+    if (sInterpCap == was && sInterpCap < 8 && sInterpCostNs * (uint64_t)sInterpCap * 2 < 33366700ull / 2) {
+        sInterpCap *= 2;
+    }
+    if (sInterpCap < was && sInterpCap < interp_steps() && !said) {
+        said = 1;
+        fprintf(stderr, "bt3: smooth motion: this machine shows a picture in %.1f ms; fewer in-between pictures are shown while that lasts\n",
+                (double)sInterpCostNs / 1000000.0);
+    }
+}
+
 /* Shows picture `step` of the tick's sInterpSteps: the list replayed `step / steps` of the way from the previous
    tick; the last one is the tick itself. The recorded list has to be in place (interp_counts_restore). */
 static void interp_show(int step) {
@@ -3175,14 +3218,22 @@ static void interp_show(int step) {
             gsVerts = sInterpBlendVerts;
         }
         gsVuUni = sInterpBlend;
-        sBackend->frameEnd();
+        {
+            uint64_t t0 = gpu_now();
+            sBackend->frameEnd();
+            interp_cost(gpu_now() - t0);
+        }
         gsVuUni = real;
         gsVerts = realVerts;
         interp_present_log('B');
         gInterpShown++;
     } else {
         interp_remember(); /* (only now: the in-between pictures were built from the previous tick's copy) */
-        sBackend->frameEnd();
+        {
+            uint64_t t0 = gpu_now();
+            sBackend->frameEnd();
+            interp_cost(gpu_now() - t0);
+        }
         interp_present_log('R');
         scale_apply();
     }
@@ -3287,7 +3338,7 @@ void GsGpu_FrameEnd(void) {
             unsigned blanks = gPortVBlanks - sInterpLastBlank;
             sInterpLastBlank = gPortVBlanks;
             blanks = blanks < 1 ? 1 : blanks > 2 ? 2 : blanks;
-            sInterpSteps = interp_steps() * (int)blanks / 2;
+            sInterpSteps = (interp_steps() < sInterpCap ? interp_steps() : sInterpCap) * (int)blanks / 2;
             sInterpTickNs = (uint64_t)blanks * 16683350ull;
         }
         if (gsInterp > 0) {
@@ -3329,11 +3380,14 @@ void GsGpu_FrameEnd(void) {
                 gInterpPaired = gInterpUnpaired = gInterpCamera = gInterpTris = gInterpTrisBlended = 0;
             }
         } else {
+            uint64_t t1;
             if (gsInterp > 0) {
                 interp_remember();
                 gInterpSkipped++;
             }
+            t1 = gpu_now();
             sBackend->frameEnd();
+            interp_cost(gpu_now() - t1);
             interp_present_log('S');
             scale_apply();
         }

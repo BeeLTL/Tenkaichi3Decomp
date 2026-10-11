@@ -141,6 +141,8 @@ int PortInput_Hotkey(const SDL_Event *ev) {
     }
     return 0;
 }
+/* The settings window closed, or its exit question was answered, with a controller button: that press is not the game's. */
+void PortInput_Swallow(void) { sSwallow = 2; }
 void PortInput_ResetDefaults(int player) { pthread_once(&sLoadOnce, load); defaults(player); }
 
 void PortInput_Save(void) {
@@ -395,12 +397,19 @@ int Port_PadRead(int socket, unsigned char *data) {
     pthread_once(&sLoadOnce, load);
     pads_refresh();
     if (sSwallow) { /* the buttons that opened or closed the settings window are not the game's (START would pause) */
-        int k, held = 0;
+        int k, b, held = 0;
+        for (k = 0; k < MAX_PADS && sSwallow == 2; k++) { /* (2: whichever button it was) */
+            for (b = 0; sOpen[k].pad != NULL && b < SDL_GAMEPAD_BUTTON_COUNT; b++) {
+                if (SDL_GetGamepadButton(sOpen[k].pad, (SDL_GamepadButton)b)) {
+                    held = 2;
+                }
+            }
+        }
         for (k = 0; k < MAX_PADS; k++) {
             if (sOpen[k].pad != NULL &&
                 (SDL_GetGamepadButton(sOpen[k].pad, SDL_GAMEPAD_BUTTON_START) || SDL_GetGamepadButton(sOpen[k].pad, SDL_GAMEPAD_BUTTON_BACK) ||
                  (sOverlayPad >= 0 && sOverlayPad < SDL_GAMEPAD_BUTTON_COUNT && SDL_GetGamepadButton(sOpen[k].pad, (SDL_GamepadButton)sOverlayPad)))) {
-                held = 1;
+                held = held != 0 ? held : 1;
             }
         }
         sSwallow = held;

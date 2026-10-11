@@ -1454,3 +1454,68 @@ was, and there is no way back from the controller yet (the user bound SELECT alo
 
 Checked by the user on screen (Linux): START + SELECT opens and closes it, pressed together. Not checked by
 anyone: Windows; a second controller; the online screen with a controller.
+
+## A day of reports: the window with a controller, leaving the game, volumes, V-sync, slow machines, depth (2026-10-11)
+
+**The settings window.**
+- **Esc asks first.** Outside the window Esc closed the game at once; it now puts up "Close the game?" (Exit /
+  Cancel, Cancel has the focus, Esc again takes it away). The window's own close button still closes at once.
+  `Ui_QuitAsk` (ui.cpp), called from both renderers' event loops.
+- **"Exit game"** on a last line of the window that every tab shows; the same question.
+- **Worked with a controller:** Circle / B closes the window (and the online screen, as its close button),
+  L1 / R1 go to the neighbouring tab. Any connected controller works it, one plugged in later too (the library
+  only took the first one found at start: `ImGui_ImplSDL3_SetGamepadMode(AutoAll)`, and added / removed events
+  are passed on while the window is closed).
+- **A binding taken from a controller pressed its own row again:** the button that became the binding was also
+  "choose" for the row it was bound in, so the row waited for a button a second time (how the user bound SELECT
+  alone without meaning to). The controller does not work the window while a binding is waited for, nor until
+  its buttons are let go (`sPadHold`). A binding waited for from a controller ends by itself after five seconds.
+- The button that closed the window or answered the question does not reach the game (`PortInput_Swallow`).
+
+**Music turned the voices down.** Every ADX stream took the Music slider: the songs, but also the voices, the
+stage's background sound and the streamed effects, while "Sound effects and voices" only reached the short
+effects. The game has one player per kind (`BGM`, `MAP`, `SE`, `SE`, `VIC`, `VIC`, docs/game_overview.md); seen
+with BT3_SND_VERBOSE on a recorded session: intro, menu and fight songs start on player 0, the stage's sound on
+1, effects on 2, a fighter's and the announcer's lines on 4 and 5. Player 0 takes Music, the others the other
+slider, and moving that one reaches the streams that are playing at once. Not listened to by me.
+
+**V-sync** (F1, Video; off by default, setting `vsync`). The port shows a picture without waiting for the display
+(MAILBOX, else IMMEDIATE, which tears: some Windows drivers, the OpenGL renderer). The option asks for the wait.
+Checked windowless: the setting switches the mode ("present mode vsync"), the game runs the same. Not checked: on
+a display, by anyone.
+
+**Smooth motion on a machine that cannot keep up.** Reported: "the fighters go 2D and glitch". The order of the
+pictures does not change when a machine is slow (looked for and not found: the tick's real picture is always
+shown and remembered). What happens: every in-between picture costs what a real one does, and they were shown
+whatever they cost, so the game itself slowed down: on an integrated GPU at 8x and "240", a picture every 186 ms.
+An in-between picture's faults (a part left behind, a blend of two far poses) are on screen for a few
+milliseconds on a machine that keeps up, and for 186 there. Now `interp_cost` (gs_draw.c) measures what showing
+a picture takes and allows as many per tick as fit in 70% of it (8, 4, 2 or none; more again when one step more
+would take under half). Measured on that GPU with a recorded session: at 8x / 240 the in-between pictures stop
+after the first tick (the fight then at about half speed: 8x is too much for it without them too); at 2x / 60
+every tick keeps its in-between picture and the limit never acts. BT3_INTERP_NOCAP=1 switches it off. The
+faults themselves are not fixed by this.
+
+**A triangle of a waterfall missing, another one as the camera moves** (Ruined Earth, found by the user). The lower
+fall is drawn by the game itself (vertices it transforms, whole-number depth) in the plane of a rock face that a
+vertex program draws. On the PS2 both are whole numbers at every pixel: they tie, and the fall, drawn later,
+passes the GEQUAL test. Here the rock's depth kept its fractions, so the rock was a hair in front for this
+triangle or that one. Rounding only at the vertices (first try) was not enough: between them the fractions were
+back, the triangle came back with the camera's movement and other stage textures flickered (found by the user).
+Now as the GS does it: gs.frag writes the depth rounded down to a whole number (`extra.x` = the depth buffer's
+largest value; not for 32 bits), and every vertex hands over its whole number plus a half (vu0 / vu4 / vu6.vert,
+`put` in gs_draw.c) so that nothing interpolated sits on the edge between two. Checked on the user's recording,
+windowless at 2x: the fall is whole in 57 samples of the stretch where the camera moves, and against the build
+before, the only pixels that differ in the mapped frame are the repaired triangle. The user, on screen: "looks
+like it's fixed". Not measured: the cost (the shader writes depth; declared `depth_less`, which the OpenGL 3.3 renderer
+has not and drops).
+
+**Not a fault: a glow cut in a straight line by the ground.** An explosive wave or a charge on the ground tints
+the scenery up to a line at the fighter's feet; in the air there is no line. The tint is one flat, camera-facing
+picture at the fighter's depth (seen with the new BT3_GPU_DUMP: six vertices of one depth, drawn with the depth
+test on), and ground nearer than the fighter hides it. PCSX2 shows the same (checked by the user).
+
+**Tools.** `BT3_GPU_DUMP=<frame>:<n>` prints every vertex of the frame's draw n (gs_gpu.c). A recorded session
+(BT3_PAD_PLAY) replayed with `BT3_UNCAPPED=1` gave the same pictures as at real speed (two frames compared
+byte for byte) and reaches a fight in six seconds: with BT3_GPU_CUT that makes a search for "the draw that
+paints this" a matter of minutes.

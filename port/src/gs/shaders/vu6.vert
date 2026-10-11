@@ -26,6 +26,10 @@ void main() {
     vec4 s = u.screen * p;
     vec2 st = ((u.shadowCam * p).xy * u.scale.x + 1.0) * 0.5;
     gl_Position = vec4((s.x - u.misc.x * s.w) / 512.0 - s.w, s.w - (s.y - u.misc.y * s.w) / 512.0, s.z / u.misc.z, s.w);
+    // The vertex program hands the GS a whole-number depth (it converts s.z / s.w to an integer), and the GS
+    // compares whole numbers at every pixel (gs.frag). Here: that whole number plus a half, so that what is
+    // interpolated between vertices never sits on the edge between two whole numbers.
+    if (s.w > 0.0) gl_Position.z = (floor(s.z / s.w) + 0.5) / u.misc.z * s.w;
     vColor = clamp(floor(inColor), 0.0, 255.0) / 255.0;
     vStq = vec3(st * u.texScale.xy, 1.0);
 }

@@ -60,6 +60,12 @@ static bool sReady, sOpen;
 static bool sNet;                              // the open window is the online screen (Dragon Net Battle), not the settings
 static int sForceTab = -1;                     // BT3_UI_OPEN=<tab>: open at start on that tab (testing)
 static int sCapKind, sCapPlayer, sCapAction;   // waiting for a key (1) or a controller button (2) to bind
+static Uint64 sCapUntil;                       // ... until then: a controller has no button that is not a binding, so the wait ends by itself
+static bool sQuit;                             // the question before the game closes is up
+static bool sQuitNo;                           // ... and Esc answered it: no
+static bool sPadHold;                          // the controller does not work the window: a binding is waited for, or its button is still down
+static int sTab;                               // the settings tab that is open (the shoulder buttons go to its neighbours)
+static bool sPadTab;                           // the shoulder buttons changed the tab this frame
 static SDL_GPUDevice *sDevice;
 
 /* Name strips (gamedata/stages/names.rgba and gamedata/songs/names.rgba): the names of the stages and tracks added
@@ -265,6 +271,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
             return 0;
         }
     }
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll, NULL, 0); // any connected controller works the window
     sDevice = device;
     sReady = true;
     load_strips(); /* the stage- and song-name overlays; the ready flags stay 0 if there is no strip */
@@ -274,10 +281,24 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
             sForceTab = -1;
             gPortNetMenuRequest = 1;
         }
+        if (sForceTab == 8) { // testing: the exit question over the settings
+            sForceTab = -1;
+            sQuit = true;
+        }
         sOpen = true;
         gPortOverlayOpen = 1;
     }
     return 1;
+}
+
+// The game gets nothing from keyboard or controller while the window or the exit question is up; and the button
+// that closed either is not the game's.
+static void input_owner(void) {
+    int up = sOpen || sQuit;
+    if (gPortOverlayOpen && !up) {
+        PortInput_Swallow();
+    }
+    gPortOverlayOpen = up;
 }
 
 static void set_open(bool open) {
@@ -285,7 +306,67 @@ static void set_open(bool open) {
     sNet = false;
     sCapKind = 0;
     gPortInputCapture = 0;
-    gPortOverlayOpen = open;
+    input_owner();
+}
+
+static void capture(int kind, int player, int action) {
+    sCapKind = kind; sCapPlayer = player; sCapAction = action; gPortInputCapture = 1;
+    sCapUntil = SDL_GetTicks() + 5000;
+    sPadHold = true;
+}
+
+// A controller button pressed in the window (not while it waits for a binding, a list is open or a field is edited).
+static bool pad_pressed(ImGuiKey key) {
+    return sCapKind == 0 && !sPadHold && !sQuit && !ImGui::IsAnyItemActive() &&
+           !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) && ImGui::IsKeyPressed(key, false);
+}
+
+int Ui_QuitAsk(void) {
+    if (!sReady) {
+        return 0;
+    }
+    sQuit = true;
+    input_owner();
+    return 1;
+}
+
+static void build_quit(void) {
+    ImGuiIO &io = ImGui::GetIO();
+    bool stay = sQuitNo;
+
+    sQuitNo = false;
+    if (!ImGui::IsPopupOpen("Exit game")) {
+        ImGui::OpenPopup("Exit game");
+    }
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Exit game", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+        static const char *const kAsk = "Close the game? Progress that was not saved is lost.";
+        // the two buttons under the middle of the question (the window is as wide as its text)
+        float line = ImGui::CalcTextSize(kAsk).x, pair = 140.0f * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::TextUnformatted(kAsk);
+        ImGui::Spacing();
+        if (line > pair) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (line - pair) * 0.5f);
+        }
+        if (ImGui::Button("Exit", ImVec2(140.0f, 0.0f))) {
+            exit(0);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(140.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            stay = true;
+        }
+        if (ImGui::IsWindowAppearing()) {
+            ImGui::SetItemDefaultFocus(); // (on Cancel: a second press of the same button does not close the game)
+        }
+        if (stay) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (stay) {
+        sQuit = false;
+        input_owner();
+    }
 }
 
 // Dragon Net Battle: the screen behind the main menu's entry. For now only its shape: what a player fills in to
@@ -312,6 +393,9 @@ static void build_net(void) {
 
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+    if (pad_pressed(ImGuiKey_GamepadFaceRight)) { // Circle / B: out of the window, as its close button
+        open = false;
+    }
     if (ImGui::Begin("Dragon Net Battle", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextWrapped("Fight a player on another computer. One of you hosts, the other joins with the host's address.");
         ImGui::Spacing();
@@ -506,7 +590,23 @@ static void bind(int value) {
 }
 
 int Ui_Event(const SDL_Event *ev) {
-    if (!sReady || !sOpen) {
+    if (!sReady) {
+        return 0;
+    }
+    if (ev->type == SDL_EVENT_GAMEPAD_ADDED || ev->type == SDL_EVENT_GAMEPAD_REMOVED) { // (also while it is closed: its list of controllers)
+        ImGui_ImplSDL3_ProcessEvent(ev);
+        return 0;
+    }
+    if (sQuit) { // the exit question: Esc again takes it away; the rest is the question's
+        if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode == SDL_SCANCODE_ESCAPE) {
+            sQuitNo = sQuitNo || !ev->key.repeat; // (taken away where it is drawn)
+            return 1;
+        }
+        ImGui_ImplSDL3_ProcessEvent(ev);
+        return ev->type == SDL_EVENT_KEY_DOWN || ev->type == SDL_EVENT_KEY_UP || ev->type == SDL_EVENT_TEXT_INPUT ||
+               ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP || ev->type == SDL_EVENT_MOUSE_WHEEL;
+    }
+    if (!sOpen) {
         return 0;
     }
     if (sCapKind != 0) { // the next key or button is the binding; Esc leaves it as it was, Delete clears it
@@ -559,7 +659,11 @@ static const char *pad_source_name(int src) {
 
 static bool tab(const char *label, int index) {
     ImGuiTabItemFlags flags = sForceTab == index ? ImGuiTabItemFlags_SetSelected : 0;
-    return ImGui::BeginTabItem(label, NULL, flags);
+    bool on = ImGui::BeginTabItem(label, NULL, flags);
+    if (on && sForceTab < 0) {
+        sTab = index;
+    }
+    return on;
 }
 
 static void video_tab(PortVideo &v) {
@@ -596,6 +700,13 @@ static void video_tab(PortVideo &v) {
                           "No difference at 1x.");
     bool full = v.fullscreen != 0;
     if (ImGui::Checkbox("Full screen", &full)) { v.fullscreen = full; }
+    {
+        bool vs = v.vsync != 0;
+        if (ImGui::Checkbox("V-sync", &vs)) { v.vsync = vs; }
+        ImGui::SetItemTooltip("Each picture waits for the display's refresh. Turn it on if the picture tears.\n"
+                              "Off is the default: it adds a little delay, and the game slows down if\n"
+                              "Smooth motion shows more pictures a second than the display can.");
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("(F11)");
     SDL_DisplayID *displays = SDL_GetDisplays(&count);
@@ -688,7 +799,7 @@ static void effects_tab(PortVideo &v) {
 static void audio_tab(PortVideo &v) {
     ImGui::SliderInt("Music", &v.music, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
     ImGui::SliderInt("Sound effects and voices", &v.effects, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
-    ImGui::SetItemTooltip("Takes effect with the next sound that starts.");
+    ImGui::SetItemTooltip("Voices and stage sounds follow at once; a sound effect with the next one that starts.");
 }
 
 // Cheats. "Unlock everything" is the game's own leftover debug function (Save_UnlockAll, which nothing in the game
@@ -762,7 +873,8 @@ static void controls_tab(void) {
         PortInput_ResetDefaults(player);
         PortInput_Save();
     }
-    ImGui::TextDisabled("Click a binding, then press the new key or button. Esc keeps it, Delete clears it.");
+    ImGui::TextDisabled("Choose a binding, then press the new key or button. Esc keeps it, Delete clears it;");
+    ImGui::TextDisabled("with a controller, press nothing for five seconds to keep it.");
     if (ImGui::BeginTable("bindings", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV,
                           ImVec2(0.0f, ImGui::GetContentRegionAvail().y))) {
         ImGui::TableSetupScrollFreeze(0, 1);
@@ -781,12 +893,12 @@ static void controls_tab(void) {
             ImGui::TableNextColumn();
             snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : key > 0 ? SDL_GetScancodeName((SDL_Scancode)key) : "-", a);
             if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
-                sCapKind = 1; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+                capture(1, player, a);
             }
             ImGui::TableNextColumn();
             snprintf(label, sizeof(label), "%s##p%d", waitPad ? "press a button..." : pad >= 0 ? pad_source_name(pad) : "START + SELECT", a);
             if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
-                sCapKind = 2; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+                capture(2, player, a);
             }
         }
         for (int a = 0; a < PORT_ACTIONS; a++) {
@@ -799,13 +911,13 @@ static void controls_tab(void) {
             ImGui::TableNextColumn();
             snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : keys[a] > 0 ? SDL_GetScancodeName((SDL_Scancode)keys[a]) : "-", a);
             if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
-                sCapKind = 1; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+                capture(1, player, a);
             }
             ImGui::TableNextColumn();
             if (a < PORT_PAD_BUTTONS) {
                 snprintf(label, sizeof(label), "%s##p%d", waitPad ? "press a button..." : pad_source_name(pads[a]), a);
                 if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
-                    sCapKind = 2; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+                    capture(2, player, a);
                 }
             } else {
                 ImGui::AlignTextToFramePadding();
@@ -823,9 +935,22 @@ static void build(void) {
 
     GsGpu_GetSettings(&v);
     was = v;
+    if (sCapKind == 2 && SDL_GetTicks() > sCapUntil) { // nothing was pressed: the binding stays
+        sCapKind = 0;
+        gPortInputCapture = 0;
+    }
+    if (pad_pressed(ImGuiKey_GamepadFaceRight)) { // Circle / B: out of the window
+        open = false;
+    }
+    if (sForceTab < 0 && (pad_pressed(ImGuiKey_GamepadL1) || pad_pressed(ImGuiKey_GamepadR1))) {
+        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 4 : 1)) % 5;
+        sPadTab = true;
+    }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640.0f, 560.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(640.0f, 600.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Settings", &open, ImGuiWindowFlags_NoCollapse)) {
+        // the tabs in a region of their own, above a last line that is always there
+        ImGui::BeginChild("body", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y), ImGuiChildFlags_NavFlattened);
         if (ImGui::BeginTabBar("tabs")) {
             if (tab("Video", 0)) { video_tab(v); ImGui::EndTabItem(); }
             if (tab("Effects", 1)) { effects_tab(v); ImGui::EndTabItem(); }
@@ -864,8 +989,21 @@ static void build(void) {
             if (tab("Cheats", 4)) { cheats_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
-        if (ImGui::GetFrameCount() > 3) {
+        ImGui::EndChild();
+        if (sPadTab) { // (a tab chosen with the shoulder buttons)
+            sPadTab = false;
+            sTab = sForceTab;
             sForceTab = -1;
+        } else if (ImGui::GetFrameCount() > 3) {
+            sForceTab = -1;
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Exit game")) {
+            sQuit = true;
+        }
+        if ((io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("D-pad: move   Cross / A: choose   Circle / B: back   L1 / R1: tab");
         }
     }
     ImGui::End();
@@ -1053,8 +1191,26 @@ static bool frame_build(void) {
     bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !notice && !overlay && !meter && !names)) {
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names)) {
         return false;
+    }
+    if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
+        int count = 0;
+        SDL_JoystickID *ids = SDL_GetGamepads(&count);
+        bool held = false;
+        for (int i = 0; i < count; i++) {
+            SDL_Gamepad *g = SDL_GetGamepadFromID(ids[i]);
+            for (int b = 0; g != NULL && b < SDL_GAMEPAD_BUTTON_COUNT; b++) {
+                held = held || SDL_GetGamepadButton(g, (SDL_GamepadButton)b);
+            }
+        }
+        SDL_free(ids);
+        sPadHold = held;
+    }
+    if (sPadHold) { // (the button that becomes the binding would also press the row it is bound in)
+        ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+    } else {
+        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     }
     sBuilt = true;
     if (sGL) {
@@ -1070,6 +1226,9 @@ static bool frame_build(void) {
         } else {
             build();
         }
+    }
+    if (sQuit) {
+        build_quit();
     }
     if (meter) {
         meter_draw();
