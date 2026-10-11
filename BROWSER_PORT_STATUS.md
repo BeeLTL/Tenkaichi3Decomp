@@ -293,6 +293,68 @@ the opening movie (MPEG-2 through `plat_mpeg2.c`, read on demand). Module instan
 started without a click, so the browser may keep audio suspended), input, the title screen and menus, a battle,
 frame rate, saves.
 
+### CPU investigation and the WebGL 2 reference (2026-10-11) — measured
+**Method** (`port/tests/bench/bench.js`, reproducible): the game's attract-demo battle (`BT3_DEMO=1`; the random seed is
+fixed in `plat_sys.c`, no input) in Chrome 154.0.8037.98, headless, fresh throwaway profile, through the DevTools
+protocol. GPU: ANGLE on Direct3D 11, NVIDIA GeForce RTX 5070 Ti (headless Chrome uses the real GPU); CPU AMD Ryzen 7
+7700; 31 GB; Windows 11. `BT3_FRAME_LOG=1` gives one line per frame from the port's own timing point (`gs_core.c`):
+**work** (the frame without the vertical-blank wait) = **game** code + display **list** (GS front end, VU1, recording,
+of which **submit** = ending and submitting the frame to WebGL). Window: frames 300-2100 (1800 fight frames, 60 s,
+after 300 warm-up frames of loading). Every run also hashes the fight trace (`BT3_TRACE=60`: health, positions as float
+bits, clock): runs are identical (hash `8ad198bf58dbed33` in every run of the PS2-float build). Budget: 33.4 ms per
+fight frame (30/s). The browser held 30.0 frames/s (2.00 vertical blanks per frame) in every run.
+
+```
+python port/web/devserver.py --port 8080 --mount gamedata=C:/project/Tenkaichi3Web/gamedata
+node port/tests/bench/bench.js --label <name> --headless --from 300 --to 2100 [--profile] [--url ...] [--query gldebug=1]
+```
+
+| run | build | work mean | p50 | p95 | p99 | max | >33.4 ms | game mean | game p95 | list mean | submit mean | trace |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| base_r1 | original (page log in frame; getExtension per draw) | 17.01 | 18.14 | 21.82 | 24.78 | 56.45 | 6/1800 | 5.32 | 8.22 | 11.69 | 10.13 | 8ad198bf |
+| base_r2 |  | 16.83 | 18.05 | 21.52 | 25.04 | 47.35 | 2/1800 | 5.24 | 8.16 | 11.58 | 10.02 | 8ad198bf |
+| log_r1 | + page log out of the frame (ccdd15b) | 14.27 | 14.13 | 19.55 | 23.00 | 29.54 | 0/1800 | 2.51 | 6.72 | 11.76 | 10.18 | 8ad198bf |
+| log_r2 |  | 14.32 | 14.06 | 19.89 | 24.16 | 45.97 | 4/1800 | 2.58 | 6.99 | 11.74 | 10.19 | 8ad198bf |
+| ext_r1 | + extension objects cached (4f4787e) | 11.49 | 11.35 | 14.55 | 17.38 | 50.40 | 2/1800 | 2.30 | 3.10 | 9.19 | 7.61 | 8ad198bf |
+| ext_r2 |  | 11.61 | 11.39 | 14.63 | 20.61 | 80.08 | 4/1800 | 2.38 | 3.17 | 9.23 | 7.67 | 8ad198bf |
+| dclut_r1 | + WebGL 0x502 fix (02a52f3) = **current** | 11.61 | 11.49 | 14.64 | 18.35 | 40.24 | 2/1800 | 2.34 | 3.11 | 9.27 | 7.69 | 8ad198bf |
+| dclut_r2 |  | 11.55 | 11.47 | 14.53 | 18.43 | 45.70 | 1/1800 | 2.34 | 3.15 | 9.21 | 7.64 | 8ad198bf |
+| hf_r1 | diagnosis only: host IEEE floats (NOT the PS2's arithmetic) | 11.25 | 11.12 | 14.49 | 19.08 | 44.30 | 2/1800 | 1.98 | 2.75 | 9.27 | 7.69 | 590203ae |
+| hf_r2 |  | 11.21 | 11.12 | 14.13 | 16.87 | 45.81 | 2/1800 | 1.94 | 2.64 | 9.27 | 7.70 | 590203ae |
+
+(milliseconds; "max" and ">33.4 ms" are single frames: 1-6 of 1800 per run, all in `list`/`submit`, not examined yet)
+
+**Findings**
+- A correction to an earlier statement: "game code 20-38 ms" came from the port's `slow:` lines, which are printed only
+  for frames over budget (a biased sample). Measured over every frame, the original build's game code was 5.3 ms.
+- **The page's own log was half of the "game code"**: printf lines arrive inside the frame and were written to the DOM
+  and console at once (profile: `log` 11.6 % of all CPU). Queued and painted 4x a second: game 5.3 -> 2.5 ms.
+- **`getExtension` per draw** in `web_gl.c` (profile: 7.7 % of all CPU): cached; submit 10.2 -> 7.6 ms.
+- **PS2 float model: about 0.36 ms per frame** (game 2.32 -> 1.96 ms with host floats in the `hf` diagnostic variant;
+  its fight diverges, as expected, but repeats exactly between its own runs). About 15 % of the game code.
+- **Pointer-cast emulation: a full A/B is not possible.** Without `-sEMULATE_FUNCTION_POINTER_CASTS` the battle traps in
+  `BtlTask_Init` (the battle's task system calls every task callback through one pointer type), so a battle cannot run
+  without it. Measured bound: the emulation's thunks take 0.1 % of all CPU in the fight (about 0.03 ms per frame); the
+  widening of arguments at each indirect call site is inside the callers and not separable in the profile.
+  **Not verified: that its behaviour equals the native ABI.** That needs the native build's fight trace of the same
+  demo (a native build needs MSYS2 or Docker here; neither is available yet). Kept, since without it nothing runs.
+- Profile of the current build (fight window, 200 us sampling): 75 % idle; of the busy time the largest parts are
+  WebGL's own work (`bufferSubData` 3.1 % of all, binds, draws) and the JS<->wasm transitions (2.2 %), then the game
+  and the renderer's front end (about 10 %), the PS2 float routines (3.0 %).
+- **What is left is the WebGL submission: 7.7 ms of the 11.6 ms** (natively, per the repository's notes: Vulkan 1.7 ms,
+  OpenGL 3.7 ms, measured on other CPUs). Game code 2.3 ms (natively about 1.5 ms on another CPU; no native build here).
+
+**WebGL 2 errors (0x502) — fixed, verified**
+- `?gldebug=1` (page): every WebGL call checked; every failure was `drawArrays(TRIANGLES, 0, 3)` in `frame_end` with
+  "unit 0 = depth attachment": the depth table pass samples its target's depth texture while drawing into it. WebGL
+  refuses such a feedback loop and drops the draw (desktop GL tolerates it), so the depth tint / glare feed / distance
+  blur were missing in the browser. The pass neither tests nor writes depth: it now draws into a framebuffer with the
+  same colour attachments and no depth (browser build only).
+- Chrome 154, whole fight window, `BT3_GS_VERBOSE` per-frame check: **2,009 frames with an error -> 0**. Chromium 152
+  (app's browser, `?gldebug=1`): 207 error lines in ~18 s -> 0. Fight trace unchanged; work 11.6 ms before and after.
+- Earlier "Chrome 154 shows no errors" was unmeasured: the per-frame check only runs with `BT3_GS_VERBOSE`.
+- Only this scene was checked (the demo battle); menus and other stages not yet.
+
 ## 5. Log
 
 - 2026-10-11 (1): repository identified, audit above, Emscripten installed. Blocked by the session folder's long path.
@@ -305,6 +367,9 @@ frame rate, saves.
 
 - 2026-10-11 (4): the user's ISO unpacked and verified; first boot in the browser: logos and opening movie.
   Commit b101a5e.
+
+- 2026-10-11 (5): measurement tooling, CPU investigation (two fixes in the page/glue), WebGL 0x502 found and fixed.
+  Commits 08c6117, ccdd15b, 4f4787e, 6a3a16d, 1b5f38a, 02a52f3.
 
 ## 6. Next milestone
 
