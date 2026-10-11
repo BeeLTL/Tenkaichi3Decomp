@@ -18,13 +18,6 @@ typedef struct PortVideo {
     int texPackCount; /* read only: replacement textures found in the textures folder */
 } PortVideo;
 
-typedef struct QoLSettings {
-    int skipintro; /* 1 = skips the intro */
-    int skiplogos; /* 1 = skips the logos */
-} QoLSettings;
-
-extern inline QoLSettings qol;
-
 /* gs_draw.c */
 void GsGpu_GetSettings(PortVideo *v);
 void GsGpu_SetSettings(const PortVideo *v); /* applies what changed and saves it */

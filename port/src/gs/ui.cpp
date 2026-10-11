@@ -9,8 +9,9 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
 #include "imgui_impl_opengl3.h"
-#include "ui.h"
 #include "namefont.h"
+#include "../../../include/qol.h"
+#include "ui.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -781,39 +782,37 @@ static void controls_tab(void) {
     }
 }
 static void qol_tab(void) {
-    if (ImGui::Checkbox("Skip logos"), qol.skiplogos)
+    bool skiplogo = qol.skiplogos != 0;
+    if (ImGui::Checkbox("Skip logos", &skiplogo))
     {
+        qol.skiplogos = skiplogo ? 1 : 0;
         Port_SettingSave("skip_logos", qol.skiplogos);
         Port_SettingsWrite();
     }
     ImGui::SetItemTooltip("Automatically skip logos without user input.");
-    if (ImGui::Checkbox("Skip intro video"), qol.skipintro)
+    bool skipintro = qol.skipintro != 0;
+    if (ImGui::Checkbox("Skip intro video", &skipintro))
     {
+        qol.skipintro = skipintro ? 1 : 0;
         Port_SettingSave("skip_intro", qol.skipintro);
         Port_SettingsWrite();
     }
-    ImGui::SetItemTooltip("Automatically skip intro video without user input.")
-}
-
-void GetQoLSettings(void)
-{
-    qol->skipintro = Port_Setting("skip_intro", 0);
-    qol->skiplogos = Port_Setting("skip_logos", 0);
+    ImGui::SetItemTooltip("Automatically skip intro video without user input.");
+    ImGui::Text("SkipIntro: %d", qol.skipintro);
+    ImGui::Text("SkipLogos: %d", qol.skiplogos);
 }
 
 static void build(void) {
     PortVideo v, was;
-    QoLSettings qol;
     ImGuiIO &io = ImGui::GetIO();
     bool open = true;
-    GetQoLSettings(&qol);
     GsGpu_GetSettings(&v);
     was = v;
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(640.0f, 560.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Settings", &open, ImGuiWindowFlags_NoCollapse)) {
         if (ImGui::BeginTabBar("tabs")) {
-            if (tab("QoL", 1)) { qol_tab(qol); ImGui::EndTabItem(); }
+            if (tab("QoL", 1)) { qol_tab(); ImGui::EndTabItem(); }
             if (tab("Video", 1)) { video_tab(v); ImGui::EndTabItem(); }
             if (tab("Effects", 2)) { effects_tab(v); ImGui::EndTabItem(); }
             if (tab("Audio", 3)) { audio_tab(v); ImGui::EndTabItem(); }

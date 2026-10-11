@@ -1,7 +1,7 @@
 #include "common.h"
 #include "menu/menu_i.h"
 #include "sys/pad.h"
-#include "../../port/src/gs/ui.h"
+#include "qol.h"
 Logo *gLogo = NULL; /* 0x3B590C */
 
 /*
@@ -159,10 +159,16 @@ void FirstRun_WaitPartition(s32 pt) {
     Dma_ResetBuffers();
 }
 
+void GetQoLSettings(QoLSettings* qol)
+{
+    qol->skipintro = Port_Setting("skip_intro", 0);
+    qol->skiplogos = Port_Setting("skip_logos", 0);
+}
+
 /* The first-run sequence. Returns 1. */
 s32 FirstRun_Main() {
     u32 *res;
-
+    GetQoLSettings(&qol);
     File_LoadPartitionNw(2);
     FirstRun_WaitPad(0, 0);
     PadWatch_SetEnabled(0);
@@ -170,9 +176,9 @@ s32 FirstRun_Main() {
         gMenuArc0 = File_LoadSync(gProgress->baseFile + 0x19, NULL, 0);
     }
     BootCard_Run(2);
-    if (qol.skiplogos != 1)
+    res = Sprite_Unpack(MPACK_AT(gMenuArc0, 3), NULL, NULL);
+    if (qol.skiplogos == 0)
     {
-        res = Sprite_Unpack(MPACK_AT(gMenuArc0, 3), NULL, NULL);
         Logo_ShowAll(res);
     }
     if (res != NULL) {
@@ -183,7 +189,7 @@ s32 FirstRun_Main() {
         gMenuArc0 = NULL;
     }
     FirstRun_WaitPartition(2);
-    if (qol.skipintro != 1)
+    if (qol.skipintro == 0)
     {
         Movie_PlayOpening();
     }
