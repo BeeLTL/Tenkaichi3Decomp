@@ -83,7 +83,7 @@ server.listen(0, '127.0.0.1', async () => {
   await d.size('dir/file one.bin');
   mode = 'error';
   check(await d.read('dir/file one.bin', 0, 0, 100) === -1, 'HTTP 500 during a read: -1');
-  server.close();
   console.log(failures ? `RESULT: FAIL (${failures})` : 'RESULT: PASS');
-  process.exit(failures ? 1 : 0);
+  server.closeAllConnections();
+  server.close(() => process.exit(failures ? 1 : 0));
 });
