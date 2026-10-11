@@ -108,6 +108,8 @@ extern void HudGfx_CallEnd(void (*fn)(void)); /* run a GS state function (end) *
    side's data is the same, where it is drawn is the other side's place. HUD_SCR(side) is the place of a side. */
 extern int Port_HudSwap(void);
 #define HUD_SCR(side) ((side) ^ Port_HudSwap())
+#else
+#define HUD_SCR(side) (side)
 #endif
 extern void HudSprite_SetMirror(HudBSprite *spr, s32 mirror);
 extern void HudSprite_InitTex(HudBSprite *spr, void *res, s32 tex, s32 sub);    /* sprite of a sheet's texture */
