@@ -30,6 +30,7 @@
 
 #define MATCH_URL_DEFAULT "https://odd-surf-0af7.bt3decomp.workers.dev"
 #include "net_match.h"
+#include "../port_release.h"
 #include "net_relay.h"
 
 static struct {
@@ -398,7 +399,7 @@ again:
            one who joins), or gives it a room of its own in the queue to wait in (then it is the host). A room
            lasts ten minutes; when it runs out the search simply starts again. */
         MatchStatus st;
-        SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"name\":\"%s\",\"addrs\":[%s],\"queue\":\"%s\",\"who\":\"%s\"%s}", sM.version, name, addrs, sM.queue,
+        SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"rel\":%d,\"name\":\"%s\",\"addrs\":[%s],\"queue\":\"%s\",\"who\":\"%s\"%s}", sM.version, PORT_RELEASE, name, addrs, sM.queue,
                      match_who(), relayAddr[0] != '\0' ? ",\"relay\":false" : "");
         if (!http_post("quick", body, answer, sizeof(answer))) {
             set_state(-1, "The matchmaking service could not be reached (is the network up?).");
@@ -420,7 +421,8 @@ again:
             return 0;
         }
         if (SDL_strstr(answer, "\"role\":\"host\"") == NULL) {
-            set_state(-1, SDL_strstr(answer, "busy") != NULL ? "Too many searches from this address; try again in a few minutes." :
+            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "This release is too old for online play through the matchmaking service. Get the newest release." :
+                          SDL_strstr(answer, "busy") != NULL ? "Too many searches from this address; try again in a few minutes." :
                           SDL_strstr(answer, "bad request") != NULL || SDL_strstr(answer, "error") != NULL ? "The matchmaking service does not know quick match yet." :
                           "The matchmaking service gave no answer.");
             return 0;
@@ -429,7 +431,7 @@ again:
     }
     if (hosting) {
         if (sM.role == 1) {
-            SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"name\":\"%s\",\"addrs\":[%s]}", sM.version, name, addrs);
+            SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"rel\":%d,\"name\":\"%s\",\"addrs\":[%s]}", sM.version, PORT_RELEASE, name, addrs);
             if (!http_post("host", body, answer, sizeof(answer))) {
                 set_state(-1, "The matchmaking service could not be reached (is the network up?).");
                 return 0;
@@ -439,7 +441,8 @@ again:
             }
         }
         if (!json_str(answer, "code", sM.code, sizeof(sM.code)) || !json_str(answer, "key", key, sizeof(key))) {
-            set_state(-1, SDL_strstr(answer, "busy") != NULL ? "Too many rooms from this address; try again in a few minutes." : "The matchmaking service gave no room.");
+            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "This release is too old for online play through the matchmaking service. Get the newest release." :
+                          SDL_strstr(answer, "busy") != NULL ? "Too many rooms from this address; try again in a few minutes." : "The matchmaking service gave no room.");
             return 0;
         }
         if (relayAddr[0] != '\0') { /* (a search begun again: the relay address it holds already goes with the new room) */
@@ -514,7 +517,7 @@ again:
         set_state(-1, "Nobody joined: the room code has run out. Host again for a new one.");
     } else {
         MatchStatus st;
-        SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"code\":\"%s\",\"name\":\"%s\",\"addrs\":[%s]}", sM.version, sM.code, name, addrs);
+        SDL_snprintf(body, sizeof(body), "{\"v\":%d,\"rel\":%d,\"code\":\"%s\",\"name\":\"%s\",\"addrs\":[%s]}", sM.version, PORT_RELEASE, sM.code, name, addrs);
         if (!http_post("join", body, answer, sizeof(answer))) {
             set_state(-1, "The matchmaking service could not be reached (is the network up?).");
             return 0;
@@ -522,7 +525,8 @@ again:
         (void)you;
         SDL_memset(&st, 0, sizeof(st));
         if (!json_peer(answer, &st)) {
-            set_state(-1, SDL_strstr(answer, "version") != NULL ? "The host's game is a different version: both players need the same release." :
+            set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "This release is too old for online play through the matchmaking service. Get the newest release." :
+                          SDL_strstr(answer, "version") != NULL ? "The host's game is a different version: both players need the same release." :
                           SDL_strstr(answer, "full") != NULL ? "Someone has already joined that room." :
                           SDL_strstr(answer, "no room") != NULL ? "No room with that code (codes last ten minutes)." :
                           SDL_strstr(answer, "busy") != NULL ? "Too many wrong codes from this address; try again in an hour." : "The matchmaking service gave no answer.");

@@ -1744,3 +1744,15 @@ reports. In every release that has room codes, up to 0.1.27 (which one was the f
 address); otherwise the line says the host was found by the service. Checked: both logs of a room-code match
 between two copies hold no address at all. The crash report has none either (it never had). Not printed anywhere:
 the player's own address.
+
+## The matchmaking service can ask for a minimum release (2026-10-11)
+
+Asked for by the user ("only the newest version can play"). The game had no idea which release it is; now
+`port/src/port_release.h` says (129 = 0.1.29), **raised by hand in the commit a release is tagged on**, and
+net_match.c sends it as `rel` with a new room, a join and a search. The Worker refuses those from a game below its
+variable `MIN_RELEASE` (or that sends none: 0.1.28 and earlier) with the error "old", which a game of 0.1.29 or
+later turns into "This release is too old for online play through the matchmaking service. Get the newest
+release." Off unless the variable is set. What it does not do is in port/matchmaking/README.md: old copies can
+still meet by typed address, and a changed copy can claim any number. Checked: the Worker's tests (5 new), and
+that a game sending `rel` still makes and joins rooms on the Worker as deployed (which ignores it). Not checked:
+the refusal against the deployed Worker (it has no such variable yet), the message on screen.

@@ -41,6 +41,19 @@ Older releases of the game are not affected: they do not send the new request, a
 Until the Worker is updated, a game that has the Quick match tab says "The matchmaking service does not know quick
 match yet." when a search is started.
 
+## Only the newest release (from 0.1.29)
+
+The game tells the service which release it is (`rel`: 129 for 0.1.29). With the variable `MIN_RELEASE` set on the
+Worker (Settings -> Variables and Secrets, a plain variable, e.g. `129`), a new room, a join or a quick-match search
+from an older game is refused, and so is one from a game that does not say (0.1.28 and earlier). Rooms under way
+are not touched. Without the variable, or at 0, everyone is let in.
+
+- Raise it when a release must be the minimum; it takes effect at the next request, with no new code.
+- A game of 0.1.29 or later that is refused says so: "This release is too old ... Get the newest release."
+  An older one shows its own words for an answer it does not know ("gave no room", "gave no answer").
+- It closes the service, not the game: two copies of an old release can still play each other by typing an
+  address (Host on a port / Join by address), and the source is open, so a changed copy can claim any number.
+
 ## What it keeps
 
 For at most ten minutes per room: the room code, the two player names, the addresses each game reported about

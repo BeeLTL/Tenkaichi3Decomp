@@ -146,5 +146,16 @@ rooms.clear();
     DB.prepare = realPrepare;
     check("two at once: the later one gives its room up and joins the earlier", second.role === "join" && second.code === first.code && rooms.size === 1);
 }
+// only the newest release
+{
+    const strict = { DB, MIN_RELEASE: "129" };
+    const ask = async (what, body) => (await worker.fetch(new Request("https://x/v1/" + what, { method: "POST", headers: { "cf-connecting-ip": "198.51.100.77" }, body: JSON.stringify(body) }), strict)).json();
+    check("a game that does not say its release is refused when a minimum is set", (await ask("host", { v: 3, name: "O", addrs: ["198.51.100.77:1"] })).error === "old");
+    check("an older release is refused", (await ask("quick", { v: 3, rel: 128, name: "O", addrs: ["198.51.100.77:1"], queue: "S", who: "oooooooooooo" })).error === "old");
+    const ok = await ask("host", { v: 3, rel: 129, name: "N", addrs: ["198.51.100.77:1"] });
+    check("the release named, or a newer one, is let in", typeof ok.code === "string" && typeof (await ask("host", { v: 3, rel: 130, name: "N", addrs: ["198.51.100.77:1"] })).code === "string");
+    check("a room under way is not touched (its poll is answered)", (await ask("poll", { code: ok.code, key: ok.key })).peer === null);
+    check("no minimum set: everyone as before", typeof (await post("host", "198.51.100.78", { v: 3, name: "O", addrs: ["198.51.100.78:1"] })).code === "string");
+}
 console.log(fails === 0 ? "all passed" : fails + " failed");
 process.exit(fails === 0 ? 0 : 1);

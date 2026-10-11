@@ -25,7 +25,8 @@
 // "seen=ip", the address this Worker saw them under (the relay must be told whom to let through).
 // `v` is the game's netcode version, `addrs` a list of "ip:port" strings (what the game found out about itself),
 // `you` the caller's address as seen here (the game uses it when it could not find out its own). Errors come back
-// as {error: "..."} with a 4xx status: "version" (the two games differ), "no room", "full", "busy", "bad request".
+// as {error: "..."} with a 4xx status: "version" (the two games differ), "no room", "full", "busy", "bad request",
+// "old" (the Worker's keeper lets only newer releases in: `rel` in the request, the variable MIN_RELEASE here).
 
 const ROOM_SECONDS = 600;       // a room nobody joined disappears after ten minutes
 const ROOMS_PER_ADDRESS = 4;    // rooms one address may have open at a time
@@ -361,6 +362,14 @@ export default {
             }
             const day = now - (now % 86400);
             return reply({ ...(await relayCheck(env, now)), loginsToday: (await getValue(env, "relay", day)) ?? 0, lastMeasured: await getValue(env, "checked", 0) });
+        }
+        // Only the newest release, if the Worker's keeper says so: the variable MIN_RELEASE (a number: 129 is release
+        // 0.1.29) refuses a new room, a join or a search from a game that says it is older, or that does not say
+        // (0.1.28 and earlier do not). Rooms that are under way are not touched. An older game shows its own words
+        // for an answer it does not know ("gave no room", "gave no answer"); a newer one says to get the new release.
+        const minRelease = Number(env.MIN_RELEASE ?? 0) || 0;
+        if (minRelease > 0 && (what === "host" || what === "join" || what === "quick") && !(Number.isInteger(body.rel) && body.rel >= minRelease)) {
+            return reply({ error: "old", need: minRelease }, 426);
         }
         if (what === "host") {
             const addrs = cleanAddrs(body.addrs);
