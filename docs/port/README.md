@@ -1867,3 +1867,22 @@ match is connected or a session runs, and the setting only otherwise.
 Checked without a window: with the setting at 150% the blanks come 11.1 ms apart offline; two connected copies that
 both have 150% in their settings run at 16.68 ms when the host chose 100% and at 13.9 ms when it chose 120%, and
 agree at tick 400. The regression replay passes. Not checked: the slider on screen, the sound by ear at any speed.
+
+## Sound at another game speed: stretched in time, not pitched (2026-10-12)
+
+Reported after 0.1.29: "audio is pitched at 120". The first version played everything faster by the speed, which
+is also higher. Now:
+
+- **Streams** (music, a stage's background, spoken lines; snd_adx.c `stretch_feed`): played at their own pitch
+  and shortened or lengthened in time, as emulators do at such speeds. Pieces of 40 ms, each faded over 8 ms into
+  the one before, each taken 32 ms * speed after the last and moved by up to 15 ms to where it continues the
+  previous piece best (the largest correlation). A stream still ends when the game, counting in vertical blanks,
+  expects it to.
+- **Effects and battle voices** (snd_se.c): at their own pitch and their own length. They are short, start when
+  the game starts them, and nothing waits for their end.
+
+BT3_SND_DUMP=<file> writes what the music player hands to the sound device. With it, at 120% and at 70%: two
+thirds of the audible windows of the output are exact copies of the sound at 100% (the rest are the fades), so the
+pitch is the original's, and the output moves through the original 1.200 and 0.701 samples per sample. Not
+checked: by ear. A time stretch can be heard on some material (a faint flutter on long held notes, doubled
+attacks on drums); how this one sounds on the game's music nobody has listened to yet.

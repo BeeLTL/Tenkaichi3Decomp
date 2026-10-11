@@ -535,7 +535,7 @@ static void build_net(void) {
                         ImGui::SetNextItemWidth(260.0f);
                         ImGui::Combo("Game speed", &speed, kSpeed, 2);
                         ImGui::SetItemTooltip("120%% is what competitive play of this game uses: the whole match runs a fifth\n"
-                                              "faster, sound included. If the other player's release does not know it\n"
+                                              "faster; the sound keeps its pitch. If the other player's release does not know it\n"
                                               "(0.1.28 or earlier), the match runs at 100%%.");
                     }
                 }
@@ -989,7 +989,7 @@ static void cheats_tab(void) {
             Port_GameSpeedSet(speed);
             Port_AudioRefresh();
         }
-        ImGui::SetItemTooltip("How fast the game runs outside online play, sound included. 100%% is the game's own;\n"
+        ImGui::SetItemTooltip("How fast the game runs outside online play (the sound keeps its pitch). 100%% is the game's own;\n"
                               "120%% is what competitive play uses. An online match never uses this value:\n"
                               "its speed is the host's or the queue's.");
         ImGui::SameLine();

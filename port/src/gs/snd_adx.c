@@ -30,6 +30,8 @@ enum { ADXT_STAT_STOP = 0, ADXT_STAT_PLAYING = 3, ADXT_STAT_PLAYEND = 5 };
 #define MAX_PLAYERS 16
 #define FRAME 18
 #define PAN_AUTO (-128)
+#define ST_CAP 12288   /* sample pairs a stretcher holds */
+#define ST_OV_MAX 512  /* the longest overlap (8 ms at 48 kHz is 384) */
 
 typedef struct Player {
     SDL_AudioStream *stream;
@@ -45,6 +47,11 @@ typedef struct Player {
     int stat, paused;
     int vol;                /* 0.1 dB, 0 = full, -960 and below = silent */
     int pan[2];             /* per input channel: -15 left .. 15 right, PAN_AUTO */
+    /* the game speed's time stretch (stretch_feed): decoded sound waiting to be laid out, and the end of the
+       piece laid out last, which the next one is faded over */
+    int16_t stIn[ST_CAP * 2], stTail[ST_OV_MAX * 2];
+    int stN, stHasTail;
+    double stSkip;
 } Player;
 
 static Player sPlayers[MAX_PLAYERS];
@@ -209,8 +216,88 @@ static int decode(Player *p, int16_t *out, int frames) {
     return n;
 }
 
+/* What a player hands to the sound device. BT3_SND_DUMP=<file> (testing): the music player's, as it is handed
+   over (16 bits, stereo, the file's rate), to look at without listening. */
+static void put_pcm(Player *p, SDL_AudioStream *stream, const int16_t *data, int bytes) {
+    static FILE *dump;
+    static int tried;
+    if (!tried) {
+        tried = 1;
+        dump = getenv("BT3_SND_DUMP") != NULL ? fopen(getenv("BT3_SND_DUMP"), "wb") : NULL;
+    }
+    if (dump != NULL && p == &sPlayers[0]) {
+        fwrite(data, 1, (size_t)bytes, dump);
+        fflush(dump);
+    }
+    SDL_PutAudioStreamData(stream, data, bytes);
+}
+
+/* The game at another speed than its own (an online match at 120%, the Cheats tab's speed): a stream has to end
+   that much sooner or later, because the game counts its length in vertical blanks, but played faster it would
+   also sound higher ("the audio is pitched at 120%", reported). So it is played at its own pitch and made shorter
+   or longer in time, the way emulators do it at such speeds: pieces of 40 ms are laid one after the other with
+   8 ms faded into the previous one, each taken (40 - 8) * speed ms after the last, and within 15 ms of that the
+   place where it fits what was heard last (the largest correlation with the previous piece's end), which is what
+   keeps a tone from stuttering. Returns the bytes handed to the stream; 0 = the file has ended. */
+static int stretch_feed(Player *p, SDL_AudioStream *stream, int speedMilli) {
+    int seq = (int)p->rate * 40 / 1000, ov = (int)p->rate * 8 / 1000, seek = (int)p->rate * 15 / 1000;
+    int16_t out[4096 * 2];
+    int best = 0, k, i, body, need, skip, ended = 0;
+    double bestSum = -1e30;
+
+    if (ov > ST_OV_MAX) { ov = ST_OV_MAX; }
+    if (seq > 4096) { seq = 4096; }
+    body = seq - ov;
+    p->stSkip += (double)body * (double)speedMilli / 1000.0;
+    skip = (int)p->stSkip;
+    p->stSkip -= (double)skip;
+    need = seek + seq > skip ? seek + seq : skip;
+    while (p->stN < need && !ended) {
+        int n = p->stN + 16 * 32 <= ST_CAP ? decode(p, &p->stIn[p->stN * 2], 16) : 0;
+        ended = n == 0;
+        p->stN += n;
+    }
+    if (p->stN < seek + seq) { /* the end of the file: what is left, as it is */
+        int n = p->stN;
+        if (n > 0) {
+            put_pcm(p, stream, p->stIn, n * 4);
+        }
+        p->stN = 0;
+        p->stHasTail = 0;
+        return n * 4;
+    }
+    if (p->stHasTail) {
+        for (k = 0; k < seek; k += 2) { /* (every other place: fine enough, half the work) */
+            double sum = 0.0;
+            for (i = 0; i < ov; i += 2) {
+                sum += (double)((int)p->stTail[i * 2] + p->stTail[i * 2 + 1]) * (double)((int)p->stIn[(k + i) * 2] + p->stIn[(k + i) * 2 + 1]);
+            }
+            if (sum > bestSum) {
+                bestSum = sum;
+                best = k;
+            }
+        }
+        for (i = 0; i < ov; i++) {
+            float w = (float)i / (float)ov;
+            out[i * 2] = (int16_t)((float)p->stTail[i * 2] * (1.0f - w) + (float)p->stIn[(best + i) * 2] * w);
+            out[i * 2 + 1] = (int16_t)((float)p->stTail[i * 2 + 1] * (1.0f - w) + (float)p->stIn[(best + i) * 2 + 1] * w);
+        }
+    } else {
+        memcpy(out, p->stIn, (size_t)ov * 4);
+    }
+    memcpy(&out[ov * 2], &p->stIn[(best + ov) * 2], (size_t)(body - ov) * 4);
+    memcpy(p->stTail, &p->stIn[(best + body) * 2], (size_t)ov * 4);
+    p->stHasTail = 1;
+    if (skip > p->stN) { skip = p->stN; }
+    memmove(p->stIn, &p->stIn[skip * 2], (size_t)(p->stN - skip) * 4);
+    p->stN -= skip;
+    put_pcm(p, stream, out, body * 4);
+    return body * 4;
+}
+
 /* SDL's audio thread wants `additional` more bytes from this player (the stream is locked while this runs). */
 static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, int total) {
+    extern int Port_SpeedMilli(void); /* plat_stub.c: the match's speed online, else the player's own; 1000 = the game's */
     Player *p = user;
     int16_t buf[32 * 2 * 16];
 
@@ -218,12 +305,29 @@ static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, in
 
     (void)total;
     while (additional > 0 && p->stat == ADXT_STAT_PLAYING && !p->paused) {
+        int speed = Port_SpeedMilli();
+        if (speed != 1000) {
+            int n = stretch_feed(p, stream, speed);
+            if (n == 0) {
+                p->stat = ADXT_STAT_PLAYEND;
+                break;
+            }
+            additional -= n;
+            continue;
+        }
+        if (p->stN > 0) { /* (the speed went back to the game's own: what the stretcher still held) */
+            put_pcm(p, stream, p->stIn, p->stN * 4);
+            additional -= p->stN * 4;
+            p->stN = 0;
+            p->stHasTail = 0;
+            continue;
+        }
         int n = decode(p, buf, 16);
         if (n == 0) {
             p->stat = ADXT_STAT_PLAYEND;
             break;
         }
-        SDL_PutAudioStreamData(stream, buf, n * 4);
+        put_pcm(p, stream, buf, n * 4);
         additional -= n * 4;
     }
 }
@@ -370,12 +474,9 @@ static void start(Player *p, const char *path) {
         fprintf(stderr, "bt3: sound stream: %s\n", SDL_GetError());
         return;
     }
-    {   /* An online session at 120%: the game counts a stream's length in vertical blanks, which are shorter
-           there, so the stream is played that much faster (and higher), or a line would still be heard when the
-           game has the next one start. */
-        extern int Port_SpeedMilli(void); /* plat_stub.c: the match's speed online, else the player's own */
-        SDL_SetAudioStreamFrequencyRatio(p->stream, (float)Port_SpeedMilli() / 1000.0f);
-    }
+    p->stN = 0;
+    p->stHasTail = 0;
+    p->stSkip = 0.0;
     if (getenv("BT3_SND_VERBOSE") != NULL) {
         fprintf(stderr, "adx: player %d: start %s: %u ch, %u Hz, %.1f s, loop %d, volume %d (0.1 dB), paused %d\n", (int)(p - sPlayers), path,
                 p->channels, p->rate, (double)p->total / (double)p->rate, p->loop, p->vol, p->paused);
@@ -505,12 +606,8 @@ int func_00277A70(void *adxt) {
 
 /* The music volume setting changed: the streams playing now take it over. */
 void Port_AudioRefresh(void) {
-    extern int Port_SpeedMilli(void);
     int i;
     for (i = 0; i < MAX_PLAYERS; i++) {
-        if (sPlayers[i].stream != NULL) { /* (and the game speed, when that was what changed) */
-            SDL_SetAudioStreamFrequencyRatio(sPlayers[i].stream, (float)Port_SpeedMilli() / 1000.0f);
-        }
         apply_volume(&sPlayers[i]);
     }
 }
