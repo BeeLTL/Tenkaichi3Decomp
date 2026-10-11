@@ -50,11 +50,25 @@ const logEl = document.getElementById('log'), stepsEl = document.getElementById(
 const lines = [];
 let reported = 0, mod = null, stopped = false;
 
+// The log is cheap on purpose: the game's output arrives inside its frame (printf), so writing the page there would
+// be counted in the frame's time. Lines are queued (with their time) and shown a few times a second; tools read
+// window.bt3Out (port/tests/bench). ?console=1 also copies every line to the browser console.
+const toConsole = q.has('console');
+let pending = '', paint = 0;
+window.bt3Out = [];
 function log(s) {
   s = String(s);
   lines.push(s);
-  console.log(s);
-  logEl.textContent += s + '\n';
+  window.bt3Out.push([performance.now(), s]);
+  if (window.bt3Out.length > 200000) window.bt3Out.splice(0, 100000);  // nobody reads them: keep memory bounded
+  if (toConsole) console.log(s);
+  pending += s + '\n';
+  if (!paint) paint = setTimeout(showLog, 250);
+}
+function showLog() {
+  paint = 0;
+  logEl.textContent += pending;
+  pending = '';
   if (logEl.textContent.length > 200000) logEl.textContent = logEl.textContent.slice(-150000);
   logEl.scrollTop = logEl.scrollHeight;
 }

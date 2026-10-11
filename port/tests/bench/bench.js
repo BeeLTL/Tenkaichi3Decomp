@@ -88,18 +88,20 @@ function summarize(profile) {
   const frames = [], trace = [], log = [];
   let profiling = false, done, stopped = null;
   const finished = new Promise((r) => { done = r; });
-  ws.addEventListener('message', async (ev) => {
+  ws.addEventListener('message', (ev) => {
     const m = JSON.parse(ev.data);
     if (m.id && waiting.has(m.id)) {
       const w = waiting.get(m.id);
       waiting.delete(m.id);
-      return m.error ? w.rej(new Error(m.error.message)) : w.res(m.result);
+      m.error ? w.rej(new Error(m.error.message)) : w.res(m.result);
     }
-    if (m.method !== 'Runtime.consoleAPICalled') return;
-    const line = m.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
+  });
+  // The page queues its log lines with their time (index.html, window.bt3Out); they are collected a few times a
+  // second, so that the measurement does not go through the console inside the measured frames.
+  async function handle(ts, line) {
     if (line.startsWith('frame ')) {
-      const f = line.split(' ').slice(1).map(Number);  // frame vblank work game list tex pipe end (µs)
-      f.push(m.params.timestamp);                       // + when the page logged it (ms)
+      const f = line.split(' ').slice(1).map(Number);  // frame vblank work game list tex pipe end (microseconds)
+      f.push(ts);                                       // + when the page logged it (ms, performance.now)
       frames.push(f);
       if (f[0] >= from && !profiling && args.profile) {
         profiling = true;
@@ -112,13 +114,25 @@ function summarize(profile) {
     if (line.startsWith('vb ')) trace.push(line);
     else log.push(line);
     if (line.startsWith('STOPPED')) { stopped = line; done(); }
-  });
+  }
   await send('Runtime.enable');
   await send('Profiler.enable');
   await send('Page.enable');
   const t0 = Date.now();
   await send('Page.navigate', { url });
   const timeout = setTimeout(() => { stopped = stopped || 'timeout (no frame reached ' + to + ')'; done(); }, Number(args.timeout || 600) * 1000);
+  let over = false;
+  finished.then(() => { over = true; });
+  while (!over) {
+    await sleep(250);
+    let r;
+    try {
+      r = await send('Runtime.evaluate', { expression: 'JSON.stringify(window.bt3Out ? window.bt3Out.splice(0) : [])', returnByValue: true });
+    } catch (e) { continue; }  // (the page is being replaced)
+    for (const [ts, line] of JSON.parse(r.result.value || '[]')) {
+      if (!over) await handle(ts, line);
+    }
+  }
   await finished;
   clearTimeout(timeout);
   const profile = profiling ? (await send('Profiler.stop')).profile : null;
