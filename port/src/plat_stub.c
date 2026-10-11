@@ -92,6 +92,13 @@ int Port_VBlankUsLeft(void) {
     return sPaceNext > t && sPaceNext - t < 100000000ull ? (int)((sPaceNext - t) / 1000ull) : 0;
 }
 
+/* How far behind its grid the game is, in microseconds: the coming vertical blank was due that long ago (0: it
+   is not due yet, or there is no grid). For gs/gs_draw.c, which leaves pictures out when the machine is behind. */
+int Port_PaceBehindUs(void) {
+    unsigned long long t = now_ns();
+    return sPaceNext != 0 && t > sPaceNext && t - sPaceNext < 100000000ull ? (int)((t - sPaceNext) / 1000ull) : 0;
+}
+
 static void vblank_wait(void) {
     struct timespec ts;
     unsigned long long t = now_ns(), after;

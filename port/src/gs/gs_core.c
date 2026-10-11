@@ -574,7 +574,7 @@ static void vertex(uint32_t x, uint32_t y, uint32_t z, int kick) {
     Target *sf;
     Vertex v;
 
-    if (gPortResim && !(type == 6 && ((gs.frame[ctx] >> 16) & 0x3F) == 1)) {
+    if (GS_NO_PICTURE && !(type == 6 && ((gs.frame[ctx] >> 16) & 0x3F) == 1)) {
         /* A frame that is only being re-run draws nothing, so its vertices are not even collected: all but the
            sprites into TEXTURE memory (the rectangle case below, which changes what later frames read). */
         return;
@@ -1065,7 +1065,7 @@ static void screenshot(void) {
     for (i = 0; i < sTargetCount; i++) {
         sTargets[i].drawn = 0;
     }
-    if (!gPortResim) { /* (a frame that is only being re-run is not a frame of the picture) */
+    if (!gPortResim) { /* (a frame that is only being re-run is not a frame of the picture; a skipped one is counted) */
         sFrame++;
     }
 }

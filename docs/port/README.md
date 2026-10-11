@@ -1673,3 +1673,26 @@ next frame, after `SDL_WaitForGPUIdle`. (The OpenGL renderer sets a swap interva
 The option had only been tried as a saved setting read at start; "ticking it while the game runs" was listed as
 not tested in the release notes and should have been tried before release. Checked by the user on screen (Nvidia,
 Vulkan): on and off, no crash.
+
+## Frame skipping: full speed with pictures left out, instead of slowing down (2026-10-11)
+
+Asked for by the user ("why does the game slow down instead of being choppy"). The game advances one step per
+picture and has no other clock; a machine that needs longer than a tick to show a picture ran the game slowly.
+
+- `skip_decide` (gs_draw.c), as each picture is finished: if the game is more than one vertical blank behind its
+  grid (`Port_PaceBehindUs`, plat_stub.c), the NEXT tick is not drawn. Its drawing is left out the way a re-run
+  frame's is (`GS_NO_PICTURE` = gPortResim or gsSkipFrame, in gs_core.c / gs_draw.c / gs_vu1.c: vertices are not
+  collected, vertex programs not run, nothing recorded), and `GsGpu_FrameEnd` shows nothing for it. The grid then
+  catches up by itself: a blank that is already due is not waited for (vblank_wait).
+- At most four ticks in a row, so something is shown at least every fifth; slower than that, the game slows down
+  as before. Not while the settings window is open, not with BT3_UNCAPPED or BT3_SHOT.
+- No in-between picture is made across a skipped tick (the previous tick's lists are forgotten).
+- Setting `frame_skip`, on by default: F1, Video, "Skip pictures instead of slowing down". BT3_FRAME_SKIP=0|1;
+  BT3_SKIP_FORCE=1 leaves out every other tick whatever the clock says (testing; what "choppy" looks like).
+- Measured on an integrated GPU at 8x in a stretch where a picture takes about 33 ms (a recorded session, 15
+  seconds): off, 29.9 vertical blanks a second, half speed, 30 pictures a second; on, 60.1 blanks a second, full
+  speed, 31.5 pictures a second. With every other tick forced out, the 31 pictures that are shown in a fight are
+  the same, pixel for pixel, as those ticks drawn normally. The regression replay passes.
+- It only helps where showing is what takes the time. Where computing the tick is too slow, nothing is gained.
+  Not checked: on a display by anyone, in an online match, with Smooth motion on, on Windows.
+- (Also: the "(F11)" beside "Full screen" had ended up beside "V-sync" in 0.1.25; put back.)

@@ -700,15 +700,18 @@ static void video_tab(PortVideo &v) {
                           "No difference at 1x.");
     bool full = v.fullscreen != 0;
     if (ImGui::Checkbox("Full screen", &full)) { v.fullscreen = full; }
-    {
-        bool vs = v.vsync != 0;
-        if (ImGui::Checkbox("V-sync", &vs)) { v.vsync = vs; }
-        ImGui::SetItemTooltip("Each picture waits for the display's refresh. Turn it on if the picture tears.\n"
-                              "Off is the default: it adds a little delay, and the game slows down if\n"
-                              "Smooth motion shows more pictures a second than the display can.");
-    }
     ImGui::SameLine();
     ImGui::TextDisabled("(F11)");
+    {
+        bool vs = v.vsync != 0, fs = v.frameSkip != 0;
+        if (ImGui::Checkbox("V-sync", &vs)) { v.vsync = vs; }
+        ImGui::SetItemTooltip("Each picture waits for the display's refresh. Turn it on if the picture tears.\n"
+                              "Off is the default: it adds a little delay.");
+        if (ImGui::Checkbox("Skip pictures instead of slowing down", &fs)) { v.frameSkip = fs; }
+        ImGui::SetItemTooltip("When this machine cannot show a picture in time, the game normally runs slower.\n"
+                              "With this on it stays at full speed and leaves pictures out instead (choppier,\n"
+                              "not slower). It helps where the graphics chip is the slow part. On by default.");
+    }
     SDL_DisplayID *displays = SDL_GetDisplays(&count);
     if (v.display > count) { v.display = 0; }
     snprintf(label, sizeof(label), "%s", v.display == 0 ? "Chosen by the desktop" : SDL_GetDisplayName(displays[v.display - 1]));

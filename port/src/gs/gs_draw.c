@@ -690,7 +690,7 @@ void Port_WallMesh(const void *key, int second, int culled, const float *screen,
     WallMesh *m;
     int i;
 
-    if (gPortResim || gsInterp <= 0 || quadCount <= 0 || quadCount > 15) {
+    if (GS_NO_PICTURE || gsInterp <= 0 || quadCount <= 0 || quadCount > 15) {
         return;
     }
     if (getenv("BT3_INTERP_WALLLOG") != NULL && atoi(getenv("BT3_INTERP_WALLLOG")) > 2) {
@@ -754,7 +754,7 @@ void GsGpu_PagesMoved(uint32_t delta) {
 }
 
 void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
-    if (gPortResim) { /* a frame that is only being re-run: nothing is drawn */
+    if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
     }
     uint64_t prim = gGs.prim, t0 = gGs.tex0[ctx];
@@ -958,7 +958,7 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
    as floats, a slot the original fills with s, t). A flagged vertex means: the triangle that ends here is not
    drawn (it only joins two real triangles of the strip). */
 void GsGpu_DrawVu6(int ctx, const float *vertices, uint32_t count, const float *consts) {
-    if (gPortResim) { /* a frame that is only being re-run: nothing is drawn */
+    if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
     }
     Vu0Uniform u;
@@ -1020,7 +1020,7 @@ void GsGpu_DrawVu6(int ctx, const float *vertices, uint32_t count, const float *
 /* Vertex program 4 as a shader: one strip of stage geometry (see shaders/vu4.vert). Vertices: position, colour
    (0..255 floats), texture coordinates, 48 bytes; the screen matrix is VU memory 0..3. */
 void GsGpu_DrawVu4(int ctx, const float *vertices, uint32_t count, const float *consts) {
-    if (gPortResim) { /* a frame that is only being re-run: nothing is drawn */
+    if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
     }
     Vu0Uniform u;
@@ -1067,7 +1067,7 @@ void GsGpu_DrawVu4(int ctx, const float *vertices, uint32_t count, const float *
 /* Vertex program 0 as a shader: one strip of the fighters' models (see shaders/vu0.vert and gs_vu1.c). The strip
    becomes a triangle list of the program's own 48-byte vertices; the constants go into a uniform block. */
 void GsGpu_DrawVu0(int layer, int ctx, const float *vertices, uint32_t count, const float *consts) {
-    if (gPortResim) { /* a frame that is only being re-run: nothing is drawn */
+    if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
     }
     Vu0Uniform u;
@@ -1167,7 +1167,7 @@ int GsGpu_ReadFrame(uint32_t fbp, uint8_t *rgba) {
 }
 
 void GsGpu_FbUpload(int second) {
-    if (gPortResim) { /* a frame that is only being re-run: nothing is drawn */
+    if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
     }
     GsDraw d;
@@ -1184,7 +1184,7 @@ void GsGpu_FbUpload(int second) {
 }
 
 void GsGpu_Native(int effect) {
-    if (gPortResim) { /* a frame that is only being re-run: nothing is drawn */
+    if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
     }
     uint64_t sc = gGs.scissor[0];
@@ -1335,6 +1335,7 @@ void GsGpu_GetSettings(PortVideo *v) {
     v->texPackCount = TexPack_Count();
     v->smooth2d = sSmooth2d;
     v->vsync = Port_Setting("vsync", 0) != 0;
+    v->frameSkip = GsDraw_FrameSkip();
 }
 
 /* Applies what differs from the current state, all of it at once, and keeps it for the next run. */
@@ -1357,6 +1358,9 @@ void GsGpu_SetSettings(const PortVideo *v) {
         gPortMusicPercent = v->music;
         gPortSePercent = v->effects;
         Port_AudioRefresh();
+    }
+    if (v->frameSkip != now.frameSkip) {
+        GsDraw_FrameSkipSet(v->frameSkip);
     }
     if (v->vsync != now.vsync) { /* (whichever back end draws) */
         GsGpu_Vsync(v->vsync);
@@ -3774,8 +3778,67 @@ void GsGpu_InterpFlush(void) { /* (the name Port_VBlank knew it by) */
     GsGpu_InterpPump(6, 0);
 }
 
+/* ---- frame skipping ------------------------------------------------------------------------------------------
+ * The game advances one step per picture and knows no other clock, so a machine that needs longer than a tick
+ * to show a picture ran the game itself slowly. When the game is more than a vertical blank behind its grid as a
+ * picture is finished, the NEXT tick is computed without being drawn (its drawing is left out the way a re-run
+ * frame's is: GS_NO_PICTURE) and nothing is shown for it; the grid (plat_stub.c: a blank that is already due is
+ * not waited for) then catches up. At most kSkipMax ticks in a row, so that something is shown at least every
+ * fifth tick; a machine too slow for that slows down as before. Setting "frame_skip" (F1, Video), on by default.
+ * Only helps where the showing is what takes the time (a weak graphics chip), not the computing. */
+int gsSkipFrame;
+static int sSkipOn = -1, sSkipRun;
+static unsigned sSkipped; /* (BT3_GS_VERBOSE) */
+
+int GsDraw_FrameSkip(void) {
+    if (sSkipOn < 0) {
+        sSkipOn = getenv("BT3_FRAME_SKIP") != NULL ? atoi(getenv("BT3_FRAME_SKIP")) != 0 : Port_Setting("frame_skip", 1) != 0;
+    }
+    return sSkipOn;
+}
+
+void GsDraw_FrameSkipSet(int on) {
+    sSkipOn = on != 0;
+    Port_SettingSave("frame_skip", sSkipOn);
+}
+
+static void skip_decide(void) {
+    extern int Port_PaceBehindUs(void);        /* plat_stub.c */
+    extern volatile int gPortNetWindowClose;   /* (any picture the settings or online window waits for is shown) */
+    extern int gPortOverlayOpen;
+    int behind = Port_PaceBehindUs();
+    int skip = GsDraw_FrameSkip() && getenv("BT3_UNCAPPED") == NULL && getenv("BT3_SHOT") == NULL && !gPortOverlayOpen &&
+               behind > 16683 && sSkipRun < 4;
+
+    if (getenv("BT3_SKIP_FORCE") != NULL) { /* testing: every other tick is left out, whatever the clock says */
+        skip = sSkipRun == 0;
+    }
+
+    (void)gPortNetWindowClose;
+    sSkipRun = skip ? sSkipRun + 1 : 0;
+    sSkipped += (unsigned)skip;
+    gsSkipFrame = skip;
+    if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 120 == 0 && sSkipped != 0) {
+        fprintf(stderr, "skip: %u ticks were not shown in the last 120 pictures (the game was %d.%d ms behind just now)\n", sSkipped, behind / 1000, behind / 100 % 10);
+        sSkipped = 0;
+    }
+}
+
 void GsGpu_FrameEnd(void) {
     if (gPortResim) { /* a frame that is only being re-run: nothing was recorded, nothing is shown */
+        return;
+    }
+    if (gsSkipFrame) {
+        /* A skipped tick: nothing was recorded. The tick before's last pictures, if any are still waiting, are
+           shown now (its real one); nothing can be blended over the gap, so the next tick has no in-between
+           picture. */
+        if (sInterpNext != 0) {
+            GsGpu_InterpPump(0, 1);
+        }
+        sInterpPrevCount = 0;
+        sInterpPrevPrimCount = 0;
+        gsVertCount = gsVuVertCount = gsVuIdxCount = gsVuUniCount = gsDrawCount = 0;
+        skip_decide();
         return;
     }
     uint64_t t0 = gpu_now();
@@ -3866,4 +3929,5 @@ void GsGpu_FrameEnd(void) {
         }
     }
     gGpuEndNs += gpu_now() - t0;
+    skip_decide();
 }
