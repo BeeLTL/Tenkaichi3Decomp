@@ -1732,3 +1732,7 @@ rollback of up to 8".
 down, then says nobody was searching that queue and offers "Search again". It bounds what one search can ask of
 the service (about 60 requests) and replaces the open-ended wait, where a window left open asked for hours. Not
 seen on screen by me.
+
+**Quick match between two networks, seen once** (2026-10-11, the user, 0.1.27's code): while trying the search timer
+he was put with another player who was searching; the match "felt fine at 180 ping" (rollback of up to 8 frames,
+the measured input delay). Not known: whether that connection was direct or through the relay, and the delay chosen.
