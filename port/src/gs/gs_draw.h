@@ -82,6 +82,7 @@ typedef struct GsDraw {
     float orig[4];  /* a texture pack's replacement: xy = the original texture's size in texels, z = its largest alpha */
     float blendc;
     int scissor[4]; /* x, y, width, height, at SCALE */
+    int wall;       /* triangles of the wall at the edge of the map (gs_draw.c, Port_WallMesh): in-between pictures draw it anew */
 } GsDraw;
 
 /* The formats a texture pack's replacement can be in (matches gs_texpack.h's TexPackImage.format). */

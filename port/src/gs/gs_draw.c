@@ -637,22 +637,84 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
     return 1;
 }
 
+#define GS_Z_LEAD 2.0 /* depth steps: see put() */
+/* BT3_DEPTH_FRAC=1: depth as before the whole-number rule (fractions kept, nothing rounded), to compare. */
+static int depth_frac(void) {
+    static int v = -1;
+    if (v < 0) { v = getenv("BT3_DEPTH_FRAC") != NULL; }
+    return v;
+}
+
 float gsZMax = 16777215.0f; /* the depth buffer's largest value, as the frame's draws had it (the fragment shader rounds with it) */
 
 static void put(const GsVertex *v, float x, float y, float s, float t, float q, uint8_t r, uint8_t g, uint8_t b, uint8_t a, float zmax) {
     Vtx *o = &gsVerts[gsVertCount++];
     o->x = x;
     o->y = y;
-    o->z = (float)(((double)v->z + 0.5) / zmax); /* (the whole number plus a half: see gs.frag, the vertex programs do the same) */
-    gsZMax = zmax;
+    /* The whole number plus a half (see gs.frag; the vertex programs do the same), and GS_Z_LEAD steps towards the
+       eye. What the game transforms itself and lays onto scenery of a vertex program (a waterfall on its rock) is
+       in front of it by less than a step: on the console both come out as the same whole number, or the fall's
+       one higher. Here the rock's number is computed by the GPU and can come out one higher than the console's,
+       this pixel and not that one, differently every picture while the camera moves: found by the user as the
+       fall blinking sideways in motion (the part it had been missing came and went). With the lead the fall
+       wins wherever the two are within those steps. (Not past the nearest depth there is.) */
+    o->z = (float)(((double)v->z + (depth_frac() ? 0.0 : 0.5 + ((double)v->z + GS_Z_LEAD < (double)zmax ? GS_Z_LEAD : 0.0))) / zmax);
+    gsZMax = depth_frac() ? 0.0f : zmax;
     o->r = r; o->g = g; o->b = b; o->a = a;
     o->s = s; o->t = t; o->q = q;
+}
+
+/* ---- the wall at the edge of the map, as the game hands it over (see interp_wall) ---- */
+typedef struct WallMesh {
+    const void *key;      /* the game's mesh (one per fighter and kind) */
+    int second, culled, nq;
+    float S[16], cam[3];  /* the view's world-to-screen matrix and camera position of the tick */
+    float v[24][16];      /* EftBoundVtx: position (4), -, s t (4), colour (4) */
+    int idx[15][4];
+} WallMesh;
+#define WALL_MAX 8
+/* The last patches handed over, oldest overwritten. Not "this tick's and the one before's": the game hands them
+   over while it builds its list, a vertical blank before that list is shown, so a tick's patches come in before
+   the previous tick's real picture is out. Which are a picture's is told by the view's matrix (interp_wall). */
+#define WALL_RING 32
+static WallMesh sWallRing[WALL_RING];
+static uint32_t sWallSeq; /* patches handed over so far */
+static uint64_t sWallTex0; /* TEX0 of the wall's texture: the triangles drawn with it are the wall's */
+static float sWallUs = 1.0f, sWallVs = 1.0f;
+extern int gsInterp;
+
+/* From the game (src/battle/eft_g.c, EftBound_DrawMesh / EftBound_DrawMeshCulled), each time it draws a wall mesh:
+   the 24 points before anything is cut off, the quads, the view's matrix. */
+void Port_WallMesh(const void *key, int second, int culled, const float *screen, const float *cam, const float *vtx, int quadCount,
+                   const void *quads, unsigned long long tex0) {
+    WallMesh *m;
+    int i;
+
+    if (gPortResim || gsInterp <= 0 || quadCount <= 0 || quadCount > 15) {
+        return;
+    }
+    if (getenv("BT3_INTERP_WALLLOG") != NULL && atoi(getenv("BT3_INTERP_WALLLOG")) > 2) {
+        extern unsigned gPortVBlanks;
+        fprintf(stderr, "wall: hook at frame %u blank %u: key %p second %d culled %d m0 %.4f (have %d)\n", gGsFrame, gPortVBlanks, key, second, culled, screen[0], (int)sWallSeq);
+    }
+    sWallTex0 = tex0;
+    m = &sWallRing[sWallSeq++ % WALL_RING];
+    m->key = key;
+    m->second = second != 0;
+    m->culled = culled;
+    m->nq = quadCount;
+    memcpy(m->S, screen, sizeof(m->S));
+    memcpy(m->cam, cam, sizeof(m->cam));
+    memcpy(m->v, vtx, sizeof(m->v));
+    for (i = 0; i < quadCount; i++) {
+        memcpy(m->idx[i], (const uint8_t *)quads + i * 0x20, sizeof(m->idx[i])); /* EftBoundQuad: four vertex numbers, a normal */
+    }
 }
 
 /* Two draws can be merged into one call when everything they need is the same. `scissor` is compared as
    four ints (the scissor a draw has recorded). */
 static int same_state(const GsDraw *a, const GsDraw *b) {
-    return !a->native && a->vu == b->vu && a->target == b->target && a->tex == b->tex && a->sampler == b->sampler && a->pipeline == b->pipeline &&
+    return !a->native && a->vu == b->vu && a->wall == b->wall && a->target == b->target && a->tex == b->tex && a->sampler == b->sampler && a->pipeline == b->pipeline &&
            memcmp(a->mode, b->mode, sizeof(a->mode)) == 0 && a->misc[0] == b->misc[0] && a->misc[1] == b->misc[1] &&
            a->misc[2] == b->misc[2] && a->misc[3] == b->misc[3] && a->blendc == b->blendc &&
            memcmp(a->rect, b->rect, sizeof(a->rect)) == 0 && memcmp(a->orig, b->orig, sizeof(a->orig)) == 0 &&
@@ -780,6 +842,11 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
            blocks of a GS pixel, which a replacement of several texels per GS pixel is not; held to the GS's grid
            its letters stepped one after the other while a piece glided (BT3_TEX_GRID=1: the grid rule, to compare). */
         d.orig[3] = getenv("BT3_TEX_GRID") != NULL && atoi(getenv("BT3_TEX_GRID")) != 0 ? 0.0f : 1.0f;
+    }
+    if (type == 3 && sWallTex0 != 0 && t0 == sWallTex0) { /* the wall at the edge of the map (Port_WallMesh) */
+        d.wall = 1;
+        sWallUs = us;
+        sWallVs = vs;
     }
     d.first = gsVertCount;
     if (type == 6) { /* sprite: two corners, flat colour and depth of the second vertex */
@@ -916,6 +983,7 @@ void GsGpu_DrawVu6(int ctx, const float *vertices, uint32_t count, const float *
     u.misc[0] = (float)(gGs.xyoffset[ctx] & 0xFFFF) / 16.0f;
     u.misc[1] = (float)((gGs.xyoffset[ctx] >> 32) & 0xFFFF) / 16.0f;
     u.misc[2] = ((gGs.zbuf[ctx] >> 24) & 15) == 0 ? 4294967295.0f : ((gGs.zbuf[ctx] >> 24) & 15) == 1 ? 16777215.0f : 65535.0f;
+    if (depth_frac()) { u.misc[2] = -u.misc[2]; }
     d.vu = 3;
     d.first = gsVuIdxCount;
     for (i = 0; i + 2 < count; i++) { /* strip -> triangles, without the flagged ones */
@@ -973,6 +1041,7 @@ void GsGpu_DrawVu4(int ctx, const float *vertices, uint32_t count, const float *
     u.misc[0] = (float)(gGs.xyoffset[ctx] & 0xFFFF) / 16.0f;
     u.misc[1] = (float)((gGs.xyoffset[ctx] >> 32) & 0xFFFF) / 16.0f;
     u.misc[2] = ((gGs.zbuf[ctx] >> 24) & 15) == 0 ? 4294967295.0f : ((gGs.zbuf[ctx] >> 24) & 15) == 1 ? 16777215.0f : 65535.0f;
+    if (depth_frac()) { u.misc[2] = -u.misc[2]; }
     d.vu = 2;
     d.first = gsVuIdxCount;
     for (i = 0; i + 2 < count; i++) { /* strip -> triangles */
@@ -1025,6 +1094,7 @@ void GsGpu_DrawVu0(int layer, int ctx, const float *vertices, uint32_t count, co
     u.misc[0] = (float)(gGs.xyoffset[ctx] & 0xFFFF) / 16.0f;
     u.misc[1] = (float)((gGs.xyoffset[ctx] >> 32) & 0xFFFF) / 16.0f;
     u.misc[2] = ((gGs.zbuf[ctx] >> 24) & 15) == 0 ? 4294967295.0f : ((gGs.zbuf[ctx] >> 24) & 15) == 1 ? 16777215.0f : 65535.0f;
+    if (depth_frac()) { u.misc[2] = -u.misc[2]; }
     u.misc[3] = (float)layer;
     u.light2[0] = consts[41]; u.light2[1] = consts[45]; u.light2[2] = consts[49]; u.light2[3] = consts[53];
     d.vu = 1;
@@ -2552,6 +2622,7 @@ static int interp_build(float t, int first) {
 typedef struct InterpPrim {
     uint32_t sig, first; /* first: index of its first vertex */
     uint32_t kind;       /* sig without the number of triangles: how it is drawn */
+    uint32_t base;       /* kind without the texture (interp_kinds_follow) */
     uint32_t view;       /* the view it is drawn in (INTERP_SCISSOR_ID) */
     uint8_t flat2d, tris; /* tris: how many triangles the piece has (a quad: 2) */
 } InterpPrim;
@@ -2569,16 +2640,29 @@ static unsigned gInterpTris, gInterpTrisBlended, gInterpTrisCamera;
 /* Where a vertex the game transformed itself was one picture earlier if the thing it belongs to stood still: back to
    clip space (its q is 1 / w), through the camera's change, and to pixels again. 0 = it cannot be said. */
 static int interp_reproject_with(const float *D, const Vtx *v, float *x, float *y, float *z) {
-    float w, c[4], p[4];
+    float w, c[4], p[4], zs, zadd;
     int i;
 
     if (!(v->q > 1e-20f) || !(v->q < 1e20f)) {
         return 0;
     }
+    /* The depth the game gave the corner: what put() stored is that plus a half and the lead (GS_Z_LEAD). Taken as
+       it is, a far corner (depth about 1000 of 16 million, where one step is a long way) was put back in the world
+       well in front of where it is, and the camera's sideways movement then moved it too far: a distant waterfall
+       jumped sideways in every in-between picture (found by the user). */
+    zadd = depth_frac() ? 0.0f : 0.5f;
+    zs = v->z * sInterpZMax - zadd;
+    if (getenv("BT3_INTERP_ZRAW") != NULL) { /* (testing: the stored depth as it is, the fault this corrects) */
+        zs += zadd;
+        zadd = 0.0f;
+    } else if (!depth_frac() && zs < sInterpZMax - (float)GS_Z_LEAD) {
+        zs -= (float)GS_Z_LEAD;
+        zadd += (float)GS_Z_LEAD;
+    }
     w = 1.0f / v->q;
     c[0] = (v->x + sInterpOffX) * w;
     c[1] = (v->y + sInterpOffY) * w;
-    c[2] = v->z * sInterpZMax * w;
+    c[2] = zs * w;
     c[3] = w;
     for (i = 0; i < 4; i++) {
         p[i] = D[i] * c[0] + D[4 + i] * c[1] + D[8 + i] * c[2] + D[12 + i] * c[3];
@@ -2588,7 +2672,7 @@ static int interp_reproject_with(const float *D, const Vtx *v, float *x, float *
     }
     *x = p[0] / p[3] - sInterpOffX;
     *y = p[1] / p[3] - sInterpOffY;
-    *z = p[2] / p[3] / sInterpZMax;
+    *z = (p[2] / p[3] + zadd) / sInterpZMax; /* (stored the way put() stores it) */
     return 1;
 }
 
@@ -2725,6 +2809,7 @@ static uint32_t interp_prims(InterpPrim *out) {
             out[count].view = INTERP_SCISSOR_ID(d);
             out[count].sig = ((uint32_t)d->tex * 2654435761u) ^ ((uint32_t)d->pipeline * 40503u) ^ (role * 0x9E3779B1u) ^ (tris * 0x85EBCA6Bu) ^ (out[count].view * 0xC2B2AE35u);
             out[count].kind = ((uint32_t)d->tex * 2654435761u) ^ ((uint32_t)d->pipeline * 40503u) ^ (role * 0x9E3779B1u) ^ (out[count].view * 0xC2B2AE35u);
+            out[count].base = ((uint32_t)d->pipeline * 40503u) ^ (role * 0x9E3779B1u) ^ (out[count].view * 0xC2B2AE35u);
             out[count].first = d->first + k;
             out[count].flat2d = d->misc[3] != 0.0f;
             out[count].tris = (uint8_t)tris;
@@ -2765,6 +2850,71 @@ static int interp_kind_find(uint32_t kind, int add) {
     memset(&sInterpKinds[sInterpKindCount], 0, sizeof(sInterpKinds[0]));
     sInterpKinds[sInterpKindCount].kind = kind;
     return (int)sInterpKindCount++;
+}
+
+/* A surface whose texture is another one this tick (a waterfall's water is a few pictures shown in turn; a texture
+   put into GS memory again) is a kind that was not there a tick ago, and the kind it was is gone. Nothing of it was
+   found in the previous picture then, so all of it stayed where this tick has it while the scenery around it was
+   drawn part of the way: a distant waterfall a camera's step to the side for one in-between picture in about
+   twenty-five (found by the user, on a video of his screen). The previous picture's pieces of the kind that is
+   gone are given the new kind's name, where the two are drawn the same way but for the texture. */
+static void interp_kinds_follow(void) {
+    enum { MAXK = 512 };
+    static uint32_t ck[MAXK], cb[MAXK], pk[MAXK], pb[MAXK];
+    uint32_t nc = 0, np = 0, i, j, changed = 0;
+
+    for (i = 0; i < sInterpPrimCount; i++) {
+        for (j = 0; j < nc && ck[j] != sInterpPrims[i].kind; j++) {
+        }
+        if (j == nc && nc < MAXK) {
+            ck[nc] = sInterpPrims[i].kind;
+            cb[nc++] = sInterpPrims[i].base;
+        }
+    }
+    for (i = 0; i < sInterpPrevPrimCount; i++) {
+        for (j = 0; j < np && pk[j] != sInterpPrevPrims[i].kind; j++) {
+        }
+        if (j == np && np < MAXK) {
+            pk[np] = sInterpPrevPrims[i].kind;
+            pb[np++] = sInterpPrevPrims[i].base;
+        }
+    }
+    for (i = 0; i < nc; i++) {
+        uint32_t take = np, a;
+        for (j = 0; j < np && pk[j] != ck[i]; j++) {
+        }
+        if (j < np) {
+            continue; /* it was there */
+        }
+        for (j = 0; j < np; j++) { /* one that is gone, drawn the same way; only if there is exactly one such */
+            if (pb[j] != cb[i]) {
+                continue;
+            }
+            for (a = 0; a < nc && ck[a] != pk[j]; a++) {
+            }
+            if (a < nc) {
+                continue; /* (still there) */
+            }
+            if (take != np) {
+                take = np + 1;
+                break;
+            }
+            take = j;
+        }
+        if (take < np) {
+            for (a = 0; a < sInterpPrevPrimCount; a++) {
+                if (sInterpPrevPrims[a].kind == pk[take]) {
+                    sInterpPrevPrims[a].kind = ck[i];
+                    sInterpPrevPrims[a].sig = ck[i] ^ ((uint32_t)sInterpPrevPrims[a].tris * 0x85EBCA6Bu);
+                }
+            }
+            pk[take] = ck[i];
+            changed = 1;
+        }
+    }
+    if (changed) {
+        qsort(sInterpPrevPrims, sInterpPrevPrimCount, sizeof(InterpPrim), interp_prim_cmp);
+    }
 }
 
 static void interp_static_kinds(void) {
@@ -2839,6 +2989,322 @@ static void interp_static_kinds(void) {
     }
 }
 
+/* ---- the wall at the edge of the map in an in-between picture ------------------------------------------------
+ * The wall is not scenery: the game builds it anew every tick as a patch of 6 x 4 points on the map's cylinder,
+ * centred on the fighter's bearing and height (EftBound_BuildWall), with a texture that is laid out in the world
+ * and scrolls, and cuts its triangles off at the edges of the view before the GS gets them. As pieces moved by the
+ * camera's change it tore: the patch travels with the fighter, and its cut pieces are different ones every tick
+ * (two attempts on the pieces, "none moves if one cannot" and "all move if most can", both looked worse). So the
+ * game hands over the patch itself (Port_WallMesh), and an in-between picture gets the patch part of the way
+ * between the two ticks' (points, texture coordinates, colours), seen by the camera part of its way: the tick's
+ * own wall triangles are taken out of that picture and these put in their place.
+ * The points go through the tick's own world-to-screen matrix and then the camera's change for the part of the
+ * way (sInterpDt), which is how every other piece of scenery gets there. Only the plane in front of the eye is
+ * cut here; the screen's edges are the GPU's. */
+static struct { uint32_t draw, first, count; } sWallPatch[WALL_MAX];
+static int sWallPatches;
+
+typedef struct WallPt { float p[4], s, t, col[4]; } WallPt;
+
+static void wall_lerp_pt(WallPt *o, const WallPt *a, const WallPt *b, float k) {
+    int i;
+    for (i = 0; i < 4; i++) {
+        o->p[i] = a->p[i] + (b->p[i] - a->p[i]) * k;
+        o->col[i] = a->col[i] + (b->col[i] - a->col[i]) * k;
+    }
+    o->s = a->s + (b->s - a->s) * k;
+    o->t = a->t + (b->t - a->t) * k;
+}
+
+/* One triangle of the patch (already at its part of the way, in the world): through the matrices, cut at the eye's
+   plane, written as up to two triangles. Returns the vertices written. */
+static uint32_t wall_tri(Vtx *out, uint32_t room, const WallMesh *m, const WallPt *w3, float wNear, const float *Dt, float zBias) {
+    WallPt in[3], poly[9];
+    int i, k, n = 0;
+    uint32_t made = 0;
+    float fs = (float)(int)w3[0].s, ft = (float)(int)w3[0].t; /* (the game takes the first corner's whole repeats off all three) */
+
+    for (i = 0; i < 3; i++) {
+        float c[4];
+        in[i] = w3[i];
+        in[i].s -= fs;
+        in[i].t -= ft;
+        for (k = 0; k < 4; k++) {
+            c[k] = m->S[k] * w3[i].p[0] + m->S[4 + k] * w3[i].p[1] + m->S[8 + k] * w3[i].p[2] + m->S[12 + k];
+        }
+        for (k = 0; k < 4; k++) {
+            in[i].p[k] = Dt[k] * c[0] + Dt[4 + k] * c[1] + Dt[8 + k] * c[2] + Dt[12 + k] * c[3];
+        }
+    }
+    /* Cut as the game cuts it (EftGfx_DrawPolyScaledZ: five planes, before the division): at the eye's plane and
+       at the edges of the view with its margin (seen in what reaches the GS: x from -29.69 to 541.69, y from -26
+       to 474). Not only for the eye's plane: the GS shades a triangle straight across the screen, so where the
+       corners are decides the colours in between. Left whole, with corners far outside, the wall came out a
+       little brighter towards the top than the game's own (the test BT3_INTERP_WALLTEST showed it). */
+    n = 3;
+    memcpy(poly, in, sizeof(in));
+    for (k = 0; k < 5 && n >= 3; k++) {
+        WallPt next[9];
+        float dist[9];
+        int m2 = 0;
+        for (i = 0; i < n; i++) {
+            const float *q = poly[i].p;
+            dist[i] = k == 0 ? q[3] - wNear :
+                      k == 1 ? q[0] - (sInterpOffX - 29.69f) * q[3] :
+                      k == 2 ? (sInterpOffX + 541.69f) * q[3] - q[0] :
+                      k == 3 ? q[1] - (sInterpOffY - 26.0f) * q[3] : (sInterpOffY + 474.0f) * q[3] - q[1];
+        }
+        for (i = 0; i < n; i++) {
+            int j = (i + 1) % n;
+            if (dist[i] >= 0.0f) {
+                next[m2++] = poly[i];
+            }
+            if ((dist[i] >= 0.0f) != (dist[j] >= 0.0f)) {
+                wall_lerp_pt(&next[m2++], &poly[i], &poly[j], dist[i] / (dist[i] - dist[j]));
+            }
+        }
+        n = m2;
+        memcpy(poly, next, sizeof(WallPt) * (size_t)n);
+    }
+    for (i = 2; i < n && made + 3 <= room; i++) {
+        const WallPt *tri[3] = {&poly[0], &poly[i - 1], &poly[i]};
+        for (k = 0; k < 3; k++) {
+            const WallPt *v = tri[k];
+            Vtx *o = &out[made++];
+            float q = 1.0f / v->p[3], z = v->p[2] * q;
+            int ch;
+            uint8_t bytes[4];
+            z += zBias + (float)GS_Z_LEAD; /* (the lead every piece the game transforms itself has: put()) */
+            z = z < 0.0f ? 0.0f : z > sInterpZMax - 1.0f ? sInterpZMax - 1.0f : z;
+            for (ch = 0; ch < 4; ch++) {
+                float cc = v->col[ch] < 0.0f ? 0.0f : v->col[ch] > 255.0f ? 255.0f : v->col[ch];
+                bytes[ch] = (uint8_t)cc;
+            }
+            o->x = v->p[0] * q - sInterpOffX;
+            o->y = v->p[1] * q - sInterpOffY;
+            o->z = (floorf(z) + 0.5f) / sInterpZMax;
+            o->s = v->s * q * sWallUs;
+            o->t = v->t * q * sWallVs;
+            o->q = q;
+            o->r = bytes[0]; o->g = bytes[1]; o->b = bytes[2]; o->a = bytes[3];
+        }
+    }
+    return made;
+}
+
+static void interp_wall_restore(void) {
+    while (sWallPatches > 0) {
+        sWallPatches--;
+        gsDraws[sWallPatch[sWallPatches].draw].first = sWallPatch[sWallPatches].first;
+        gsDraws[sWallPatch[sWallPatches].draw].count = sWallPatch[sWallPatches].count;
+    }
+    /* (not the vertex count: the back end has emptied the lists, and the tick's own counts are put back for its
+       real picture by interp_counts_restore; a count left here read as "the game has drawn already" and the tick's
+       real picture and its being remembered were dropped) */
+}
+
+static void interp_wall_into(float t, Vtx *buf, int test);
+
+static void interp_wall(float t) {
+    interp_wall_into(t, sInterpBlendVerts, getenv("BT3_INTERP_WALLTEST") != NULL);
+}
+
+/* The tick's real picture, while in-between pictures are shown: its wall drawn the same way, at the tick itself. */
+static void interp_wall_real(void) {
+    if (getenv("BT3_INTERP_WALLGAME") == NULL) { /* (the switch: the game's own triangles in the real picture, to compare) */
+        interp_wall_into(1.0f, gsVerts, 1);
+    }
+}
+
+static void interp_wall_into(float t, Vtx *buf, int test) {
+    static const float kSame[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    /* BT3_INTERP_WALLTEST=1 (with BT3_INTERP_ONLY): the patch as it is at the tick itself, seen by the tick's own
+       camera. The picture must then be the game's own picture of the tick: the test that what is drawn here is
+       what the game draws. */
+    const float *Dt = test ? kSame : sInterpDt;
+    uint32_t ids[4], n;
+    int idx0[4], nids = 0, k, i;
+
+    if (test) {
+        t = 1.0f;
+    }
+
+    sWallPatches = 0;
+    if (getenv("BT3_INTERP_WALLLOG") != NULL && sWallSeq != 0) {
+        uint32_t wd = 0, wv = 0;
+        for (n = 0; n < gsDrawCount; n++) {
+            if (gsDraws[n].wall) { wd++; wv += gsDraws[n].count; }
+        }
+        fprintf(stderr, "wall: frame %u: %d patches handed over so far, %u draws with %u vertices are the wall's (tex0 %llx)\n", gGsFrame, (int)sWallSeq, wd, wv, (unsigned long long)sWallTex0);
+    }
+    if (sWallSeq == 0 || getenv("BT3_INTERP_NOWALL") != NULL) {
+        return;
+    }
+    for (n = 0; n < gsDrawCount; n++) { /* the views the wall is drawn in, the left one first */
+        const GsDraw *d = &gsDraws[n];
+        uint32_t id;
+        if (!d->wall || d->vu || d->native || d->count < 3) {
+            continue;
+        }
+        id = INTERP_SCISSOR_ID(d);
+        for (k = 0; k < nids && ids[k] != id; k++) {
+        }
+        if (k == nids && nids < 4) {
+            for (i = nids; i > 0 && gsDraws[idx0[i - 1]].scissor[0] > d->scissor[0]; i--) {
+                ids[i] = ids[i - 1];
+                idx0[i] = idx0[i - 1];
+            }
+            ids[i] = id;
+            idx0[i] = (int)n;
+            nids++;
+        }
+    }
+    for (k = 0; k < nids; k++) {
+        Vtx *out = &buf[gsVertCount];
+        uint32_t room = MAX_VERTS - gsVertCount, made = 0;
+        float wNear = 0.0f;
+        int mi, first = -1, used = 0;
+
+        if (!interp_view_select(ids[k]) || (!sInterpHaveDt && !test)) {
+            continue; /* a cut, or no camera known: the wall stays this tick's */
+        }
+        for (n = 0; n < gsDrawCount; n++) { /* how near the game lets it come to the eye: the nearest corner it drew */
+            const GsDraw *d = &gsDraws[n];
+            uint32_t j;
+            if (d->wall && !d->vu && !d->native && INTERP_SCISSOR_ID(d) == ids[k]) {
+                for (j = 0; j < d->count; j++) {
+                    float w = gsVerts[d->first + j].q > 0.0f ? 1.0f / gsVerts[d->first + j].q : 0.0f;
+                    if (w > 0.0f && (wNear == 0.0f || w < wNear)) {
+                        wNear = w;
+                    }
+                }
+            }
+        }
+        if (!(wNear > 0.0f)) {
+            continue;
+        }
+        for (mi = 0; mi < WALL_RING && mi < (int)sWallSeq; mi++) { /* from the newest back */
+            const WallMesh *m = &sWallRing[(sWallSeq - 1 - (uint32_t)mi) % WALL_RING], *p = m;
+            float cam[3];
+            int q, c, pi;
+            /* The game hands the patch over once per camera it draws for (both, in a two-player battle, also when
+               only one view is shown): this picture's are those with the matrix its scenery is drawn with. Each
+               once (the newest). */
+            for (pi = 0; pi < (int)nscreens && memcmp(screens[pi], m->S, sizeof(m->S)) != 0; pi++) {
+            }
+            if (pi == (int)nscreens) {
+                continue;
+            }
+            for (pi = 0; pi < mi; pi++) {
+                const WallMesh *o = &sWallRing[(sWallSeq - 1 - (uint32_t)pi) % WALL_RING];
+                if (o->key == m->key && o->culled == m->culled && memcmp(o->S, m->S, sizeof(m->S)) == 0) {
+                    break;
+                }
+            }
+            if (pi < mi) {
+                continue;
+            }
+            used++;
+            /* the same patch a tick before: the one handed over last before this one for the same camera */
+            for (pi = mi + 1; pi < WALL_RING && pi < (int)sWallSeq; pi++) {
+                const WallMesh *o = &sWallRing[(sWallSeq - 1 - (uint32_t)pi) % WALL_RING];
+                if (o->key == m->key && o->second == m->second && o->culled == m->culled) {
+                    p = o;
+                    break;
+                }
+            }
+            for (c = 0; c < 3; c++) {
+                cam[c] = p->cam[c] + (m->cam[c] - p->cam[c]) * t;
+            }
+            for (q = 0; q < m->nq; q++) {
+                WallPt w[4];
+                int j;
+                for (j = 0; j < 4; j++) {
+                    int vi = m->idx[q][j];
+                    const float *a, *b;
+                    float as, at;
+                    if (vi < 0 || vi >= 24) {
+                        break;
+                    }
+                    a = p->v[vi];
+                    b = m->v[vi];
+                    as = a[8];
+                    at = a[9];
+                    /* (the texture's scroll starts again at a whole repeat: the same place, one further) */
+                    if (b[8] - as > 0.5f) { as += 1.0f; } else if (b[8] - as < -0.5f) { as -= 1.0f; }
+                    if (b[9] - at > 0.5f) { at += 1.0f; } else if (b[9] - at < -0.5f) { at -= 1.0f; }
+                    for (c = 0; c < 3; c++) {
+                        w[j].p[c] = a[c] + (b[c] - a[c]) * t;
+                    }
+                    w[j].p[3] = 1.0f;
+                    w[j].s = as + (b[8] - as) * t;
+                    w[j].t = at + (b[9] - at) * t;
+                    for (c = 0; c < 4; c++) {
+                        w[j].col[c] = a[12 + c] + (b[12 + c] - a[12 + c]) * t;
+                    }
+                }
+                if (j < 4) {
+                    continue;
+                }
+                if (m->culled) { /* only the quads that face the camera, as the game decides it */
+                    float e1[3], e2[3], nrm[3], dv[3];
+                    for (c = 0; c < 3; c++) {
+                        e1[c] = w[1].p[c] - w[0].p[c];
+                        e2[c] = w[2].p[c] - w[1].p[c];
+                        dv[c] = w[1].p[c] - cam[c];
+                    }
+                    nrm[0] = e2[1] * e1[2] - e2[2] * e1[1];
+                    nrm[1] = e2[2] * e1[0] - e2[0] * e1[2];
+                    nrm[2] = e2[0] * e1[1] - e2[1] * e1[0];
+                    if (!(nrm[0] * dv[0] + nrm[1] * dv[1] + nrm[2] * dv[2] < 0.0f)) {
+                        continue;
+                    }
+                }
+                {
+                    WallPt ta[3] = {w[0], w[1], w[2]}, tb[3] = {w[2], w[1], w[3]};
+                    /* Two fighters at the same stretch of the wall: two patches in one surface. In the game, which
+                       of them a pixel shows over the other falls to the last bit of its depth, triangle by triangle;
+                       drawn here the bits fall differently and the wall changed its shade in triangles from the real
+                       picture to the in-between one. So each patch is drawn a few depth steps in front of the one
+                       before it (every later one is then drawn over the earlier, everywhere), and the tick's real
+                       picture gets the wall drawn this way too (interp_wall_real), so that the pictures agree. */
+                    made += wall_tri(out + made, room - made, m, ta, wNear, Dt, 4.0f * (float)(WALL_RING - mi));
+                    made += wall_tri(out + made, room - made, m, tb, wNear, Dt, 4.0f * (float)(WALL_RING - mi));
+                }
+            }
+        }
+        if (getenv("BT3_INTERP_WALLLOG") != NULL) {
+            fprintf(stderr, "wall: frame %u view %d of %d: %d patches are this view's, %u vertices made, nearest w %.2f\n", gGsFrame, k, nids, used, made, wNear);
+        }
+        if (used == 0) {
+            continue; /* none of the patches is this view's: its wall stays this tick's */
+        }
+        /* the tick's own wall triangles of this view give way: the first of its draws takes the new ones, the
+           others (and the first, if there is nothing to show) are drawn as nothing */
+        for (n = 0; n < gsDrawCount; n++) {
+            GsDraw *d = &gsDraws[n];
+            uint32_t j;
+            if (!d->wall || d->vu || d->native || d->count < 3 || INTERP_SCISSOR_ID(d) != ids[k]) {
+                continue;
+            }
+            if (first < 0 && made > 0 && sWallPatches < WALL_MAX) {
+                first = (int)n;
+                sWallPatch[sWallPatches].draw = n;
+                sWallPatch[sWallPatches].first = d->first;
+                sWallPatch[sWallPatches].count = d->count;
+                sWallPatches++;
+                d->first = gsVertCount;
+                d->count = made;
+                gsVertCount += made;
+                continue;
+            }
+            for (j = 1; j < d->count; j++) {
+                buf[d->first + j] = buf[d->first];
+            }
+        }
+    }
+}
+
 static void interp_build_verts(float t) {
     uint32_t i, lo = 0;
     int staticKind = 0;
@@ -2846,6 +3312,7 @@ static void interp_build_verts(float t) {
 
     if (forFrame != gGsFrame) {
         forFrame = gGsFrame;
+        interp_kinds_follow();
         interp_static_kinds();
     }
 
@@ -3215,25 +3682,31 @@ static void interp_show(int step) {
         }
         if (getenv("BT3_INTERP_3D") == NULL) { /* (BT3_INTERP_3D=1: the vertex programs' draws only, as the first prototype) */
             interp_build_verts(t);
+            interp_wall(t);
             gsVerts = sInterpBlendVerts;
         }
         gsVuUni = sInterpBlend;
-        {
+        if (getenv("BT3_INTERP_REALONLY") == NULL) { /* (testing: only the ticks' real pictures are shown, numbered as without in-between pictures) */
             uint64_t t0 = gpu_now();
             sBackend->frameEnd();
             interp_cost(gpu_now() - t0);
+        } else {
+            gsVertCount = gsVuVertCount = gsVuIdxCount = gsVuUniCount = gsDrawCount = 0; /* (as the back end leaves them) */
         }
+        interp_wall_restore();
         gsVuUni = real;
         gsVerts = realVerts;
         interp_present_log('B');
         gInterpShown++;
     } else {
         interp_remember(); /* (only now: the in-between pictures were built from the previous tick's copy) */
+        interp_wall_real();
         {
             uint64_t t0 = gpu_now();
             sBackend->frameEnd();
             interp_cost(gpu_now() - t0);
         }
+        interp_wall_restore();
         interp_present_log('R');
         scale_apply();
     }

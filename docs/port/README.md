@@ -1566,3 +1566,55 @@ charges behind a tree or a building, a soft dark-blue oval sits on it, where he 
   the charging player's own view and the split-screen picture are the same byte for byte as before; the
   regression replay passes. Not checked: in a real online match, by anyone (a host and a joiner connect as
   before, but that test does not reach a fight).
+
+## In-between pictures: the wall at the edge of the map, a waterfall a step to the side; depth again (2026-10-11)
+
+**The wall at the edge of the map tore in in-between pictures** (found by the user, flying up and down along it).
+It is not scenery: `EftBound_BuildWall` (src/battle/eft_g.c) builds it anew every tick as a patch of 6 x 4 points on
+the map's cylinder, centred on the fighter's bearing and height, with a texture laid out in the world that also
+scrolls, and its triangles reach the GS cut off at the edges of the view, differently every tick. As pieces moved
+by the camera's change, some passed the questions asked of a piece and some did not. Two attempts on the pieces
+were worse and were taken back (told by the user in one case, seen in captures in the other): "none of a kind
+moves if one cannot" (the wall then stood still against what moved behind it) and "all move if most can" (the
+pieces that fail are really computed wrong: parts of the wall flew off).
+- Now the game hands the patch over (`Port_WallMesh`, called from EftBound_DrawMesh / DrawMeshCulled under
+  `#ifdef PORT`: the 24 points, texture coordinates, colours, the quads, the view's matrix), and `interp_wall`
+  (gs_draw.c) draws the patch part of the way between the two ticks', through the tick's matrix and the camera's
+  change for that part (sInterpDt), cut at the view's edges as the game cuts it (the GS shades a triangle
+  straight across the screen, so where its corners are decides the colours: left whole, the wall was brighter
+  towards the top). The tick's own wall triangles are taken out of that picture.
+- Patches come in a vertical blank before the list they belong to is shown, so they are kept in a ring and a
+  picture's are found by the view's matrix.
+- Two fighters at the same stretch: two patches in one surface, and in the game which one a pixel shows on top
+  falls to the last bit of depth, triangle by triangle. Here each patch is drawn a few depth steps in front of the
+  one before, and with in-between pictures on, the tick's REAL picture gets the wall drawn this way too
+  (`interp_wall_real`; BT3_INTERP_WALLGAME=1: the game's own). So with Smooth motion on, the wall's shade where
+  two patches overlap is not the original's (on Rocky Area up to 85 of 765 in a pixel, hard to see side by side);
+  with one fighter at the wall a handful of pixels differ; with Smooth motion off nothing is touched.
+- The test that was promised to the user: the patch drawn at the tick itself (BT3_INTERP_WALLTEST=1 with
+  BT3_INTERP_ONLY=1 and BT3_INTERP_T=1.0) against the real picture shown (BT3_INTERP_REALONLY=1): the same in
+  four frames of two stages (three identical, one with 2 pixels off). Checked by the user on screen.
+- A side finding: saving a picture every frame made `interp_cost` think the machine slow and the in-between
+  pictures stopped (captures of "in-between pictures" that were the real ones). BT3_INTERP_NOCAP=1 for captures.
+
+**A distant waterfall a camera's step to the side for one in-between picture in about 25** (found by the user,
+moving sideways; shown on a video of his screen, frame 47 of 100). The fall's water is a few textures shown in
+turn. A piece's kind has its texture in it, so in the tick the texture changed the fall was a kind that had not
+been there: nothing of it was found in the previous picture and all of it stayed where the tick has it.
+`interp_kinds_follow` gives the previous picture's pieces of a kind that is gone the name of the new kind that is
+drawn the same way but for the texture (only when there is exactly one such). Measured on his recording, 121
+in-between pictures with the camera moving sideways: the fall out of step with the rock in 4 before, in none
+after. Checked by the user on screen. Two wrong turns on the way, both from not having seen it: "the depth
+change" (his test with BT3_DEPTH_FRAC=1 seemed to say so; that switch breaks in-between pictures by itself) and
+"the stored depth's offset moves a far corner sideways" (corrected in `interp_reproject_with`, right in principle,
+no measurable effect).
+
+**Depth, third part.** With whole-number depth per pixel the fall's missing part was filled, but as a speckle that
+changed every picture while the camera moved: the rock's whole number, computed by the GPU, comes out one higher
+than the fall's on scattered pixels. What the game transforms itself now leads by two depth steps (`GS_Z_LEAD`,
+put() in gs_draw.c; not past the nearest depth). On the user's recording the lead changes about 24 pixels a
+frame of 917,504, nearly all at the fall. BT3_DEPTH_FRAC=1 turns the whole-number rule off, to compare (not
+with in-between pictures).
+
+Both renderers run with all of this (the user saw the same in each; an Nvidia card's OpenGL and an integrated
+GPU's Vulkan gave the same pictures windowless, 50 pixels apart at most).
