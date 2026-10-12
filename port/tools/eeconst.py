@@ -67,12 +67,17 @@ def parse_hexf(t):
     m = re.match(r"0[xX]([0-9a-fA-F]+)p([+-]?\d+)", t)
     return K(Fraction(int(m.group(1), 16)) * Fraction(2) ** int(m.group(2)), 'f' if isf else 'd')
 
+# `introduced=10.8` in Apple's availability attributes (the macOS SDK's headers) is a version, not a number
+VERSION_KEYS = {"introduced", "deprecated", "obsoleted"}
+
 def lex(text):
     out = []
     for m in TOKEN.finditer(text):
         g = m.lastgroup
         t = m.group(g)
-        if g == "flt":
+        if g == "flt" and len(out) >= 2 and out[-1] == ("op", "=") and out[-2][0] == "id" and out[-2][1] in VERSION_KEYS:
+            out.append(("str", t))
+        elif g == "flt":
             suf = m.group("suf")
             body = t[:-1] if suf else t
             out.append(("k", make(Fraction(body), 'f' if suf in ("f", "F") else 'd')))

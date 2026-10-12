@@ -13,6 +13,7 @@
 #include <string.h>
 #include "plat_stages.h"
 #include "plat_songs.h"
+#include "port_addr.h"
 
 extern void Battle_ClearWork(void);
 extern int BattleReplay_Load(void *buf, int size);
@@ -25,7 +26,7 @@ extern void Demo_SetupBattle(void);
 static int sBattles;
 static int sFromMenu;
 
-#if defined(__x86_64__) && defined(__clang__)
+#if (defined(__x86_64__) || defined(__aarch64__)) && defined(__clang__) /* (the 64-bit builds: game pointers are 4 bytes) */
 #undef __ptr32 /* the Windows headers of mingw define these two away */
 #undef __uptr
 #define GAME_PTR *__ptr32 __uptr
@@ -295,10 +296,10 @@ void Port_Trace(unsigned vblanks) {
                     snprintf(name, sizeof(name), "port/build/heap_%u.bin", now);
                     fp = fopen(name, "wb"); /* a developer's dump: skipped where port/build does not exist */
                     if (fp != NULL) {
-                        fwrite((void *)0x3BE730, 1, 0x1EFB014 - 0x3BE730, fp);
+                        fwrite(Port_Ptr(0x3BE730), 1, 0x1EFB014 - 0x3BE730, fp);
                         fclose(fp);
                     }
-#ifndef _WIN32 /* the linker symbols of an ELF program */
+#if !defined(_WIN32) && !defined(__APPLE__) /* the linker symbols of an ELF program */
                     {   /* the game's global variables too: [__data_start, _end), base address first */
                         extern char __data_start[], _end[];
                         uint32_t base = (uint32_t)(uintptr_t)__data_start;
@@ -334,7 +335,7 @@ void Port_Trace(unsigned vblanks) {
             FILE *fp = fopen(getenv("BT3_DUMP"), "wb");
 
             if (fp != NULL) {
-                fwrite((void *)0x3BE730, 1, 0x1EFB014 - 0x3BE730, fp);
+                fwrite(Port_Ptr(0x3BE730), 1, 0x1EFB014 - 0x3BE730, fp);
                 fclose(fp);
             }
             clock = BtlSeq_GetClock();

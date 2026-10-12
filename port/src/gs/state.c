@@ -29,6 +29,7 @@
 #define XXH_INLINE_ALL
 #include "../../third_party/xxhash/xxhash.h"
 #include "gs_internal.h"
+#include "../port_addr.h"
 
 extern void Port_HeapRegion(uint8_t **base, uint32_t *size); /* plat_mem.c */
 
@@ -67,10 +68,10 @@ static void regions_init(void) {
             int marks = 0;
             while (sRegions < MAX_REGIONS - 2 && fscanf(fp, "%llx %llx", &a, &size) == 2) {
                 if (a < 2) {
-                    marks += (uintptr_t)size == (a == 0 ? (uintptr_t)&gPortResim : (uintptr_t)&gPortVBlanks);
+                    marks += size == Port_Addr(a == 0 ? (const void *)&gPortResim : (const void *)&gPortVBlanks);
                     continue;
                 }
-                sRegion[sRegions].p = (const uint8_t *)(uintptr_t)a;
+                sRegion[sRegions].p = (const uint8_t *)Port_Ptr(a);
                 sRegion[sRegions].n = (size_t)size;
                 sRegion[sRegions].what = "globals";
                 sRegions++;
@@ -91,7 +92,7 @@ static void regions_init(void) {
     sRegion[sRegions].n = heapSize;
     sRegion[sRegions].what = "heap";
     sRegions++;
-    sRegion[sRegions].p = (const uint8_t *)(uintptr_t)0x70000000u;
+    sRegion[sRegions].p = (const uint8_t *)Port_Ptr(0x70000000u);
     sRegion[sRegions].n = 0x4000;
     sRegion[sRegions].what = "scratchpad";
     sRegions++;
