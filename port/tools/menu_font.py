@@ -263,6 +263,8 @@ def catalog(data):
         add(f'battle-training-{style}',461,1,9,index,['Basic','Intermediate','Advanced'],width=256,
             text_from='battle-training-normal' if index==6 else None)
     for index,style in ((0,'normal'),(1,'selected')):
+        add(f'team-end-{style}',448,2,36,index,['END'],width=256,centered=True,
+            text_from='team-end-normal' if index else None)
         add(f'sound-digits-{style}',453,1,11,index,[],width=128)
         groups[-1]['rectangles']=[dict(text=str(n),x=(n%4)*32,y=(n//4)*32,width=32,height=32) for n in range(10)]
         add(f'character-color-{style}',448,2,29,index,[],width=128)
