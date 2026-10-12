@@ -246,7 +246,7 @@ void Movie_Close(void) {
     }
 }
 
-/* Plays the opening movie from start to end (or until it is skipped) if the user settings don't tell otherwise. */
+/* Plays the opening movie from start to end (or until it is skipped). */
 void Movie_PlayOpening(void) {
     Movie_Open("zs3usop.pss", "zs3usop.adx");
     Movie_Run();

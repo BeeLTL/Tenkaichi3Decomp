@@ -10,9 +10,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
 #include "imgui_impl_opengl3.h"
-#include "namefont.h"
-#include "../../../include/qol.h"
 #include "ui.h"
+#include "namefont.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -984,6 +983,26 @@ static void ui_tab(PortVideo &v) {
     ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
                           "Long health bars: the bars reach from the edges to the timer.\n"
                           "In the middle: the original 4:3 arrangement, next to the timer.");
+    // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
+    static int sSkipLogos = -1, sSkipIntro = -1;
+    if (sSkipLogos < 0) {
+        sSkipLogos = Port_Setting("skip_logos", 0) != 0;
+        sSkipIntro = Port_Setting("skip_intro", 0) != 0;
+    }
+    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0;
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Skip logos", &logos)) {
+        sSkipLogos = logos;
+        Port_SettingSave("skip_logos", sSkipLogos);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the publisher and developer logos. From the next start of the game.");
+    if (ImGui::Checkbox("Skip intro video", &intro)) {
+        sSkipIntro = intro;
+        Port_SettingSave("skip_intro", sSkipIntro);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the opening movie. From the next start of the game.");
 }
 
 extern "C" int gPortMusicFollows; // snd_adx.c: 1 = looping music is sped up or slowed down with the game
@@ -1155,29 +1174,12 @@ static void controls_tab(void) {
         ImGui::EndTable();
     }
 }
-static void qol_tab(void) {
-    bool skiplogo = qol.skiplogos != 0;
-    if (ImGui::Checkbox("Skip logos", &skiplogo))
-    {
-        qol.skiplogos = skiplogo ? 1 : 0;
-        Port_SettingSave("skip_logos", qol.skiplogos);
-        Port_SettingsWrite();
-    }
-    ImGui::SetItemTooltip("Automatically skip logos without user input.");
-    bool skipintro = qol.skipintro != 0;
-    if (ImGui::Checkbox("Skip intro video", &skipintro))
-    {
-        qol.skipintro = skipintro ? 1 : 0;
-        Port_SettingSave("skip_intro", qol.skipintro);
-        Port_SettingsWrite();
-    }
-    ImGui::SetItemTooltip("Automatically skip intro video without user input.");
-}
 
 static void build(void) {
     PortVideo v, was;
     ImGuiIO &io = ImGui::GetIO();
     bool open = true;
+
     GsGpu_GetSettings(&v);
     was = v;
     if (sCapKind == 2 && SDL_GetTicks() > sCapUntil) { // nothing was pressed: the binding stays

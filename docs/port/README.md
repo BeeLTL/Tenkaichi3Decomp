@@ -1976,3 +1976,22 @@ Under PORT, `DiscFusion_UpdateHave` sets both bits, so both plates open their mo
 cannot work without a drive. (Bit 8 of the same word is something else: the ladder's "challenged a higher place".)
 Checked: it builds and the regression replay passes. Not checked: the screen itself, and what the two modes do
 from there.
+
+## Loading screens beyond 4:3, and skipping the logos and the opening (2026-10-12)
+
+Two pull requests.
+
+**#49 (Victorgonl).** The three loading screens are drawn while the menus run, where every 2D page is stretched to
+the width, so their figures came out a third too wide at 16:9. `Load_DrawScreen` now brackets its drawing with
+marker 0x17 (`gsAnchor` 7): the renderer narrows those sprites about the left edge even in menu mode, and the
+scattered items of the third screen are drawn at positions spread over the wider page (`Load_ItemDrawX`). Only where
+things are drawn changes; the stored positions and the random sequence are the game's. Checked offscreen at 4:3,
+16:9 and 21:9 for all three screens (the one shown at the start of the game).
+
+**#50 (Renzo-MGRR).** F1, UI: "Skip logos" and "Skip intro video" (settings `skip_logos`, `skip_intro`, both off).
+`FirstRun_Main` leaves out `Logo_ShowAll` and `Movie_PlayOpening`. Neither loads anything: the third partition is
+loaded beside the logos and waited for after them (`FirstRun_WaitPartition`). The pull request was merged and then
+reworked: its checks were outside `#ifdef PORT` and called a port function from PS2 code, and it added a tab of
+its own and a header in `include/`; the checks now sit behind a macro that is 1 in the PS2 build, and the two
+boxes are on the UI tab. Checked offscreen: with the logos skipped the opening movie is the first thing shown, with
+both skipped the copyright page and then the title; with neither, the regression run is unchanged.
