@@ -125,7 +125,10 @@ def shaders_header():
     No SPIR-V: the Vulkan back end is not built for the browser."""
     GEN.mkdir(parents=True, exist_ok=True)
     arrays = []
-    texts = [(src.name, src.read_bytes()) for src in sorted((ROOT / "port/src/gs/shaders").glob("*")) if src.suffix in (".vert", ".frag")]
+    # LF line endings, as the repository stores them: a checkout with core.autocrlf has CRLF, and the embedded bytes
+    # (so bt3.wasm) would then depend on the checkout's settings
+    texts = [(src.name, src.read_bytes().replace(b"\r\n", b"\n"))
+             for src in sorted((ROOT / "port/src/gs/shaders").glob("*")) if src.suffix in (".vert", ".frag")]
     texts += [(name, wasm_shaders.variant_glsl(name).encode()) for name in sorted(wasm_shaders.VARIANTS)]  # gsnz.frag
     for file, text in texts:
         stem, stage = file.rsplit(".", 1)
