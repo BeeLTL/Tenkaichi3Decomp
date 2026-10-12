@@ -17,6 +17,9 @@ const NOTICE_MS = 6000;
 const UNLOCK_WAIT_MS = 2000, UNLOCK_POLL_MS = 100;
 // The renderers the browser build has (gs_draw.c: BT3_GPU_API), chosen with the page's ?gpu=.
 const RENDERERS = [['gl', 'WebGL 2'], ['webgpu', 'WebGPU']];
+// web_extras.c: stages, songs and texture packs have all been looked for (bits 1, 2, 4)
+const ADDED_ALL_CHECKED = 7;
+
 // The engine's start-up switches the developer panel can restart with (each read once at start).
 const DEBUG_SWITCHES = [
   { env: 'BT3_GS_VERBOSE', label: 'Renderer counts in the log every 30 frames (with WebGL 2 this checks GL errors each frame: slower)' },
@@ -83,6 +86,7 @@ const PANEL = [
     { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
       help: "How fast the game runs (the sound keeps its pitch). 100% is the game's own; 114% is what competitive play uses." },
     { unlock: true },
+    { added: true },
   ] },
 ];
 
@@ -188,7 +192,7 @@ class Bt3Settings {
       tabs.appendChild(tab);
       for (const item of t.items) {
         page.appendChild(item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root : item.saves ? this.saves.buildUi()
-                         : item.unlock ? this.buildUnlock() : this.buildControl(item));
+                         : item.unlock ? this.buildUnlock() : item.added ? this.buildAdded() : this.buildControl(item));
       }
       if (t.tab === 'Video') page.appendChild(this.buildRenderer());
       pages.appendChild(page);
@@ -386,6 +390,30 @@ class Bt3Settings {
       button.disabled = !loaded;
       why.hidden = loaded;
       done.textContent = this.get('unlock_done') ? 'Done.' : '';
+    });
+    return box;
+  }
+
+  // Content added from outside the disc (the engine's web_extras.c): what was found, or why nothing can be.
+  buildAdded() {
+    const box = el('div', { class: 'row' });
+    const status = el('p', { class: 'help' });
+    box.append(el('h3', {}, 'Added stages, songs and texture packs'), status);
+    this.refreshers.push(() => {
+      const kinds = [[this.get('added_stage_count'), 'added stage', 'added stages', 'Stages'],
+                     [this.get('added_song_count'), 'added song', 'added songs', 'Songs'],
+                     [this.get('texture_pack_count'), 'replacement texture', 'replacement textures', 'Texture packs']];
+      const found = kinds.filter(([n]) => n > 0), missing = kinds.filter(([n]) => n === 0);
+      const why = 'The native version finds them in folders next to the game (stages, songs, textures); here the game’s data ' +
+        'folder is read over the network one file at a time and cannot be looked through, so files added there are not found.';
+      if (this.get('added_checked') !== ADDED_ALL_CHECKED) {
+        status.textContent = 'Not looked for yet: the game looks for them while it starts.';
+      } else if (found.length === 0) {
+        status.textContent = `Not available in the browser version. ${why}`;
+      } else {
+        status.textContent = `Found: ${found.map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(', ')}. ` +
+          `${missing.map(([, , , label], i) => (i ? label.toLowerCase() : label)).join(' and ')}: not available in the browser version. ${why}`;
+      }
     });
     return box;
   }
