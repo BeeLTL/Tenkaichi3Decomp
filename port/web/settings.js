@@ -76,6 +76,7 @@ const PANEL = [
     { key: 'clash_square_x', label: 'Worth of one press', type: 'select', when: (s) => s.get('clash_square') === 1,
       options: [[4, '1'], [6, '1.5'], [7, '1.75'], [8, '2']] },
     { bindings: true },
+    { controllers: true },
   ] },
   { tab: 'Extras', items: [
     { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
@@ -97,6 +98,8 @@ class Bt3Settings {
     this.opener = null;     // what had the focus before the panel opened (it gets it back)
     this.refreshers = [];   // one per control: shows the engine's value again
     this.dialog = document.getElementById('settings');
+    this.captureListener = null;  // the guided set-up's, while it runs: the engine's captureDone goes there
+    this.controllers = new Bt3Controllers(this);  // the Controls tab's controller part (controllers.js)
     // the Developer section's live numbers and the diagnostics export (dashboard.js)
     this.dashboard = new Bt3Dashboard({ root: document.getElementById('dev-dashboard'), renderer, data, log, getLog,
                                         getSettings: () => this.snapshot() });
@@ -181,7 +184,8 @@ class Bt3Settings {
       tab.addEventListener('click', () => this.selectTab(tab));
       tabs.appendChild(tab);
       for (const item of t.items) {
-        page.appendChild(item.bindings ? this.buildBindings() : item.unlock ? this.buildUnlock() : this.buildControl(item));
+        page.appendChild(item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root
+                         : item.unlock ? this.buildUnlock() : this.buildControl(item));
       }
       if (t.tab === 'Video') page.appendChild(this.buildRenderer());
       pages.appendChild(page);
@@ -331,6 +335,7 @@ class Bt3Settings {
     const b = el('button', { type: 'button', class: 'bind', 'data-kind': String(kind), 'data-action': String(action) },
       this.bindingName(kind, action));
     b.addEventListener('click', () => {
+      if (this.captureListener) { this.notice('Finish or cancel the guided set-up first.'); return; }  // (one capture at a time)
       this.capturing = { kind, action };
       b.textContent = kind === CAPTURE_KEY ? 'Press a key…' : 'Press a button…';
       b.classList.add('waiting');
@@ -342,6 +347,7 @@ class Bt3Settings {
   }
 
   captureDone() {
+    if (this.captureListener) { this.captureListener(); return; }
     const c = this.capturing;
     this.capturing = null;
     this.persist();
@@ -429,6 +435,7 @@ class Bt3Settings {
     this.call('Bt3Ui_SetOpen', null, [0]);
     this.dialog.close();
     this.dashboard.run(false);
+    this.controllers.closed();
     this.openButton.setAttribute('aria-expanded', 'false');
     // back to the game (its keyboard is the canvas's), unless the panel was opened from another control of the page
     (this.opener && this.opener !== document.body && this.opener !== this.openButton ? this.opener : this.canvas).focus();
@@ -444,6 +451,7 @@ class Bt3Settings {
   refresh() {
     if (!this.mod) return;
     for (const r of this.refreshers) r();
+    this.controllers.refresh();
   }
 
   // The stage's shape follows the picture's (the engine sizes the canvas to the aspect ratio: GsDraw_WindowShape).

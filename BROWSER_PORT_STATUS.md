@@ -437,6 +437,43 @@ calls glGetError every frame, a GPU sync: don't compare GL timings taken with it
 **Not implemented**: native pass 2 (alpha key) is no longer recorded; if it ever were, it is reported, not drawn. (The
 settings window no longer depends on the renderer: see "Settings panel in the page".)
 
+### Controllers: devices, live view, guided set-up, presets, test (2026-10-12) — verified with simulated controllers
+The Controls tab's controller part (`port/web/controllers.js`), on the engine's own input model (gs_input.c: a key per
+action, a controller button per pad button, a controller slot per player = the n-th controller SDL lists):
+- **Devices**: the browser's controllers (Gamepad API: id, browser index, layout, button and axis counts) and which of the
+  game's controller slots each one is (SDL's list matched by USB vendor / product, `Bt3Ui_GamepadVendorProduct`; SDL
+  names controllers its own way). A browser shows a controller only after a button press; it reports little: said so.
+  In a browser SDL takes every controller: with the standard layout its buttons are placed right; otherwise SDL places
+  them by its database of makes, or guesses — the page warns that its buttons may be placed wrongly.
+- **Live view** of one controller (buttons lit, axes as meters), updated once per display refresh only while visible.
+- **Warnings**: a player set to a controller that is not connected; a notice when one is disconnected (a set-up of
+  controller buttons under way is cancelled).
+- **Guided set-up** of a player's controller buttons (16) or keys (24): the engine takes each (`Bt3Ui_CaptureBegin`, the
+  keys on the game area where SDL hears them); a value another action of the player has is offered Swap / Keep both /
+  Choose again; Skip, Back, Esc (keys: keeps it), Cancel (puts every binding back as before). The table's own capture
+  buttons wait while it runs.
+- **Keyboard presets** by the engine's action labels and SDL key names (`Bt3Ui_ScancodeFromName`, `Bt3Ui_BindingSet`): the
+  engine's defaults (`reset_keys`: the engine's own table, the controller buttons kept), left hand on W A S D, numeric
+  keypad; a key the other player also has is reported. "Controller buttons to defaults" (`reset_pads`).
+- **Test**: shows the game buttons this player's bindings give (by include/sys/pad.h's names) and the sticks, while
+  nothing reaches the game.
+- **Persistence**: the engine's settings file (localStorage, as the other settings).
+
+**What the game receives**: the browser build links `Port_PadRead` wrapped (`-Wl,--wrap=Port_PadRead`, web_ui.c): every
+read is recorded as the game got it; in the test, with the panel open, the engine's own read runs as if the panel were
+closed and the game is handed a released pad. Closing the panel calls the engine's `PortInput_Swallow`: controller
+buttons still held are not the game's until let go.
+
+**Tests** (`port/tests/web/controllers.js`, PASS, 29 checks) — **simulated controllers only**:
+`port/tests/web/fake_gamepads.js` replaces the browser's Gamepad API before the page loads and sends the browser's own
+connection events; the engine reads the devices through SDL's real Emscripten joystick code. Covered: connection and
+device information, live view (button, axis), a controller without the standard layout (listed, warned), three
+controllers with a disconnect and a reconnect reusing browser index 0 (slots matched right), the missing-controller
+warning, set-up (capture, Back, Skip, duplicate Swap, Cancel restoring all, a completed set-up), key capture with real key
+events, presets and defaults, nothing reaching the game while the panel is open (held button; the test shows Cross,
+the game gets nothing), a button held while closing kept out of the game, play resuming (controller and Enter), the
+set-up kept after a reload. **Not tested: any physical controller** (none was available).
+
 ### Live performance dashboard and diagnostics export (2026-10-12) — verified
 The settings panel's **Developer** section (`port/web/dashboard.js`) shows, twice a second while it is open:
 | row | source and definition |

@@ -59,6 +59,13 @@
   #settings summary { cursor: pointer; color: var(--dim); }
   #settings dl.stats { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font: 12px ui-monospace, monospace; margin: 8px 0 12px; }
   #settings dl.stats dt { color: var(--dim); } #settings dl.stats dd { margin: 0; }
+  #settings .warning { margin: 0 0 10px; padding: 6px 10px; border-radius: 6px; background: var(--raised); border-left: 3px solid var(--bad); }
+  #settings ul.pads { margin: 0 0 10px; font-size: 13px; }
+  #settings .cells, #settings .padtest { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+  #settings .cell { min-width: 2.2em; padding: 2px 6px; text-align: center; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; }
+  #settings .cell.on { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  #settings .axes { display: flex; flex-wrap: wrap; gap: 8px; } #settings .axes meter { width: 90px; }
+  #settings .wizard { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 0 0 12px; }
   #settings canvas.graph { width: 100%; height: 120px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
   #unlock-confirm { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; max-width: 420px; }
   #unlock-confirm::backdrop { background: #0009; }
@@ -109,6 +116,7 @@
 </dialog>
 <script src="bt3_data.js"></script>
 <script src="dashboard.js"></script>
+<script src="controllers.js"></script>
 <script src="settings.js"></script>
 <script>
 'use strict';

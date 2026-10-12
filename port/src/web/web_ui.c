@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "gs/ui.h"
+#include "sys/pad.h" /* the game's pad bits (PAD_CROSS, ...): what the game receives, by the game's own names */
 
 extern int gsInterp;                     /* gs_draw.c: smooth motion 0..3; -1 before the first frame */
 extern unsigned gGsFrame;                /* gs_core.c */
@@ -203,7 +204,7 @@ static int setting_index(const char *name) {
 
 /* ---- the queue of changes ------------------------------------------------------------------------------------- */
 
-typedef enum { REQ_SETTING, REQ_UNLOCK_ALL, REQ_RESET_CONTROLS, REQ_SCREENSHOT } RequestKind;
+typedef enum { REQ_SETTING, REQ_UNLOCK_ALL, REQ_RESET_CONTROLS, REQ_RESET_KEYS, REQ_RESET_PADS, REQ_SCREENSHOT } RequestKind;
 static struct {
     RequestKind kind;
     int index, value;
@@ -238,6 +239,21 @@ static void screenshot(void) {
     free(rgba);
 }
 
+/* One player's keys only, or controller buttons only, back to the engine's defaults (gs_input.c): the defaults are
+   taken whole and the other half put back. */
+static void reset_half(int keys, int player) {
+    int keep[PORT_ACTIONS], k, slot = *PortInput_PadSlot(player);
+    int *other = keys ? PortInput_PadButtons(player) : PortInput_Keys(player), n = keys ? PORT_PAD_BUTTONS : PORT_ACTIONS;
+    memcpy(keep, other, sizeof(int) * (size_t)n);
+    PortInput_ResetDefaults(player);
+    other = keys ? PortInput_PadButtons(player) : PortInput_Keys(player);
+    for (k = 0; k < n; k++) {
+        other[k] = keep[k];
+    }
+    *PortInput_PadSlot(player) = slot; /* (the controller is a choice of its own, not a binding) */
+    PortInput_Save();
+}
+
 static void queue_apply(void) {
     int i;
     for (i = 0; i < sQueued; i++) {
@@ -245,6 +261,8 @@ static void queue_apply(void) {
         case REQ_SETTING: kSettings[sQueue[i].index].set(sQueue[i].value); break;
         case REQ_UNLOCK_ALL: gPortUnlockAll = 1; break; /* (carried out by the game at its next vertical blank) */
         case REQ_RESET_CONTROLS: PortInput_ResetDefaults(sQueue[i].value); PortInput_Save(); break;
+        case REQ_RESET_KEYS:
+        case REQ_RESET_PADS: reset_half(sQueue[i].kind == REQ_RESET_KEYS, sQueue[i].value); break;
         case REQ_SCREENSHOT: screenshot(); break;
         }
     }
@@ -414,6 +432,54 @@ EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_WebGpuError(int i) {
     return GsWgpu_Error(i < 0 ? 0u : (unsigned)i);
 }
 
+/* ---- what the game receives from the pads ---------------------------------------------------------------------
+   The browser build links gs_input.c's Port_PadRead wrapped (wasm_build.py: --wrap=Port_PadRead): every read is
+   recorded as the game got it (the Controllers tab and the page's tests show it). In the Controllers tab's test, with
+   the panel open, the engine's own read runs as if the panel were closed, so the bindings are tried exactly as the
+   game would see them, and the game itself is handed a released pad (nothing the player tries reaches it). */
+#define PAD_REPLY_BYTES 18     /* the libpad reply Port_PadRead fills: two active-low button bytes, then rx ry lx ly */
+#define PAD_AXIS_CENTRE 0x80
+#define PAD_BUTTON_BYTES 0xFFu /* (active low: all released) */
+typedef struct PadSeen {
+    uint32_t buttons;            /* PAD_* bits held */
+    uint8_t rx, ry, lx, ly;
+} PadSeen;
+static PadSeen sGameSaw[PAD_COUNT], sTried[PAD_COUNT];
+static int sInputTest;
+
+int __real_Port_PadRead(int socket, unsigned char *data);
+
+static PadSeen pad_seen(const unsigned char *data) {
+    PadSeen s;
+    s.buttons = (uint32_t)(~data[0] & 0xFFu) | (uint32_t)(~data[1] & 0xFFu) << 8;
+    s.rx = data[2];
+    s.ry = data[3];
+    s.lx = data[4];
+    s.ly = data[5];
+    return s;
+}
+
+int __wrap_Port_PadRead(int socket, unsigned char *data) {
+    int n;
+    if (sInputTest && gPortOverlayOpen && socket >= 0 && socket < PAD_COUNT) {
+        gPortOverlayOpen = 0;
+        n = __real_Port_PadRead(socket, data);
+        gPortOverlayOpen = 1;
+        if (n) {
+            sTried[socket] = pad_seen(data);
+            memset(data, 0, PAD_REPLY_BYTES);
+            data[0] = data[1] = PAD_BUTTON_BYTES;
+            data[2] = data[3] = data[4] = data[5] = PAD_AXIS_CENTRE;
+        }
+    } else {
+        n = __real_Port_PadRead(socket, data);
+    }
+    if (n && socket >= 0 && socket < PAD_COUNT) {
+        sGameSaw[socket] = pad_seen(data);
+    }
+    return n;
+}
+
 /* ---- the page's interface ------------------------------------------------------------------------------------ */
 
 /* A setting's value; -1 and a message for an unknown name. */
@@ -436,10 +502,12 @@ EMSCRIPTEN_KEEPALIVE int Bt3Ui_Set(const char *name, int value) {
     return queue_push(REQ_SETTING, i, value);
 }
 
-/* "unlock_all", "reset_controls" (arg: player), "screenshot". */
+/* "unlock_all", "reset_controls" / "reset_keys" / "reset_pads" (arg: player), "screenshot". */
 EMSCRIPTEN_KEEPALIVE int Bt3Ui_Action(const char *name, int arg) {
     if (strcmp(name, "unlock_all") == 0) { return queue_push(REQ_UNLOCK_ALL, 0, 0); }
     if (strcmp(name, "reset_controls") == 0) { return queue_push(REQ_RESET_CONTROLS, 0, arg & 1); }
+    if (strcmp(name, "reset_keys") == 0) { return queue_push(REQ_RESET_KEYS, 0, arg & 1); }
+    if (strcmp(name, "reset_pads") == 0) { return queue_push(REQ_RESET_PADS, 0, arg & 1); }
     if (strcmp(name, "screenshot") == 0) { return queue_push(REQ_SCREENSHOT, 0, 0); }
     fprintf(stderr, "bt3: unknown settings action %s\n", name);
     return 0;
@@ -450,7 +518,72 @@ EMSCRIPTEN_KEEPALIVE void Bt3Ui_SetOpen(int open) {
     if (!open && sCapKind != CAPTURE_NONE) {
         capture_end();
     }
+    if (!open && gPortOverlayOpen) {
+        sInputTest = 0;
+        PortInput_Swallow(); /* (controller buttons still held from the panel are not the game's until let go) */
+    }
     gPortOverlayOpen = open != 0;
+}
+
+/* The Controllers tab's test: 1 = the bindings are tried while the panel is open (the game gets a released pad). */
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_InputTest(int on) {
+    sInputTest = on != 0;
+    if (!on) {
+        memset(sTried, 0, sizeof(sTried));
+    }
+}
+
+/* PAD_* bits held: which 0 = what the game last received, 1 = what the test last tried. */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_PadButtons(int which, int player) {
+    return (int)(which ? sTried : sGameSaw)[player & 1].buttons;
+}
+
+/* The sticks as the game gets them: lx << 24 | ly << 16 | rx << 8 | ry (0x80 = centre). */
+EMSCRIPTEN_KEEPALIVE uint32_t Bt3Ui_PadSticks(int which, int player) {
+    const PadSeen *s = &(which ? sTried : sGameSaw)[player & 1];
+    return (uint32_t)s->lx << 24 | (uint32_t)s->ly << 16 | (uint32_t)s->rx << 8 | s->ry;
+}
+
+/* The name of the game's pad bit i (0..15), as include/sys/pad.h has them. */
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_PadBitName(int i) {
+    static const struct { uint32_t bit; const char *name; } kBits[] = {
+        {PAD_SELECT, "SELECT"}, {PAD_L3, "L3"}, {PAD_R3, "R3"}, {PAD_START, "START"}, {PAD_UP, "Up"}, {PAD_RIGHT, "Right"},
+        {PAD_DOWN, "Down"}, {PAD_LEFT, "Left"}, {PAD_L2, "L2"}, {PAD_R2, "R2"}, {PAD_L1, "L1"}, {PAD_R1, "R1"},
+        {PAD_TRIANGLE, "Triangle"}, {PAD_CIRCLE, "Circle"}, {PAD_CROSS, "Cross"}, {PAD_SQUARE, "Square"},
+    };
+    int k;
+    for (k = 0; k < (int)(sizeof(kBits) / sizeof(kBits[0])); k++) {
+        if (kBits[k].bit == 1u << i) {
+            return kBits[k].name;
+        }
+    }
+    return "";
+}
+
+/* Sets a binding directly (the page's presets, and swapping or clearing a duplicate): the same values capture gives. */
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_BindingSet(int kind, int player, int action, int value) {
+    if (action < 0 || action > PORT_ACTIONS || (kind == CAPTURE_PAD && action >= PORT_PAD_BUTTONS && action != PORT_ACTIONS)) {
+        fprintf(stderr, "bt3: no %s binding for action %d\n", kind == CAPTURE_PAD ? "controller" : "key", action);
+        return;
+    }
+    *binding(kind, player & 1, action) = value;
+    PortInput_Save();
+}
+
+/* SDL's scancode for a key name ("W", "Return", "Left Shift"; 0 = no such key): the presets name their keys. */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_ScancodeFromName(const char *name) {
+    return (int)SDL_GetScancodeFromName(name);
+}
+
+/* USB vendor << 16 | product of connected controller i as SDL knows it (0 = not known), to match the browser's list. */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_GamepadVendorProduct(int i) {
+    int count = 0, vp = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&count);
+    if (ids != NULL && i >= 0 && i < count) {
+        vp = (int)((uint32_t)SDL_GetGamepadVendorForID(ids[i]) << 16 | SDL_GetGamepadProductForID(ids[i]));
+    }
+    SDL_free(ids);
+    return vp;
 }
 
 EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_ActionLabel(int action) {
