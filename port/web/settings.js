@@ -398,9 +398,9 @@ class Bt3Settings {
   buildAdded() {
     const box = el('div', { class: 'row' });
     const kinds = [
-      { label: 'Stages', key: 'added_stage_count', one: 'added stage', many: 'added stages', folder: 'stages', listed: true },
-      { label: 'Songs', key: 'added_song_count', one: 'added song', many: 'added songs', folder: 'songs', listed: true },
-      { label: 'Texture packs', key: 'texture_pack_count', one: 'replacement texture', many: 'replacement textures', listed: false },
+      { label: 'Stages', key: 'added_stage_count', one: 'added stage', many: 'added stages', folder: 'stages' },
+      { label: 'Songs', key: 'added_song_count', one: 'added song', many: 'added songs', folder: 'songs' },
+      { label: 'Texture packs', key: 'texture_pack_count', one: 'replacement texture', many: 'replacement textures', folder: 'textures' },
     ];
     const lines = kinds.map(() => el('p', { class: 'help' }));
     box.append(el('h3', {}, 'Added stages, songs and texture packs'), ...lines);
@@ -412,7 +412,6 @@ class Bt3Settings {
         const n = this.get(k.key);
         lines[i].textContent = `${k.label}: ` + (!looked ? 'not looked for yet (the game looks while it starts).'
           : n > 0 ? `${n} ${n === 1 ? k.one : k.many}.`
-          : !k.listed ? 'not available in the browser version yet.'
           : !listable ? noListing
           : `none (the data folder has no ${k.folder} folder with any).`);
       });

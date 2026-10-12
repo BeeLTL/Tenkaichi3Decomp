@@ -286,6 +286,9 @@ async function start() {
     SDL_EMSCRIPTEN_KEYBOARD_ELEMENT: '#canvas',
     // Dragon Net Battle (main-menu item 4): online play is not in the browser build (port/src/web/net_off.c)
     BT3_MENU_ITEM4: '0',
+    // Texture packs (gs_texpack.c): natively the folder `textures` next to the program; here the program has no folder
+    // of its own, so the data folder's `textures` (read over HTTP, web_fs.c). ?env=BT3_TEXTURES=... names another.
+    BT3_TEXTURES: 'gamedata/textures',
   };
   // NAME=value,NAME=value; a part without "=" belongs to the value before it (BT3_PAD=2800:start,2950:cross)
   let last = null;

@@ -26,9 +26,6 @@ static int sChecked;
 
 static const char kNoListing[] = "not available: the data server does not list its folders, so files added to the "
                                  "data folder cannot be found (port/web/devserver.py lists them)";
-/* Texture packs are not read in the browser yet: their default folder ("textures", next to the program) is not on
-   the data server, and SDL opens files with fopen64, which the data folder's reads (web_fs.c) do not take. */
-static const char kTexturesNotYet[] = "not available in the browser version yet";
 
 /* After the call for `bit`: when nothing was found and the reason is not "none added", says it once. */
 static void checked(int bit, int count, const char *what, const char *why) {
@@ -53,7 +50,8 @@ void __wrap_PortSongs_Init(void) {
 
 void __wrap_TexPack_Init(void) {
     __real_TexPack_Init();
-    checked(CHECKED_TEXTURES, TexPack_Count(), "texture packs", kTexturesNotYet);
+    /* (their folder: the data folder's "textures", which the page names: index.html, BT3_TEXTURES) */
+    checked(CHECKED_TEXTURES, TexPack_Count(), "texture packs", WebFs_CanList() ? NULL : kNoListing);
 }
 
 /* Which of the three have been looked for (CHECKED_*): the page says "not looked for yet" before. */
