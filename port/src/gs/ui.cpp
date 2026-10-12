@@ -10,8 +10,9 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
 #include "imgui_impl_opengl3.h"
-#include "ui.h"
 #include "namefont.h"
+#include "../../../include/qol.h"
+#include "ui.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -1154,12 +1155,29 @@ static void controls_tab(void) {
         ImGui::EndTable();
     }
 }
+static void qol_tab(void) {
+    bool skiplogo = qol.skiplogos != 0;
+    if (ImGui::Checkbox("Skip logos", &skiplogo))
+    {
+        qol.skiplogos = skiplogo ? 1 : 0;
+        Port_SettingSave("skip_logos", qol.skiplogos);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Automatically skip logos without user input.");
+    bool skipintro = qol.skipintro != 0;
+    if (ImGui::Checkbox("Skip intro video", &skipintro))
+    {
+        qol.skipintro = skipintro ? 1 : 0;
+        Port_SettingSave("skip_intro", qol.skipintro);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Automatically skip intro video without user input.");
+}
 
 static void build(void) {
     PortVideo v, was;
     ImGuiIO &io = ImGui::GetIO();
     bool open = true;
-
     GsGpu_GetSettings(&v);
     was = v;
     if (sCapKind == 2 && SDL_GetTicks() > sCapUntil) { // nothing was pressed: the binding stays
