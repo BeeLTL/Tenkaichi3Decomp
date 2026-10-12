@@ -438,3 +438,20 @@ extern int gPortMenuMode; /* headless.c */
 float Port_WideFactor(void) {
     return Port_IsWide() && !gPortMenuMode ? (float)Port_AspectMilli() * 3.0f / 4000.0f : 1.0f;
 }
+/* "Menus in 4:3" (F1, UI; setting menus_43): the menus' pages are shown at the shape they were composed for, in the
+   middle with black at the sides, instead of stretched to the picture's width. A fight is not changed.
+   Port_PageAspectMilli is the shape of the page being shown now: what the present step and the loading screens
+   go by. (PORT_HOST: the player's setting, not the game's state.) */
+PORT_HOST static int sMenus43 = -1;
+int Port_Menus43(void) {
+    if (sMenus43 < 0) {
+        sMenus43 = Port_Setting("menus_43", 0) != 0;
+    }
+    return sMenus43;
+}
+void Port_Menus43Set(int on) {
+    sMenus43 = on != 0;
+}
+int Port_PageAspectMilli(void) {
+    return gPortMenuMode && Port_Menus43() ? 1333 : Port_AspectMilli();
+}

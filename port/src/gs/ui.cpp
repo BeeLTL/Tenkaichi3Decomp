@@ -26,6 +26,8 @@ int Port_NetSpeedStandard(void);                   // what a quick match runs at
 void Port_NetNameSet(const char *name);         // gs/net.c: this player's name for the match
 int Port_IsWide(void);                         // plat_stub.c: the picture is wider than 4:3
 int Port_AspectMilli(void);
+int Port_Menus43(void);                       // plat_stub.c: the menus are shown at 4:3 in a wider picture
+void Port_Menus43Set(int on);
 int Port_HudLayout(void);                      // gs_draw.c: 2 = the HUD is about the middle of the screen
 int GsDraw_HudShown(void);                     // ... and 1 while the game is drawing the HUD's side panels
 const char *Port_NetName(int player);          // the name of the player of side 0 or 1 ("" outside a match)
@@ -983,6 +985,16 @@ static void ui_tab(PortVideo &v) {
     ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
                           "Long health bars: the bars reach from the edges to the timer.\n"
                           "In the middle: the original 4:3 arrangement, next to the timer.");
+    {
+        bool m43 = Port_Menus43() != 0;
+        if (ImGui::Checkbox("Menus in 4:3", &m43)) {
+            Port_Menus43Set(m43);
+            Port_SettingSave("menus_43", m43);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("In a picture wider than 4:3, show the menus at their own shape with black at the sides\n"
+                              "instead of stretched to the width. Fights keep the wide picture.");
+    }
     // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
     static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
     if (sSkipLogos < 0) {

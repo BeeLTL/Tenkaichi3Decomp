@@ -975,7 +975,8 @@ static void frame_end(void) {
         glClear(GL_COLOR_BUFFER_BIT);
         glEnable(GL_SCISSOR_TEST);
         if (best >= 0 && gsTargets[best].cleared) {
-            float want = (float)Port_AspectMilli() / 1000.0f;
+            extern int Port_PageAspectMilli(void); /* plat_stub.c: 4:3 while the menus run, if asked for */
+            float want = (float)Port_PageAspectMilli() / 1000.0f;
             int w = sw, h = sh, dx, dy;
             if ((float)sw > (float)sh * want) { w = (int)((float)sh * want + 0.5f); } else { h = (int)((float)sw / want + 0.5f); }
             dx = (sw - w) / 2;

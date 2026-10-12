@@ -2000,3 +2000,17 @@ both skipped the copyright page and then the title; with neither, the regression
 first-run sequence: it is the first loop of `Title_Run`, a still held for 300 frames between two fades, shown every
 time the title screen is entered and not shortened by any button. With the setting on that loop is not entered.
 Checked offscreen with all three on: the memory-card check, then the title's own animation.
+
+## "Menus in 4:3" (2026-10-12)
+
+F1, UI (setting `menus_43`, off). In a picture wider than 4:3 the menus' pages are stretched to the width (they are
+composed for 4:3; see `Port_WideFactor`). With the setting on they are shown at 4:3 in the middle of the window,
+black at the sides; a fight keeps the wide picture. It is only the present step: `Port_PageAspectMilli()`
+(plat_stub.c) is 1333 while `gPortMenuMode` is set and the setting is on, otherwise the picture's shape, and both
+renderers size the shown rectangle by it. The window keeps its shape. The loading screens go by the same value
+(PR #49's narrowing and spreading are for a stretched page), so one shown inside the menus is the original 4:3
+page and one shown on the way into a fight is the wide one.
+
+Checked offscreen at 16:9 from the window's own picture (`BT3_UI_SHOT`): the memory-card check and the title screen
+are 4:3 with bars, a fight from a recording fills the width. Not seen: the change from a menu to a fight and back
+in one run, and the OpenGL renderer.

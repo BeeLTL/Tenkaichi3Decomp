@@ -6,7 +6,7 @@
 
 #ifdef PORT
 extern void Port_GsMarker(s32 effect);
-extern int Port_AspectMilli(void);
+extern int Port_PageAspectMilli(void);
 #define PORT_2D_LOADING 0x17
 #define PORT_2D_END 0x13
 #endif
@@ -289,7 +289,7 @@ void Load_ReadInput(void) {
 /* Spread the items over the wider page, keeping the original left/right margins.
    Only the draw position changes: the stored positions and random sequence stay the same. */
 static s32 Load_ItemDrawX(s32 x) {
-    s32 aspect = Port_AspectMilli();
+    s32 aspect = Port_PageAspectMilli();
     s32 extra;
 
     if (aspect <= 1340) {
