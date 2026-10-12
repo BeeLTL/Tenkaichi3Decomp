@@ -152,6 +152,10 @@ def main():
         name = "k" + src.stem.capitalize() + stage.capitalize() + "Glsl"
         data = src.read_bytes() + b"\0"
         arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in data) + "};\n")
+    # the side bars' two pictures (port/assets/bars), as bytes in the program: nothing to ship beside it
+    bars = "".join(f"static const unsigned char kBars{n.capitalize()}Png[] = {{" + ",".join(str(b) for b in (ROOT / "port/assets/bars" / (n + ".png")).read_bytes()) + "};\n"
+                   for n in ("trim", "fill"))
+    (gen / "bars_png.h").write_text("/* generated from port/assets/bars by port/tools/undefined.py */\n" + bars)
     (gen / "shaders.h").write_text("/* generated from port/src/gs/shaders by port/tools/undefined.py */\n" + "".join(arrays))
     for f in sorted((ROOT / "port/src/gs").glob("*.c")):
         o = OBJ / ("gs_" + f.stem + ".o")
@@ -170,7 +174,7 @@ def main():
             objs.append(str(o))
             continue
         r = run(["g++", "-m32", "-std=c++17", "-c", "-O2", "-g", "-fno-pic", "-msse2", "-mfpmath=sse", "-fno-exceptions",
-                            "-fno-rtti", "-w", f"-I{imgui}", f"-I{ROOT / 'port/src/gs'}", str(f), "-o", str(o)], cwd=ROOT,
+                            "-fno-rtti", "-w", f"-I{imgui}", f"-I{ROOT / 'port/src/gs'}", f"-I{gen}", str(f), "-o", str(o)], cwd=ROOT,
                            capture_output=True, text=True)
         if r.returncode:
             print("FAILED", f.name, "\n".join(l for l in r.stderr.splitlines() if "error" in l)[:600])

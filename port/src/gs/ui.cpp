@@ -200,6 +200,74 @@ static SDL_GPUTexture *load_strip(const char *env, const char *rel, uint32_t *w,
     return tex;
 }
 
+// ---- the side bars ----
+// Where the picture is narrower than the window (a 4:3 picture, or "Menus in 4:3", in a wide window) the sides are
+// black, or with "Side bars: Orange" a gold panel with a key-pattern border along the picture. Two pictures
+// (port/assets/bars, art by the project's owner; in the program as bytes): the border, 34 x 720, kept in proportion
+// at the picture's edge, and the plain panel, 126 x 720, stretched over the rest, so a bar of any width looks right.
+// Both are drawn as they are on the left and mirrored on the right.
+#include "bars_png.h"
+static SDL_GPUTexture *sBarTrim, *sBarFill;
+static int sBars = -1; // 0 black, 1 orange; -1 not read yet
+static int sBarsTried;
+
+static SDL_GPUTexture *bar_texture(const unsigned char *png, size_t size) {
+    SDL_Surface *s = SDL_LoadPNG_IO(SDL_IOFromConstMem(png, size), true), *rgba;
+    uint8_t *pix;
+    size_t bytes;
+    if (s == NULL) {
+        return NULL;
+    }
+    rgba = SDL_ConvertSurface(s, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(s);
+    if (rgba == NULL) {
+        return NULL;
+    }
+    bytes = (size_t)rgba->w * rgba->h * 4;
+    pix = (uint8_t *)malloc(bytes);
+    for (int y = 0; pix != NULL && y < rgba->h; y++) {
+        memcpy(pix + (size_t)y * rgba->w * 4, (const uint8_t *)rgba->pixels + (size_t)y * rgba->pitch, (size_t)rgba->w * 4);
+    }
+    SDL_GPUTexture *tex = pix != NULL ? make_strip(pix, bytes, (uint32_t)rgba->w, (uint32_t)rgba->h, 1) : NULL;
+    SDL_DestroySurface(rgba);
+    return tex;
+}
+
+static bool bars_on(void) {
+    if (sBars < 0) {
+        sBars = Port_Setting("side_bars", 0) != 0;
+    }
+    return sBars != 0 && gUiPresentX > 0 && gUiPresentW > 0 && gUiPresentH > 0;
+}
+
+static void bars_draw(void) {
+    if (!sBarsTried) {
+        sBarsTried = 1;
+        sBarTrim = bar_texture(kBarsTrimPng, sizeof(kBarsTrimPng));
+        sBarFill = bar_texture(kBarsFillPng, sizeof(kBarsFillPng));
+    }
+    if (sBarTrim == NULL || sBarFill == NULL) {
+        return;
+    }
+    ImDrawList *dl = ImGui::GetBackgroundDrawList();
+    float y0 = (float)gUiPresentY, y1 = y0 + (float)gUiPresentH;
+    float bar = (float)gUiPresentX; // the width of each side
+    float trim = (float)gUiPresentH * 34.0f / 720.0f;
+    float u0 = 0.0f;
+    if (trim > bar) { // a bar narrower than the border: the border's inner part
+        u0 = 1.0f - bar / trim;
+        trim = bar;
+    }
+    float lx = (float)gUiPresentX, rx = lx + (float)gUiPresentW; // the picture's two edges
+    ImTextureRef tt((ImTextureID)(intptr_t)sBarTrim), ft((ImTextureID)(intptr_t)sBarFill);
+    if (bar > trim) {
+        dl->AddImage(ft, ImVec2(lx - bar, y0), ImVec2(lx - trim, y1), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+        dl->AddImage(ft, ImVec2(rx + trim, y0), ImVec2(rx + bar, y1), ImVec2(1.0f, 0.0f), ImVec2(0.0f, 1.0f));
+    }
+    dl->AddImage(tt, ImVec2(lx - trim, y0), ImVec2(lx, y1), ImVec2(u0, 0.0f), ImVec2(1.0f, 1.0f));
+    dl->AddImage(tt, ImVec2(rx, y0), ImVec2(rx + trim, y1), ImVec2(1.0f, 0.0f), ImVec2(u0, 1.0f));
+}
+
 static void load_strips(void) {
     char path[600];
     // The names of added stages and songs are drawn by this overlay, over the menu: from a strip of pre-rendered
@@ -995,6 +1063,17 @@ static void ui_tab(PortVideo &v) {
         ImGui::SetItemTooltip("In a picture wider than 4:3, show the menus at their own shape with black at the sides\n"
                               "instead of stretched to the width. Fights keep the wide picture.");
     }
+    {
+        static const char *const kBars[] = {"Black", "Orange"};
+        int b = sBars > 0;
+        if (ImGui::Combo("Side bars", &b, kBars, 2)) {
+            sBars = b;
+            Port_SettingSave("side_bars", sBars);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("What fills the sides where the picture is narrower than the window:\n"
+                              "a 4:3 picture, or the menus with \"Menus in 4:3\", in a wide window.");
+    }
     // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
     static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
     if (sSkipLogos < 0) {
@@ -1456,9 +1535,10 @@ static bool frame_build(void) {
     bool meter = sReady && meter_on();
     // the players' names under the gauges of an online fight
     bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
+    bool bars = sReady && bars_on();
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names)) {
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars)) {
         return false;
     }
     if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
@@ -1487,6 +1567,9 @@ static bool frame_build(void) {
     }
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+    if (bars) {
+        bars_draw();
+    }
     if (sOpen) {
         if (sNet) {
             build_net();

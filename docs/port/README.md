@@ -2014,3 +2014,18 @@ page and one shown on the way into a fight is the wide one.
 Checked offscreen at 16:9 from the window's own picture (`BT3_UI_SHOT`): the memory-card check and the title screen
 are 4:3 with bars, a fight from a recording fills the width. Not seen: the change from a menu to a fight and back
 in one run, and the OpenGL renderer.
+
+## Orange side bars (2026-10-12)
+
+F1, UI: "Side bars", Black or Orange (setting `side_bars`, 0 by default). Wherever the picture is narrower than the
+window (a 4:3 picture, or the menus with "Menus in 4:3", in a wide window or full screen) the two sides are black;
+with Orange they are a gold panel with a key-pattern border along the picture. The art is the project owner's own,
+two pieces in `port/assets/bars`: `trim.png` (34 x 720, the border) and `fill.png` (126 x 720, the plain panel).
+`undefined.py` writes them into the program as bytes (`bars_png.h`), so nothing ships beside it; `ui.cpp` decodes
+them with SDL's PNG reader on first use and draws them on ImGui's background list, which both renderers already
+show: the border in proportion to the picture's height at its edge, the panel stretched over the rest, both
+mirrored on the right. A bar of any width therefore keeps the border's shape. Only side bars are drawn, not bars
+above and below.
+
+Checked offscreen from the window's own picture at 16:9 and 21:9 with "Menus in 4:3" on (Vulkan). The OpenGL
+renderer ran with it without fault but its window picture was not captured.
