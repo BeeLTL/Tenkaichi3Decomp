@@ -61,6 +61,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context); /* dev
 void Ui_DrawGL(void); /* the OpenGL back end: draws this frame's window with the context current */
 int Ui_Event(const SDL_Event *ev); /* 1 = the window used the event */
 int GsDraw_FrameSkip(void);       /* gs_draw.c */
+int GsDraw_InterpLimit(void);     /* gs_draw.c: the highest smooth-motion setting shown here (0 = none, 3 = 240) */
 void GsDraw_FrameSkipSet(int on);
 void GsGpu_Vsync(int on); /* gs_gpu.c */
 void GsGl_Vsync(int on);  /* gs_gl.c */

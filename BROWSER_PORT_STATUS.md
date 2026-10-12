@@ -437,6 +437,48 @@ calls glGetError every frame, a GPU sync: don't compare GL timings taken with it
 **Not implemented**: native pass 2 (alpha key) is no longer recorded; if it ever were, it is reported, not drawn. (The
 settings window no longer depends on the renderer: see "Settings panel in the page".)
 
+### Smooth motion in the browser: measured, limited per renderer (2026-10-12) — verified
+**How it works**: after a tick the engine shows in-between pictures (`gs_draw.c` GsGpu_InterpPump / interp_show): each
+one replays the whole frame's list with blended vertices (a full `frameEnd`), spaced over the tick with
+`SDL_DelayPrecise`, which in the browser calls `emscripten_sleep(1)` (it yields). A page's picture reaches the screen
+at a display refresh after the page yields, so pictures drawn without a yield in between are never seen.
+
+**Measuring tool**: `port/tests/bench/present_rate.js`. It counts, per display refresh (`requestAnimationFrame`),
+whether a picture was presented since the last one (WebGL 2: the window's framebuffer bound for the present; WebGPU:
+the canvas texture taken): pictures that reached the screen, and the gaps between them. A 60 Hz display (none here,
+and no Chrome switch fixes one) is modelled from the presents' times; the same model for the real 200 Hz display
+matches the measured count exactly (WebGL 30.0 / 47.0 / 47.9 / 48.4; WebGPU 30.1 / 59.3 / 100.8), so the model holds.
+
+**Results** (demo battle, RTX 5070 Ti, headless Chrome on the 200 Hz display; work = the engine's time per tick):
+| renderer, setting | shown/s | at 60 Hz (model) | gap median / p95 / max ms | in-between/s | game speed | work mean / p95 ms |
+|---|---|---|---|---|---|---|
+| WebGL 2, off | 29.9 | 29.9 | 33 / 36 / 36 | 0 | 100 % | 12.3 / 14.7 |
+| WebGL 2, 60 | 48.2 | 46.6 | 21 / 30 / 51 | 22.5 | 100 % | 29.3 / 41.8 |
+| WebGL 2, 120 / 240 | 48.6 / 47.7 | 47.3 / 46.1 | 20-21 / 31 / 52-53 | 22 | 100 % | 30 / 41 |
+| WebGL 2, 60, frame skipping off | 53.4 | 49.6 | | 26.1 | **91 %** | 35.5 / 42.6 |
+| WebGPU, off | 30.0 | 30.0 | 33 / 35 / 37 | 0 | 100 % | 6.8 / 10.1 |
+| WebGPU, 60 | **59.1** | 51.2 | **17 / 21 / 34** | 29.3 | 100 % | 14.4 / 17.3 |
+| WebGPU, 120 / 240 | 89.6 / 86.3 | 54.5 / 54.0 | 10 / 24-34 / 47-51 | 68 / 88 | 99-100 % | 28.5 / 42 |
+Also run with vsync and the frame-rate limit off (`disable-gpu-vsync, disable-frame-rate-limit`: 90-110 refreshes a
+second): the same pattern, game speed 99-100 % everywhere.
+
+**Root cause of the slowdown measured before** (90 % at "60", 74 % at "120", on 0.1.25): each in-between picture costs a
+replay of the frame (about 11 ms with WebGL 2 here, 5 ms with WebGPU), and with WebGL 2 one of them already takes a
+tick's work past its 33.4 ms; the game advances once per tick, so it slowed. (The earlier measurement counted ticks,
+which cannot show in-between pictures: what reached the screen was not measured then.) 0.1.31 added a cost guard and
+frame skipping: the speed now stays at 100 %, but by leaving real ticks out, which makes gaps longer than without
+smooth motion (51-53 ms against 36): uneven, not smoother.
+
+**Decision**: offered only where it shows more pictures, evenly, at an unchanged game speed: WebGPU up to "60"
+(`web_ui.c` Web_InterpLimit; `GsDraw_InterpLimit` in gs_draw.c, natively all settings as before). WebGL 2: none. The
+limit applies to the saved setting and BT3_INTERP at start (clamped), to F9 (does nothing on WebGL 2, with a message
+in the log; toggles off / 60 on WebGPU) and to the panel (Video, "Smooth motion": only the allowed choices; disabled
+with WebGL 2, with the reason in its help text). Native builds: unchanged (the limit is the old maximum there).
+
+Also: a fault in the page's panel no longer ends the game (it did: a panel bug stopped the engine at start); the
+engine's calls into the page catch it, log it and show a notice. Regression: demo 12/12 identical, trace unchanged on
+both renderers.
+
 ### Upstream 0.1.31 integrated (2026-10-12) — verified
 **Upstream commit**: `fff151eb989ecaa5a0aaeb637984e33e07ef3ad9` (z3xox/Tenkaichi3Decomp `main`, "Release 0.1.31"): 39
 commits on top of the previous base `80e0dd4` (0.1.25 to 0.1.31). **Strategy**: a merge of `origin/main` into

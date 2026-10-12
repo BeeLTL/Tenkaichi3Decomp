@@ -1325,14 +1325,33 @@ void GsDraw_FullscreenToggle(void) {
 }
 
 /* F9: in-between pictures on and off (the same setting as F1, Video, Smooth motion: off, or back to what it was). */
+/* The highest smooth-motion setting (gsInterp) that is shown: all of them natively. The browser build's depends on the
+   renderer and was measured (port/src/web/web_ui.c Web_InterpLimit; BROWSER_PORT_STATUS.md): a page's picture reaches
+   the screen only at a display refresh after the page yields, and each in-between picture replays the frame's list. */
+#define INTERP_SETTING_MAX 3
+#ifdef __EMSCRIPTEN__
+extern int Web_InterpLimit(const char *renderer); /* port/src/web/web_ui.c */
+#endif
+int GsDraw_InterpLimit(void) {
+#ifdef __EMSCRIPTEN__
+    return Web_InterpLimit(sBackend != NULL ? sBackend->name : "");
+#else
+    return INTERP_SETTING_MAX;
+#endif
+}
+
 static void smooth_motion_toggle(void) {
     extern int gsInterp;
     static int was = 1;
+    if (GsDraw_InterpLimit() == 0) {
+        fprintf(stderr, "bt3: smooth motion is not available with this renderer here (F9 does nothing)\n");
+        return;
+    }
     if (gsInterp > 0) {
         was = gsInterp;
         gsInterp = 0;
     } else {
-        gsInterp = was;
+        gsInterp = was < GsDraw_InterpLimit() ? was : GsDraw_InterpLimit();
     }
     Port_SettingSave("interp", gsInterp);
     Port_SettingsWrite();
@@ -4043,7 +4062,7 @@ void GsGpu_FrameEnd(void) {
         }
         if (gsInterp < 0) {
             gsInterp = getenv("BT3_INTERP") != NULL ? atoi(getenv("BT3_INTERP")) : Port_Setting("interp", 0);
-            gsInterp = gsInterp < 0 ? 0 : gsInterp > 3 ? 3 : gsInterp;
+            gsInterp = gsInterp < 0 ? 0 : gsInterp > GsDraw_InterpLimit() ? GsDraw_InterpLimit() : gsInterp;
             sInterpPrev = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
             sInterpBlend = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
             sInterpPrevSig = malloc(MAX_VU_UNIFORMS * sizeof(uint32_t));

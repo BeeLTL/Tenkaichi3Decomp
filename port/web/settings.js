@@ -41,6 +41,12 @@ const PANEL = [
       help: 'Wider than 4:3 shows more of the fight to the sides. Menus are stretched.' },
     { key: 'smooth_2d', label: '2D filtering', type: 'select', options: [[0, 'Sharp (console)'], [1, 'Smooth']],
       help: 'Above 1×: sharp keeps each PlayStation 2 pixel a block, smooth samples it per screen pixel.' },
+    { key: 'interp', label: 'Smooth motion', type: 'select', limit: (s) => s.get('interp_limit'),
+      options: [[0, 'Off (30 pictures a second, as the console)'], [1, '60 pictures a second'], [2, '120 pictures a second'],
+                [3, '240 pictures a second']],
+      help: 'In-between pictures drawn between the game’s 30 steps a second; the game itself does not change. ' +
+            'In a browser only what was measured to reach the screen evenly is offered: 60 with WebGPU. With WebGL 2 the ' +
+            'extra pictures cost so much that real ones had to be left out (uneven motion), so it is off.' },
     { key: 'hud_layout', label: 'HUD style', type: 'select',
       options: [[0, "At the screen's edges"], [1, 'At the edges, long health bars'], [2, 'In the middle, as in 4:3']],
       help: "Where a fight's health bars and gauges sit in a picture wider than 4:3." },
@@ -231,6 +237,11 @@ class Bt3Settings {
     }
     this.refreshers.unshift(() => {
       const v = this.get(item.key);
+      if (item.limit) {  // options above what the engine allows here are not offered (the select is off when none are)
+        const max = item.limit(this);
+        for (const o of input.options) o.hidden = o.disabled = Number(o.value) > max;
+        input.disabled = max === 0;
+      }
       if (item.type === 'checkbox') input.checked = item.bit === undefined ? v !== 0 : !((v >> item.bit) & 1);
       else input.value = String(v);
       row.hidden = item.when ? !item.when(this) : false;

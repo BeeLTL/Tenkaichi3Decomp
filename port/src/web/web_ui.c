@@ -22,6 +22,7 @@
 extern int gsInterp;                     /* gs_draw.c: smooth motion 0..3; -1 before the first frame */
 extern unsigned gGsFrame;                /* gs_core.c */
 extern unsigned gPortLiveBlanks;         /* plat_stub.c */
+extern unsigned gInterpShown;            /* gs_draw.c: in-between pictures shown (smooth motion) since the start */
 extern int gGsMainFbp;                   /* gs_sony.c: the shown frame buffer, -1 before the first swap */
 extern volatile int gPortUnlockAll, gPortUnlockDone; /* headless.c: the game's own "unlock everything" */
 extern void *gSaveData; /* the game's save in memory, NULL until one is loaded (a game pointer: 32 bits, as wasm's) */
@@ -47,13 +48,20 @@ extern int gPortMusicFollows;           /* snd_adx.c: 1 = looping music follows 
 
 /* ---- the page's side (Module.bt3Ui, given to createBt3 by port/web/index.html) ------------------------------- */
 
+/* A fault in the page's panel must not end the game: it is reported (the log, and a notice on the page) and the
+   engine goes on. */
 EM_JS(void, page_call, (const char *what, int arg), {
     const name = UTF8ToString(what);
     if (!Module.bt3Ui || typeof Module.bt3Ui[name] !== 'function') {
         err(`bt3: the page has no settings handler "${name}"`);
         return;
     }
-    Module.bt3Ui[name](arg);
+    try {
+        Module.bt3Ui[name](arg);
+    } catch (e) {
+        err(`bt3: settings handler "${name}" of the page failed: ${e && e.stack || e}`);
+        try { Module.bt3Ui.notice(`The settings panel failed (${name}): see the log.`); } catch (e2) { /* (reported above) */ }
+    }
 });
 
 EM_JS(void, page_notice, (const char *text), {
@@ -86,13 +94,29 @@ VIDEO_FIELD(frameSkip)
 VIDEO_FIELD(texPack)
 static int get_texPackCount(void) { PortVideo v; GsGpu_GetSettings(&v); return v.texPackCount; }
 
+/* Smooth motion (in-between pictures, gs_draw.c) in the browser, measured with port/tests/bench/present_rate.js on the
+   demo battle (2026-10-12, RTX 5070 Ti, 200 Hz display; BROWSER_PORT_STATUS.md has the tables). Each in-between picture
+   replays the whole frame. WebGPU at "60" (one per tick, ~5 ms each): 59 pictures a second reach the screen, evenly
+   (longest gap 34 ms, as without), game speed 100 %. Every other case shows more pictures only by leaving real ticks
+   out to stay in time (frame skipping), which makes longer gaps than without (47 to 53 ms against 36): WebGPU at 120 /
+   240, and WebGL 2 at any setting (~11 ms per in-between picture; without frame skipping the game slows to 90 %).
+   So: WebGPU up to "60", WebGL 2 none. */
+int Web_InterpLimit(const char *renderer) {
+    return strcmp(renderer, "webgpu") == 0 ? 1 : 0;
+}
+
 static int get_interp(void) { return gsInterp < 0 ? 0 : gsInterp; }
+static int get_interp_limit(void) { return GsDraw_InterpLimit(); }
 static void set_interp(int x) {
     if (gsInterp < 0) { /* (its buffers are made with the first frame: gs_draw.c) */
         fprintf(stderr, "bt3: smooth motion can be set once the first frame is drawn\n");
         return;
     }
-    gsInterp = x < 0 ? 0 : x > 3 ? 3 : x;
+    if (x > GsDraw_InterpLimit()) {
+        fprintf(stderr, "bt3: smooth motion %d is above what this renderer shows here (%d)\n", x, GsDraw_InterpLimit());
+        return;
+    }
+    gsInterp = x < 0 ? 0 : x;
     Port_SettingSave("interp", gsInterp);
     Port_SettingsWrite();
 }
@@ -115,6 +139,7 @@ static int get_unlock_done(void) { return gPortUnlockDone; }
 static int get_save_loaded(void) { return gSaveData != NULL; }
 static int get_frame(void) { return (int)gGsFrame; }
 static int get_vblanks(void) { return (int)gPortLiveBlanks; }
+static int get_interp_shown(void) { return (int)gInterpShown; }
 static int get_webgpu_errors(void) { return (int)GsWgpu_DeviceErrors(); }
 static int get_actions(void) { return PORT_ACTIONS; }
 static int get_pad_buttons(void) { return PORT_PAD_BUTTONS; }
@@ -141,12 +166,14 @@ static const struct {
     {"texture_pack", get_texPack, set_texPack},
     {"texture_pack_count", get_texPackCount, NULL},
     {"interp", get_interp, set_interp},
+    {"interp_limit", get_interp_limit, NULL},
     {"clash_square", Port_ClashSquare, set_clash_square},
     {"clash_square_x", Port_ClashSquareX, set_clash_square_x},
     {"unlock_done", get_unlock_done, NULL},
     {"save_loaded", get_save_loaded, NULL},
     {"frame", get_frame, NULL},
     {"vblanks", get_vblanks, NULL},
+    {"interp_shown", get_interp_shown, NULL},
     {"webgpu_errors", get_webgpu_errors, NULL},
     {"actions", get_actions, NULL},
     {"pad_buttons", get_pad_buttons, NULL},
