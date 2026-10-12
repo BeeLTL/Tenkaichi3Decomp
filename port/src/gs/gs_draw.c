@@ -415,7 +415,23 @@ static int pipeline_get(int ctx, int topo, int vu) {
     if (vu == 4) { /* asked for by depth_clut: the table pass, which only depends on blending and the write mask */
         key = bkey | wmask << 16 | 1u << 22;
     }
-    return sBackend->pipeGet(key);
+    {
+        /* The back end finds a pipeline by going through all it has made (some hundreds) and is asked once for
+           every primitive: 6% of a fight frame's processor time in a profile. The answer is remembered here by
+           key. A pipeline keeps its number for the whole run (they are only ever added), so nothing goes stale. */
+        static struct { uint32_t key; int idx; } cache[4096]; /* idx + 1; 0 = empty */
+        uint32_t h = (key * 2654435761u) >> 20;
+        int i;
+        if (cache[h].idx != 0 && cache[h].key == key) {
+            return cache[h].idx - 1;
+        }
+        i = sBackend->pipeGet(key);
+        if (i >= 0) {
+            cache[h].key = key;
+            cache[h].idx = i + 1;
+        }
+        return i;
+    }
 }
 
 /* The shared target table's entry for a frame-buffer address. The attachments are the back end's: a new

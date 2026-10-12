@@ -2145,3 +2145,17 @@ waterfall fight (Vulkan), two of the bubble fight (OpenGL).
 - The processor's side (profile of the same fight): reading the game's picture transfers `Gs_Gif` 16%, the PS2's
   float arithmetic done in software 18%, looking a pipeline up `pipe_get` 6%, hashing texture pages `Gs_PageHash`
   6%, the graphics driver 13%.
+
+**Pipeline lookups remembered (same day).** `pipeline_get` asked the back end for a pipeline once per primitive,
+and the back end went through every pipeline it had made: 6% of the processor's time in the profile. The answer
+is now kept by key in gs_draw.c (pipelines are only ever added, so a number never goes stale). Where the processor
+is the limit, the integrated chip at 1x: 278 pictures a second before, 296 with this alone, 299 with the smaller
+copies too. No change on the fast card, whose limit is elsewhere. Three fight frames compared against the build
+without it: identical.
+
+**Looked at and left** (after the copy fix, at 3x, 17.9 ms a frame): the 3D scene 9.3 ms; the two table passes
+(depth tint, see-through tint) 1.7 ms; the draws that read a buffer as a texture (glare, blurs) 2.5 ms; the
+outline's copy of the ids 0.3 ms; the shadow buffer 1.1 ms. These are the effects themselves, which the Effects
+tab already turns off. The driver's buffer compression is not the cost (`RADV_DEBUG=nodcc,nohiz` changes nothing
+or is slower). Two measurements were thrown away: skipping "every buffer but the first" and "buffer 070" doubled
+the speed only because the game shows buffers 000 and 070 in turn, so every other frame was not drawn at all.
