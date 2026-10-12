@@ -1995,3 +1995,8 @@ reworked: its checks were outside `#ifdef PORT` and called a port function from 
 its own and a header in `include/`; the checks now sit behind a macro that is 1 in the PS2 build, and the two
 boxes are on the UI tab. Checked offscreen: with the logos skipped the opening movie is the first thing shown, with
 both skipped the copyright page and then the title; with neither, the regression run is unchanged.
+
+**"Skip copyright page"** (same tab, setting `skip_copyright`, off). The page of legal text is not part of the
+first-run sequence: it is the first loop of `Title_Run`, a still held for 300 frames between two fades, shown every
+time the title screen is entered and not shortened by any button. With the setting on that loop is not entered.
+Checked offscreen with all three on: the memory-card check, then the title's own animation.

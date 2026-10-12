@@ -984,12 +984,13 @@ static void ui_tab(PortVideo &v) {
                           "Long health bars: the bars reach from the edges to the timer.\n"
                           "In the middle: the original 4:3 arrangement, next to the timer.");
     // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
-    static int sSkipLogos = -1, sSkipIntro = -1;
+    static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
     if (sSkipLogos < 0) {
         sSkipLogos = Port_Setting("skip_logos", 0) != 0;
         sSkipIntro = Port_Setting("skip_intro", 0) != 0;
+        sSkipCopy = Port_Setting("skip_copyright", 0) != 0;
     }
-    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0;
+    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0, copy = sSkipCopy != 0;
     ImGui::Spacing();
     if (ImGui::Checkbox("Skip logos", &logos)) {
         sSkipLogos = logos;
@@ -1003,6 +1004,12 @@ static void ui_tab(PortVideo &v) {
         Port_SettingsWrite();
     }
     ImGui::SetItemTooltip("Start without the opening movie. From the next start of the game.");
+    if (ImGui::Checkbox("Skip copyright page", &copy)) {
+        sSkipCopy = copy;
+        Port_SettingSave("skip_copyright", sSkipCopy);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("The page of legal text shown for five seconds before the title screen, every time.");
 }
 
 extern "C" int gPortMusicFollows; // snd_adx.c: 1 = looping music is sped up or slowed down with the game
