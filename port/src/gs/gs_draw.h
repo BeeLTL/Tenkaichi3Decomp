@@ -159,6 +159,7 @@ extern GsBackend sGlBackend;     /* gs_gl.c */
 /* gs_draw.c: the shared target table's entry for a frame-buffer address (create: one is made if absent,
    with the back end's attachments through GsBackend.targetEnsure). */
 int GsDraw_TargetGet(uint32_t fbp, int create);
+int GsDraw_DateRegion(uint32_t k, int *x, int *y, int *w, int *h); /* what the snapshot at draw k has to cover (0: nothing) */
 
 void GsGpu_TitlePoll(void); /* gs_draw.c */
 

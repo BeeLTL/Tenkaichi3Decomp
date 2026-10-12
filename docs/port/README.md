@@ -2099,3 +2099,49 @@ a browser.
 **Where the options are (same day).** The settings window has a seventh tab, Misc: "Check for updates" and the
 three skip options (logos, intro video, copyright page), which were on the UI tab. The UI tab keeps HUD Style,
 "Menus in 4:3" and "Side bars". Earlier sections that say "F1, UI" for the skips mean this tab now.
+
+## Where the time goes on a weak graphics chip: the HUD's alpha copies (2026-10-12)
+
+Players with weak machines report low speed, and the user's own machine hides it. Measured on this machine's
+integrated graphics chip (Radeon, in a Ryzen 7 9800X3D), a recorded fight, 16:9, uncapped, all effects on:
+
+| resolution | pictures a second |
+|---|---|
+| 1x | 278 |
+| 2x (the default) | 96 |
+| 3x | 45 |
+| 4x | 25 |
+
+- The resolution multiplier decides nearly everything; the six effects together cost a tenth (96 with, 108 without).
+- On the fast graphics card the same fight gives about 243 at every resolution: that is the processor's limit, one
+  core (pinning the game to one core changes nothing). About 4 ms a frame on the fastest desktop processor there is.
+- Where the graphics chip's time went at 3x, found by drawing only the first n draws of every frame: the first
+  1,700 of 1,890 draws (the whole 3D scene) take 9 ms; the last 190 (the post effects and the HUD) take 13 ms.
+
+The cause of most of that tail: **every render target is 1024 x 1024 GS pixels times the multiplier** (gs_draw.h;
+the picture is 512 x 448 of it, a fifth), and the HUD's destination-alpha draws (TEST.DATE: a bar's fill cut to
+length, a word through a band) each had the whole target's alpha bytes copied for them, nine times a frame in a
+fight: 9.4 megapixels a copy at 3x. A copy of 8 x 8 pixels in its place gave the same speed as no copy at all, so
+the cost is the copy's size, not the break in drawing.
+
+**Fix:** `GsDraw_DateRegion` (gs_draw.c) gives the box around the run of draws that read the copy, and both back
+ends copy only that. A run with a draw placed by a vertex program still copies the whole target.
+`BT3_DATE_WHOLE=1` copies the whole target as before (to compare).
+
+| resolution | before | after |
+|---|---|---|
+| 2x | 96 | 117 |
+| 3x | 45 | 56 |
+
+Pictures compared old against new, identical in every pixel: five frames of the bubble fight and two of the
+waterfall fight (Vulkan), two of the bubble fight (OpenGL).
+
+**Still there, not done:**
+- The targets themselves: a fight uses 7 to 16 of them, 36 MB each at 2x and 81 MB at 3x, although the game draws
+  into at most 640 x 448 of each, and into 64 x 64 of the two smallest. Sizing them by need would cut the video
+  memory to a third or less; on a chip that shares a small machine's memory that may matter more than speed. It
+  touches about fifty places in the two back ends (sizes, the viewport, the coordinates of a target read as a
+  texture).
+- The processor's side (profile of the same fight): reading the game's picture transfers `Gs_Gif` 16%, the PS2's
+  float arithmetic done in software 18%, looking a pipeline up `pipe_get` 6%, hashing texture pages `Gs_PageHash`
+  6%, the graphics driver 13%.
