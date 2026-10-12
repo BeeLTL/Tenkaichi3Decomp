@@ -2,6 +2,8 @@
 """Builds the memory-model test (memtest.c) for both layouts into port/build/web/memtest/ and runs it under node.
 Then serve port/build/web with port/web/devserver.py and open /memtest/memtest.html?layout=A (or B)&tag=<browser>
 in each browser; results land in port/build/web/__results/.
+The verdict (and the exit status) is that of layout B, the one the browser build uses (port/tools/wasm_build.py, LINK).
+Layout A was rejected (BROWSER_PORT_STATUS.md, memory model); it still runs, for comparison only.
 Usage: python port/tests/wasm_mem/build.py"""
 import pathlib, shutil, subprocess, sys
 
@@ -13,11 +15,12 @@ LAYOUTS = {"A": ["-DLAYOUT_A", "-sGLOBAL_BASE=" + str(0x70010000), "-sINITIAL_ME
            # B: memory ends at the scratchpad address, so a stray access to it traps
            "B": ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x14000000),
                  "-sMAXIMUM_MEMORY=" + str(0x70000000)]}
+USED = "B"
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     shutil.copy(D / "memtest.html", OUT / "memtest.html")
-    ok = True
+    results = {}
     for name, flags in LAYOUTS.items():
         js = OUT / f"memtest_{name}.js"
         r = subprocess.run(["emcc", str(D / "memtest.c"), "-o", str(js), f"-sEXPORT_NAME=createMemtest_{name}"] + COMMON + flags,
@@ -32,8 +35,13 @@ def main():
                   f"let s2; try {{ m._touch(0x70000000); s2 = 'readable'; }} catch (e) {{ s2 = 'trap: ' + e.message; }}"
                   f"console.log('  grow: ' + mb + ' MB; scratchpad after growth: ' + s2); process.exit(f || mb < 1000 ? 1 : 0); }})")
         r = subprocess.run(["node", "-e", script], capture_output=True, text=True)
-        print(f"--- node, layout {name} ---\n{r.stdout}{r.stderr}")
-        ok &= r.returncode == 0
-    print("node:", "PASS" if ok else "FAIL")
+        role = "the layout in use" if name == USED else "rejected layout, for comparison only"
+        print(f"--- node, layout {name} ({role}) ---\n{r.stdout}{r.stderr}")
+        results[name] = r.returncode == 0
+    for name, passed in results.items():
+        if name != USED:
+            print(f"node, layout {name} (not used): {'passes' if passed else 'fails'}")
+    print(f"node, layout {USED}:", "PASS" if results[USED] else "FAIL")
+    sys.exit(0 if results[USED] else 1)
 
 main()
