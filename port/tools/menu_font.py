@@ -220,6 +220,9 @@ def catalog(data):
             text_from='item-shop-normal' if index else None)
         add(f'data-center-{style}',459,1,8,index,['Password Input Screen','Replay','Fighter Catalog'],
             text_from='data-center-normal' if index else None)
+        add(f'character-reference-{style}',463,1,8,index,
+            ['Character Introduction','Voice Playback',"Chi-Chi's Commentary",'View Model'],width=256,
+            text_from='character-reference-normal' if index else None)
     for index, style in ((0,'normal'),(4,'selected')):
         add(f'training-{style}',461,1,9,index,['Training','Battle Training'],
             text_from='training-normal' if index == 4 else None)
@@ -270,6 +273,8 @@ def catalog(data):
         add(f'character-color-{style}',448,2,29,index,[],width=128)
         groups[-1]['rectangles']=[dict(text=str(n+1),x=(n%2)*64,y=(n//2)*32,width=64,height=32) for n in range(4)]
         groups[-1]['outline'] = (44,21,27) if index else (70,0,89)
+    add('character-preview-color',463,1,7,0,[],width=128)
+    groups[-1]['rectangles']=[dict(text=str(n),x=(n%4)*32,y=(n//4)*32,width=32,height=32) for n in range(10)]
     add('song-random',448,2,4,3,['Random'])
     add('song-random-highlighted',448,2,3,3,['Random'],text_from='song-random')
     return groups
@@ -612,7 +617,8 @@ def export(args,groups,default_font):
     # its lowercase x-height for its cap height. Normalize each list across states.
     uniform_families=('history-action','ultimate-battle','sim-dragon-actions','world-tour-list',
                       'world-tour-custom','versus-settings','versus-dp','versus-onoff','versus-time','versus-com-level',
-                      'versus-referee','versus-transform','save-confirm','item-shop-confirm','battle-training','sound-digits','character-color')
+                      'versus-referee','versus-transform','save-confirm','item-shop-confirm','battle-training','sound-digits','character-color',
+                      'character-reference','character-preview-color')
     for family in uniform_families:
         entries=[r for r in rows if r['id'].split('/')[0] == family or r['id'].startswith(family+'-')]
         if entries:
