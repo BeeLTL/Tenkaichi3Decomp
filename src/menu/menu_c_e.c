@@ -871,6 +871,11 @@ void CharSel_Draw(void) {
 
     uv.x0 = 0;
     uv.x1 = 0x200;
+#ifndef PORT
+    uv.y0 = (gCharSel->stage->stage % 4) * 0x40;
+    uv.y1 = uv.y0 + 0x40;
+    uv.unk10 = gCharSel->stage->stage / 4;
+#endif
     Flash_FindLabel(f, NULL, "mc_map_name", &ref);
 #ifdef PORT
     {
@@ -928,9 +933,6 @@ void CharSel_Draw(void) {
         }
     }
 #else
-    uv.y0 = (gCharSel->stage->stage % 4) * 0x40;
-    uv.y1 = uv.y0 + 0x40;
-    uv.unk10 = gCharSel->stage->stage / 4;
     Flash_ClipSetUv(f, &ref, &uv);
     Flash_ClipSetTex(f, &ref, uv.unk10);
 #endif
