@@ -98,6 +98,27 @@ Unless noted, every test runs against the server above. "Data" means the test ne
 | `node port/tests/web/dashboard.js [--query gpu=webgpu]` | the performance dashboard and the diagnostics export | data, Chrome |
 | `node port/tests/web/controllers.js` | controller set-up with simulated pads | data, Chrome |
 | `node port/tests/web/saves.js` | IndexedDB saves with the game's own saves | data, Chrome |
+| `node port/tests/web/verify.js` | the data check is not run in the browser, and that is said (log, crash report, dashboard) | data, Chrome |
+| `node port/tests/web/extras.js --data <gamedata>` | added stages, songs, texture packs over HTTP; reported when the server does not list folders. It starts its own server on port 8090, with a temporary folder holding copies from your data, removed afterwards | data, Chrome |
 | `port/tests/ps2float` | native, against PCSX2 | **blocked here**: needs the native toolchain and PCSX2 data |
 
-There is no CI for the browser build: `.github/workflows/release.yml` is native-only. See plan task M7.
+The `devserver.py` used by the tests must be the current one: it serves the folder listings (`?list`) that added stages, songs and texture packs need. Without them they are reported as unavailable.
+
+## 5. Continuous integration
+
+`.github/workflows/browser.yml` runs `port/tests/ci/browser_checks.sh` on `ubuntu-24.04`, from a clean checkout:
+- **Toolchain:** emsdk 6.0.12, with its `upstream/bin` LLVM tools on the PATH; Node 24.19.0; Python 3.12 with libclang 18.1.1; naga 30.0.1 built with Rust 1.99.0.
+- **Steps:** the build (game, port, data shapes, link, WGSL by naga), then `wasm_sf`, `pipekey`, `web_data` and `wasm_mem`.
+- **Constraints:** no secrets and no artifacts; no game data.
+
+The job's summary lists what is not checked there, and why:
+- needs game data: bench, dashboard, controllers, saves, verify, extras;
+- needs a WebGPU adapter: `wgsl/check.js`;
+- needs physical controllers;
+- needs native tools: `ps2float`.
+
+The same script runs by hand on any machine with the toolchain on the PATH:
+
+```bash
+sh port/tests/ci/browser_checks.sh
+```
