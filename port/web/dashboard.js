@@ -27,6 +27,15 @@ const UPDATE_MS = 500;                     // text and graph updates
 const GRAPH_TICKS = 300;                   // ticks in the graph (10 s at 30 a second)
 const SHOWN_KEPT = 4096;                   // shown-picture times kept (about 20 s at 200 a second)
 const LONG_TASK_MS = 50;                   // the browser's own threshold for a long animation frame
+// The check that the game data is the original disc's, by the engine's state (web_verify.c, plat_verify.c)
+const DATA_CHECK = {
+  [-1]: 'not started yet',
+  0: 'running',
+  1: 'the original disc’s',
+  2: 'modified (see the log)',
+  3: 'turned off (BT3_VERIFY=0)',
+  4: 'not checked: the browser version cannot run the check (it reads every file of the data folder, about 3 GB, and needs a thread)',
+};
 const PS2_VBLANKS_PER_S = 59.94;
 const LOG_ERROR = /error|FAIL|STOPPED|not implemented|abort/i;
 const LOG_ERRORS_KEPT = 200;
@@ -224,6 +233,7 @@ class Bt3Dashboard {
         `GPU ${mem.gpuEstimateBytes === null ? 'not measurable (WebGL 2 reports none; not tracked)' : mb(mem.gpuEstimateBytes) + ' estimated from sizes asked for'}`].join('; ')],
       ['Game data', `${load.filesOpened} files, ${load.requests} requests, ${mb(load.bytesFetched)} fetched, ${load.inFlight} in flight, ` +
         `cache ${mb(load.cacheBytes)}, ${load.errors} errors (read on demand: no total)`],
+      ['Data check', DATA_CHECK[this.get('data_check')] || `unknown state ${this.get('data_check')}`],
     ];
     if (this.renderer === 'webgpu') {
       const n = this.get('webgpu_errors');

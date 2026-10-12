@@ -100,6 +100,8 @@ VIDEO_FIELD(texPack)
 static int get_texPackCount(void) { PortVideo v; GsGpu_GetSettings(&v); return v.texPackCount; }
 /* Content added from outside the disc: what was found, and whether it has been looked for yet (web_extras.c) */
 extern int PortStages_Count(void), PortSongs_Count(void), WebExtras_Checked(void);
+/* Whether the game data was checked against the original disc's (web_verify.c) */
+extern int WebVerify_State(void);
 
 /* Smooth motion (in-between pictures, gs_draw.c) in the browser, measured with port/tests/bench/present_rate.js on the
    demo battle (2026-10-12, RTX 5070 Ti, 200 Hz display; BROWSER_PORT_STATUS.md has the tables). Each in-between picture
@@ -179,6 +181,7 @@ static const struct {
     {"added_checked", WebExtras_Checked, NULL},
     {"added_stage_count", PortStages_Count, NULL},
     {"added_song_count", PortSongs_Count, NULL},
+    {"data_check", WebVerify_State, NULL},
     {"interp", get_interp, set_interp},
     {"interp_limit", get_interp_limit, NULL},
     {"clash_square", Port_ClashSquare, set_clash_square},

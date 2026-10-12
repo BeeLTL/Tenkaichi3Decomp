@@ -207,6 +207,8 @@ LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000
         "-Wl,--wrap=Port_PadRead",  # what the game receives from the pads, for the page (port/src/web/web_ui.c)
         # content added from outside the disc: said when not found, as folders cannot be looked through over HTTP
         "-Wl,--wrap=PortStages_Init", "-Wl,--wrap=PortSongs_Init", "-Wl,--wrap=TexPack_Init",  # (web/web_extras.c)
+        # the check of the game data (plat_verify.c) cannot run here: not started, and said (web/web_verify.c)
+        "-Wl,--wrap=Port_VerifyStart", "-Wl,--wrap=Port_DataSummary",
         # the memory card's close / write / sync (plat_mc.c): when a save is whole, for the page to keep it (web_ui.c)
         "-Wl,--wrap=func_002A1FB8", "-Wl,--wrap=func_002A2320", "-Wl,--wrap=func_002A2498",
         "-Wl,--error-limit=0", "--profiling-funcs", "-sASSERTIONS=1"]
