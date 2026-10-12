@@ -26,6 +26,8 @@ int Port_NetSpeedStandard(void);                   // what a quick match runs at
 void Port_NetNameSet(const char *name);         // gs/net.c: this player's name for the match
 int Port_IsWide(void);                         // plat_stub.c: the picture is wider than 4:3
 int Port_AspectMilli(void);
+int Port_Menus43(void);                       // plat_stub.c: the menus are shown at 4:3 in a wider picture
+void Port_Menus43Set(int on);
 int Port_HudLayout(void);                      // gs_draw.c: 2 = the HUD is about the middle of the screen
 int GsDraw_HudShown(void);                     // ... and 1 while the game is drawing the HUD's side panels
 const char *Port_NetName(int player);          // the name of the player of side 0 or 1 ("" outside a match)
@@ -196,6 +198,85 @@ static SDL_GPUTexture *load_strip(const char *env, const char *rel, uint32_t *w,
         fprintf(stderr, "bt3: %s overlay: %u names, %ux%u each\n", what, *count, *w, *h);
     }
     return tex;
+}
+
+// ---- the side bars ----
+// Where the picture is narrower than the window (a 4:3 picture, or "Menus in 4:3", in a wide window) the sides are
+// black, or with "Side bars: Border" a panel with a border along the picture. Two pictures: the border (trim.png),
+// kept in proportion at the picture's edge and as high as the picture, and the plain panel (fill.png), stretched
+// over the rest, so a bar of any width looks right. Both are drawn as they are on the left and mirrored on the right.
+// The program carries a gold set (port/assets/bars, art by the project's owner: 34 x 720 and 126 x 720). A player
+// replaces it by putting a trim.png and / or a fill.png of any size into a folder "bars" next to the game.
+#include "bars_png.h"
+static SDL_GPUTexture *sBarTrim, *sBarFill;
+static int sBars = -1; // 0 black, 1 the border; -1 not read yet
+static int sBarsTried;
+
+static float sBarTrimShape = 34.0f / 720.0f; // the border's width over its height
+
+static SDL_GPUTexture *bar_texture(const char *file, const unsigned char *png, size_t size, float *shape) {
+    SDL_Surface *s = SDL_LoadPNG(file), *rgba; // the player's own picture, if there is one
+    if (s != NULL) {
+        fprintf(stderr, "bt3: side bars: %s, %d x %d\n", file, s->w, s->h);
+    } else {
+        s = SDL_LoadPNG_IO(SDL_IOFromConstMem(png, size), true);
+    }
+    uint8_t *pix;
+    size_t bytes;
+    if (s == NULL) {
+        return NULL;
+    }
+    rgba = SDL_ConvertSurface(s, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(s);
+    if (rgba == NULL) {
+        return NULL;
+    }
+    if (shape != NULL && rgba->h > 0) {
+        *shape = (float)rgba->w / (float)rgba->h;
+    }
+    bytes = (size_t)rgba->w * rgba->h * 4;
+    pix = (uint8_t *)malloc(bytes);
+    for (int y = 0; pix != NULL && y < rgba->h; y++) {
+        memcpy(pix + (size_t)y * rgba->w * 4, (const uint8_t *)rgba->pixels + (size_t)y * rgba->pitch, (size_t)rgba->w * 4);
+    }
+    SDL_GPUTexture *tex = pix != NULL ? make_strip(pix, bytes, (uint32_t)rgba->w, (uint32_t)rgba->h, 1) : NULL;
+    SDL_DestroySurface(rgba);
+    return tex;
+}
+
+static bool bars_on(void) {
+    if (sBars < 0) {
+        sBars = Port_Setting("side_bars", 0) != 0;
+    }
+    return sBars != 0 && gUiPresentX > 0 && gUiPresentW > 0 && gUiPresentH > 0;
+}
+
+static void bars_draw(void) {
+    if (!sBarsTried) {
+        sBarsTried = 1;
+        sBarTrim = bar_texture("bars/trim.png", kBarsTrimPng, sizeof(kBarsTrimPng), &sBarTrimShape);
+        sBarFill = bar_texture("bars/fill.png", kBarsFillPng, sizeof(kBarsFillPng), NULL);
+    }
+    if (sBarTrim == NULL || sBarFill == NULL) {
+        return;
+    }
+    ImDrawList *dl = ImGui::GetBackgroundDrawList();
+    float y0 = (float)gUiPresentY, y1 = y0 + (float)gUiPresentH;
+    float bar = (float)gUiPresentX; // the width of each side
+    float trim = (float)gUiPresentH * sBarTrimShape;
+    float u0 = 0.0f;
+    if (trim > bar) { // a bar narrower than the border: the border's inner part
+        u0 = 1.0f - bar / trim;
+        trim = bar;
+    }
+    float lx = (float)gUiPresentX, rx = lx + (float)gUiPresentW; // the picture's two edges
+    ImTextureRef tt((ImTextureID)(intptr_t)sBarTrim), ft((ImTextureID)(intptr_t)sBarFill);
+    if (bar > trim) {
+        dl->AddImage(ft, ImVec2(lx - bar, y0), ImVec2(lx - trim, y1), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+        dl->AddImage(ft, ImVec2(rx + trim, y0), ImVec2(rx + bar, y1), ImVec2(1.0f, 0.0f), ImVec2(0.0f, 1.0f));
+    }
+    dl->AddImage(tt, ImVec2(lx - trim, y0), ImVec2(lx, y1), ImVec2(u0, 0.0f), ImVec2(1.0f, 1.0f));
+    dl->AddImage(tt, ImVec2(rx, y0), ImVec2(rx + trim, y1), ImVec2(1.0f, 0.0f), ImVec2(u0, 1.0f));
 }
 
 static void load_strips(void) {
@@ -983,6 +1064,56 @@ static void ui_tab(PortVideo &v) {
     ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
                           "Long health bars: the bars reach from the edges to the timer.\n"
                           "In the middle: the original 4:3 arrangement, next to the timer.");
+    {
+        bool m43 = Port_Menus43() != 0;
+        if (ImGui::Checkbox("Menus in 4:3", &m43)) {
+            Port_Menus43Set(m43);
+            Port_SettingSave("menus_43", m43);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("In a picture wider than 4:3, show the menus at their own shape with black at the sides\n"
+                              "instead of stretched to the width. Fights keep the wide picture.");
+    }
+    {
+        static const char *const kBars[] = {"Black", "Border"};
+        int b = sBars > 0;
+        if (ImGui::Combo("Side bars", &b, kBars, 2)) {
+            sBars = b;
+            Port_SettingSave("side_bars", sBars);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("What fills the sides where the picture is narrower than the window:\n"
+                              "a 4:3 picture, or the menus with \"Menus in 4:3\", in a wide window.\n"
+                              "Your own: a folder \"bars\" next to the game with trim.png (the strip along the\n"
+                              "picture, kept in proportion) and fill.png (stretched over the rest). Read at start.");
+    }
+    // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
+    static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
+    if (sSkipLogos < 0) {
+        sSkipLogos = Port_Setting("skip_logos", 0) != 0;
+        sSkipIntro = Port_Setting("skip_intro", 0) != 0;
+        sSkipCopy = Port_Setting("skip_copyright", 0) != 0;
+    }
+    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0, copy = sSkipCopy != 0;
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Skip logos", &logos)) {
+        sSkipLogos = logos;
+        Port_SettingSave("skip_logos", sSkipLogos);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the publisher and developer logos. From the next start of the game.");
+    if (ImGui::Checkbox("Skip intro video", &intro)) {
+        sSkipIntro = intro;
+        Port_SettingSave("skip_intro", sSkipIntro);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the opening movie. From the next start of the game.");
+    if (ImGui::Checkbox("Skip copyright page", &copy)) {
+        sSkipCopy = copy;
+        Port_SettingSave("skip_copyright", sSkipCopy);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("The page of legal text shown for five seconds before the title screen, every time.");
 }
 
 extern "C" int gPortMusicFollows; // snd_adx.c: 1 = looping music is sped up or slowed down with the game
@@ -1417,9 +1548,10 @@ static bool frame_build(void) {
     bool meter = sReady && meter_on();
     // the players' names under the gauges of an online fight
     bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
+    bool bars = sReady && bars_on();
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names)) {
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars)) {
         return false;
     }
     if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
@@ -1448,6 +1580,9 @@ static bool frame_build(void) {
     }
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+    if (bars) {
+        bars_draw();
+    }
     if (sOpen) {
         if (sNet) {
             build_net();

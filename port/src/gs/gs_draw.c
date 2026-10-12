@@ -44,6 +44,7 @@ extern unsigned long long Port_BlankNs(void); /* plat_stub.c: 16.68 ms, less in 
 extern int Port_AspectMilli(void);
 extern void Port_SetAspectMilli(int milli), Port_AudioRefresh(void), Port_SettingsWrite(void);
 extern int gPortMenuMode;       /* headless.c: the menus are running */
+extern int Port_PageAspectMilli(void); /* plat_stub.c: the shape of the page shown now (4:3 in the menus if asked for) */
 extern int gPortMusicPercent, gPortSePercent, gPortVoicePercent, gPortStagePercent;
 
 static GsBackend *sBackend;
@@ -903,7 +904,7 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
     /* (Not the cross-fade's picture: it is the whole frame as it was shown, wide view and all, drawn back over the
        whole frame in strips. Each strip is narrower than the screen, so the rule below took it for a piece of 2D
        art and the old shot was drawn at three quarters of the width over the new one: seen by the user.) */
-    if (Port_IsWide() && !gPortMenuMode && !sWholeFrame && !d.tex_is_target && (type == 6 || fst) && gsTargets[d.target].fbp == (uint32_t)gGsMainFbp) {
+    if (Port_IsWide() && (!gPortMenuMode || (gsAnchor == 7 && Port_PageAspectMilli() > 1340)) && !sWholeFrame && !d.tex_is_target && (type == 6 || fst) && gsTargets[d.target].fbp == (uint32_t)gGsMainFbp) {
         /* Widescreen. The 3D scene is projected for a 16:9 picture by the game itself; 2D art is laid out for
            4:3 and would come out a third too wide. Each 2D piece is narrowed to 3/4 about a fixed point:
              (not in the menus: their pages are shown whole, stretched to the width; see Port_WideFactor)
@@ -928,6 +929,10 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
             /* as wide as the screen (the bands and streaks of READY / FIGHT, flashes, speed lines): meant to
                reach from edge to edge, so it keeps the full width */
             pivot = -1.0f;
+        } else if (gsAnchor == 7) {
+            /* Loading animations keep their left margin and sprite proportions, even in menu mode.
+               Scattered items already have their positions spread over the wider page by loading.c. */
+            pivot = 0.0f;
         } else if (gsAnchor != 0) {
             pivot = (gsAnchor == 1 || gsAnchor == 5) ? 0.0f : (gsAnchor == 2 || gsAnchor == 6) ? 512.0f : 256.0f;
             if (sHudLayout == 2) {
@@ -1201,8 +1206,9 @@ void GsGpu_Native(int effect) {
 
     /* 1 = outline. 2 (the see-through tint) is drawn by the generic table pass now (depth_clut), from the game's
        own table. */
-    if (effect == 0x15 || effect == 0x16) {
-        gsAnchor = effect - 0x10; /* 5/6: extended life bar, anchored left/right even beyond 480 pixels */
+    if (effect >= 0x15 && effect <= 0x17) {
+        /* 5/6: extended life bar, anchored left/right even beyond 480 pixels; 7: loading page, anchored left. */
+        gsAnchor = effect - 0x10;
         return;
     }
     if (effect >= 0x10 && effect <= 0x14) {
@@ -1387,8 +1393,9 @@ void GsDraw_PollEvents(void) {
 
 void GsDraw_PictureSize(int windowW, int windowH, int *w, int *h) {
     /* The picture keeps its shape whatever the window's: 4:3, or 16:9 in widescreen (the 512 x 448 buffer is not
-       square-pixelled: it always fills a 4:3 or 16:9 screen). */
-    float want = (float)Port_AspectMilli() / 1000.0f;
+       square-pixelled: it always fills a 4:3 or 16:9 screen). The page's shape: 4:3 while the menus run if
+       "Menus in 4:3" is on (plat_stub.c), as upstream 0.1.32's present steps do. */
+    float want = (float)Port_PageAspectMilli() / 1000.0f;
     *w = windowW;
     *h = windowH;
     if ((float)windowW > (float)windowH * want) {

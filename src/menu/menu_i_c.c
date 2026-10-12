@@ -159,6 +159,16 @@ void FirstRun_WaitPartition(s32 pt) {
     Dma_ResetBuffers();
 }
 
+#ifdef PORT
+/* Two settings of the PC version (F1, UI): the logos and the opening movie can be left out at the start. Both
+   can be skipped with a button anyway, and nothing is loaded by either: the loading runs beside the logos and is
+   waited for after them. */
+extern int Port_Setting(const char *name, int def);
+#define FIRSTRUN_SHOW(name) (!Port_Setting(name, 0))
+#else
+#define FIRSTRUN_SHOW(name) 1
+#endif
+
 /* The first-run sequence. Returns 1. */
 s32 FirstRun_Main(void) {
     u32 *res;
@@ -171,7 +181,9 @@ s32 FirstRun_Main(void) {
     }
     BootCard_Run(2);
     res = Sprite_Unpack(MPACK_AT(gMenuArc0, 3), NULL, NULL);
-    Logo_ShowAll(res);
+    if (FIRSTRUN_SHOW("skip_logos")) {
+        Logo_ShowAll(res);
+    }
     if (res != NULL) {
         Heap_Free(res);
     }
@@ -180,7 +192,9 @@ s32 FirstRun_Main(void) {
         gMenuArc0 = NULL;
     }
     FirstRun_WaitPartition(2);
-    Movie_PlayOpening();
+    if (FIRSTRUN_SHOW("skip_intro")) {
+        Movie_PlayOpening();
+    }
     PadWatch_SetEnabled(1);
     return 1;
 }

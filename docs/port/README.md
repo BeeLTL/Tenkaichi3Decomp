@@ -1966,3 +1966,72 @@ and off: three frames of a fight, three of the waterfall recording (the scene th
 integrated chip's Vulkan, and one of the waterfall on an Nvidia card's OpenGL. Not done: the remaining 8%, which
 is the draws that do write depth (sparing all of the GS's own primitives gives 110, but those then store
 fractions, which is the state the waterfall fault came from); a run on a display; Windows.
+
+## Disc Fusion is always unlocked (2026-10-12)
+
+The Disc Fusion screen (mode 24, src/menu/menu_o_b.c) asks for the discs of the two earlier games. It takes
+nothing from them: `Disc_Identify` (src/sys/file.c) looks for the boot file's name and the screen sets one bit per
+disc in `gProgress->discFlags` (kept for the session, not in the save); the two modes behind it are on this disc.
+Under PORT, `DiscFusion_UpdateHave` sets both bits, so both plates open their mode without the disc swap, which
+cannot work without a drive. (Bit 8 of the same word is something else: the ladder's "challenged a higher place".)
+Checked: it builds and the regression replay passes. Not checked: the screen itself, and what the two modes do
+from there.
+
+## Loading screens beyond 4:3, and skipping the logos and the opening (2026-10-12)
+
+Two pull requests.
+
+**#49 (Victorgonl).** The three loading screens are drawn while the menus run, where every 2D page is stretched to
+the width, so their figures came out a third too wide at 16:9. `Load_DrawScreen` now brackets its drawing with
+marker 0x17 (`gsAnchor` 7): the renderer narrows those sprites about the left edge even in menu mode, and the
+scattered items of the third screen are drawn at positions spread over the wider page (`Load_ItemDrawX`). Only where
+things are drawn changes; the stored positions and the random sequence are the game's. Checked offscreen at 4:3,
+16:9 and 21:9 for all three screens (the one shown at the start of the game).
+
+**#50 (Renzo-MGRR).** F1, UI: "Skip logos" and "Skip intro video" (settings `skip_logos`, `skip_intro`, both off).
+`FirstRun_Main` leaves out `Logo_ShowAll` and `Movie_PlayOpening`. Neither loads anything: the third partition is
+loaded beside the logos and waited for after them (`FirstRun_WaitPartition`). The pull request was merged and then
+reworked: its checks were outside `#ifdef PORT` and called a port function from PS2 code, and it added a tab of
+its own and a header in `include/`; the checks now sit behind a macro that is 1 in the PS2 build, and the two
+boxes are on the UI tab. Checked offscreen: with the logos skipped the opening movie is the first thing shown, with
+both skipped the copyright page and then the title; with neither, the regression run is unchanged.
+
+**"Skip copyright page"** (same tab, setting `skip_copyright`, off). The page of legal text is not part of the
+first-run sequence: it is the first loop of `Title_Run`, a still held for 300 frames between two fades, shown every
+time the title screen is entered and not shortened by any button. With the setting on that loop is not entered.
+Checked offscreen with all three on: the memory-card check, then the title's own animation.
+
+## "Menus in 4:3" (2026-10-12)
+
+F1, UI (setting `menus_43`, off). In a picture wider than 4:3 the menus' pages are stretched to the width (they are
+composed for 4:3; see `Port_WideFactor`). With the setting on they are shown at 4:3 in the middle of the window,
+black at the sides; a fight keeps the wide picture. It is only the present step: `Port_PageAspectMilli()`
+(plat_stub.c) is 1333 while `gPortMenuMode` is set and the setting is on, otherwise the picture's shape, and both
+renderers size the shown rectangle by it. The window keeps its shape. The loading screens go by the same value
+(PR #49's narrowing and spreading are for a stretched page), so one shown inside the menus is the original 4:3
+page and one shown on the way into a fight is the wide one.
+
+Checked offscreen at 16:9 from the window's own picture (`BT3_UI_SHOT`): the memory-card check and the title screen
+are 4:3 with bars, a fight from a recording fills the width. Not seen: the change from a menu to a fight and back
+in one run, and the OpenGL renderer.
+
+## Orange side bars (2026-10-12)
+
+F1, UI: "Side bars", Black or Orange (setting `side_bars`, 0 by default). Wherever the picture is narrower than the
+window (a 4:3 picture, or the menus with "Menus in 4:3", in a wide window or full screen) the two sides are black;
+with Orange they are a gold panel with a key-pattern border along the picture. The art is the project owner's own,
+two pieces in `port/assets/bars`: `trim.png` (34 x 720, the border) and `fill.png` (126 x 720, the plain panel).
+`undefined.py` writes them into the program as bytes (`bars_png.h`), so nothing ships beside it; `ui.cpp` decodes
+them with SDL's PNG reader on first use and draws them on ImGui's background list, which both renderers already
+show: the border in proportion to the picture's height at its edge, the panel stretched over the rest, both
+mirrored on the right. A bar of any width therefore keeps the border's shape. Only side bars are drawn, not bars
+above and below.
+
+Checked offscreen from the window's own picture at 16:9 and 21:9 with "Menus in 4:3" on (Vulkan). The OpenGL
+renderer ran with it without fault but its window picture was not captured.
+
+**The option is "Border", and the pictures can be replaced.** The choice reads Black / Border. A folder `bars` next
+to the game (where `textures` goes) with a `trim.png` and / or a `fill.png` takes the place of the built-in gold
+set; either file alone replaces only its piece. Any size: the border is drawn as high as the picture and at its own
+width-to-height proportion, the panel is stretched. They are read once, when bars are first drawn, and the log says
+`bt3: side bars: bars/trim.png, W x H`. Checked offscreen at 16:9 with a made-up pair.

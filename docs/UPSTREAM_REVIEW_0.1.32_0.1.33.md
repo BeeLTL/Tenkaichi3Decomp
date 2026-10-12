@@ -51,3 +51,25 @@ The plan is one release at a time, each on a temporary branch, with conflicts re
 **Follow-ups, not part of the merges:**
 - page settings for skip logos / intro / copyright and menus in 4:3;
 - the smaller DATE copies in the WebGPU back end.
+
+## Results
+
+### 0.1.32: merged (tested as `e173fca`)
+
+**Conflict:**
+- One, `gs_gl.c`, resolved as planned: `GsDraw_PictureSize` uses `Port_PageAspectMilli`.
+- Its only callers are the GL and WebGPU present steps.
+
+**Browser:**
+- The build is OK: 269 game files, 63 port files, 103 stubs.
+- Unit tests PASS.
+- Demo and boot on WebGL 2 and WebGPU: trace `8ad198bf58dbed33`, 12/12 screenshots identical to the 0.1.31 baseline. The new options are off by default.
+- Page tests PASS: dashboard (both renderers), controllers, verify, extras, saves.
+
+**Native, against `v0.1.32` itself** (the release container, `compare.sh`), all identical:
+- headless: 70 lines;
+- OpenGL: 12 lines + 4 screenshots;
+- Vulkan: 70 lines + 15 screenshots;
+- win64: 70 lines.
+
+The first attempt did not run because Docker Desktop had stopped while idle; it was re-run.
