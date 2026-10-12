@@ -2095,3 +2095,7 @@ Checked on Linux: the real request by the library and by the program (both give 
 offscreen run without the override; with a pretended 0.1.40, the line over the picture and the settings window's
 row, from the window's own picture. Not checked: the WinHTTP path (written, not run), and the button's opening of
 a browser.
+
+**Where the options are (same day).** The settings window has a seventh tab, Misc: "Check for updates" and the
+three skip options (logos, intro video, copyright page), which were on the UI tab. The UI tab keeps HUD Style,
+"Menus in 4:3" and "Side bars". Earlier sections that say "F1, UI" for the skips mean this tab now.

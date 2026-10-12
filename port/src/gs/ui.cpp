@@ -1100,6 +1100,33 @@ static void misc_tab(void) {
         ImGui::SetItemTooltip("Once per start, ask GitHub for the number of the newest release and say so if it is newer\n"
                               "than this one. Nothing is downloaded: the settings window then has a button to the page.");
     }
+    // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
+    static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
+    if (sSkipLogos < 0) {
+        sSkipLogos = Port_Setting("skip_logos", 0) != 0;
+        sSkipIntro = Port_Setting("skip_intro", 0) != 0;
+        sSkipCopy = Port_Setting("skip_copyright", 0) != 0;
+    }
+    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0, copy = sSkipCopy != 0;
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Skip logos", &logos)) {
+        sSkipLogos = logos;
+        Port_SettingSave("skip_logos", sSkipLogos);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the publisher and developer logos. From the next start of the game.");
+    if (ImGui::Checkbox("Skip intro video", &intro)) {
+        sSkipIntro = intro;
+        Port_SettingSave("skip_intro", sSkipIntro);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the opening movie. From the next start of the game.");
+    if (ImGui::Checkbox("Skip copyright page", &copy)) {
+        sSkipCopy = copy;
+        Port_SettingSave("skip_copyright", sSkipCopy);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("The page of legal text shown for five seconds before the title screen, every time.");
 }
 
 static void ui_tab(PortVideo &v) {
@@ -1131,33 +1158,6 @@ static void ui_tab(PortVideo &v) {
                               "Your own: a folder \"bars\" next to the game with trim.png (the strip along the\n"
                               "picture, kept in proportion) and fill.png (stretched over the rest). Read at start.");
     }
-    // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
-    static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
-    if (sSkipLogos < 0) {
-        sSkipLogos = Port_Setting("skip_logos", 0) != 0;
-        sSkipIntro = Port_Setting("skip_intro", 0) != 0;
-        sSkipCopy = Port_Setting("skip_copyright", 0) != 0;
-    }
-    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0, copy = sSkipCopy != 0;
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Skip logos", &logos)) {
-        sSkipLogos = logos;
-        Port_SettingSave("skip_logos", sSkipLogos);
-        Port_SettingsWrite();
-    }
-    ImGui::SetItemTooltip("Start without the publisher and developer logos. From the next start of the game.");
-    if (ImGui::Checkbox("Skip intro video", &intro)) {
-        sSkipIntro = intro;
-        Port_SettingSave("skip_intro", sSkipIntro);
-        Port_SettingsWrite();
-    }
-    ImGui::SetItemTooltip("Start without the opening movie. From the next start of the game.");
-    if (ImGui::Checkbox("Skip copyright page", &copy)) {
-        sSkipCopy = copy;
-        Port_SettingSave("skip_copyright", sSkipCopy);
-        Port_SettingsWrite();
-    }
-    ImGui::SetItemTooltip("The page of legal text shown for five seconds before the title screen, every time.");
 }
 
 extern "C" int gPortMusicFollows; // snd_adx.c: 1 = looping music is sped up or slowed down with the game
