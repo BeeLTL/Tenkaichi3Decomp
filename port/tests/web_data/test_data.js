@@ -84,6 +84,14 @@ server.listen(0, '127.0.0.1', async () => {
   mode = 'error';
   check(await d.read('dir/file one.bin', 0, 0, 100) === -1, 'HTTP 500 during a read: -1');
   console.log(failures ? `RESULT: FAIL (${failures})` : 'RESULT: PASS');
+  // The exit status is set and Node exits by itself once the server and fetch's connections are closed. Calling
+  // process.exit() here, while fetch (undici) was still tearing its sockets down, made Node on Windows abort in libuv
+  // (src\win\async.c: !(handle->flags & UV_HANDLE_CLOSING)) in about a third of the runs: exit code 127 after
+  // "RESULT: PASS".
+  process.exitCode = failures ? 1 : 0;
   server.closeAllConnections();
-  server.close(() => process.exit(failures ? 1 : 0));
+  server.close();
 });
+// A test that cannot finish (a read that never resolves) must not hang the runner or pass: it fails after this.
+const DEADLINE_MS = 60000;
+setTimeout(() => { console.log(`RESULT: FAIL (not finished after ${DEADLINE_MS / 1000} s)`); process.exit(1); }, DEADLINE_MS).unref();
