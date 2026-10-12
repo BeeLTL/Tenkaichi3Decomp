@@ -7,9 +7,9 @@
 #   - Linux x86-64 (BT3_CC=clang64, as the Linux release): build; the attract demo without a window (BT3_GS=none), its
 #     fight trace (BT3_TRACE=60); then rendered on a virtual display with Mesa's software drivers (OpenGL: llvmpipe,
 #     Vulkan: lavapipe), a screenshot every 150 frames (BT3_SHOT);
-#   - Windows x86-64 (BT3_CC=win64, as the Windows release): build; with --run-windows, run here without a window.
+#   - Windows x86-64 (BT3_CC=win64, as the Windows release): build; with RUN_WINDOWS=1, run here without a window.
 # Then compares A with B: traces line for line, screenshots byte for byte. Exit status 0 only if everything compared is
-# identical and every step ran.
+# identical and every step ran. REUSE=1 keeps the results of a revision already run in the same work folder.
 set -euo pipefail
 A=$1; B=$2; DATA=$3; WORK=${4:-$(mktemp -d)}
 RUN_WINDOWS=${RUN_WINDOWS:-0}
@@ -20,6 +20,12 @@ docker image inspect $IMAGE >/dev/null 2>&1 || docker build -t $IMAGE "$REPO/por
 mkdir -p "$WORK/out"
 host() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }  # (Git Bash on Windows)
 for rev in "$A" "$B"; do
+    # REUSE=1: a revision whose results are already in the work folder (a commit does not change) is not run again
+    if [ "${REUSE:-0}" = 1 ] && [ -s "$WORK/out/${rev}_headless.trace.txt" ] && [ -d "$WORK/out/${rev}_vulkan.shots" ] &&
+       { [ "$RUN_WINDOWS" != 1 ] || [ -s "$WORK/out/${rev}_win64.trace.txt" ]; }; then
+        echo "$rev: results reused from $WORK/out"
+        continue
+    fi
     src="$WORK/src_$rev"
     rm -rf "$src" && git -c core.autocrlf=false clone -q "$REPO" "$src" && git -C "$src" checkout -q "$rev"
     MSYS_NO_PATHCONV=1 docker run --rm -v "$(host "$src"):/src" -v "$(host "$DATA"):/data:ro" -v "$(host "$WORK/out"):/out" \
