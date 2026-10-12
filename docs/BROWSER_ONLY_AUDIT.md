@@ -113,14 +113,14 @@ The table below shows the service each part of the program needs and what provid
 | Input | `Port_PadRead` (wrapped) | `gs_input.c` (SDL gamepads and keyboard), then `web_ui.c` (`__wrap_Port_PadRead`, bindings) and `controllers.js` | `gs_input.c` + `ui.cpp` | Works (simulated pads) |
 | Audio | `snd_adx.c`, `snd_se.c` | SDL audio streams (Emscripten port, Web Audio) | SDL audio | Works. **Assumption**: no automated audio test |
 | Timing / vblank | `plat_stub.c` (vblank pacing, game speed) | JSPI suspends the game's wait; `SDL_DelayPrecise`; `state.c` `SDL_GetTicksNS` | the same code on a thread | Works |
-| File system | `fopen` (wrapped), `plat_file.c`, `plat_fcache.c` | `web_fs.c` `__wrap_fopen` → `bt3_data.js` (HTTP Range, LRU cache) and MEMFS | the host file system | Works. **No directory listing** (section 5) |
+| File system | `fopen` (wrapped), `plat_file.c`, `plat_fcache.c` | `web_fs.c` `__wrap_fopen` → `bt3_data.js` (HTTP Range, LRU cache) and MEMFS | the host file system | Works. Folders under the data root are listed from the server's listings since M3 (`web_fs.c`: `stat`, `opendir`, `readdir`, `closedir` wrapped; `devserver.py`: `?list`) |
 | Saves | memory card `plat_mc.c` | MEMFS, plus `saves.js` (IndexedDB) through the wrapped card calls `func_002A1FB8`, `func_002A2320`, `func_002A2498` in `web_ui.c` | host files | Works |
 | Config | `plat_settings.c` | `settings.js` (localStorage), then `web_ui.c` | settings file + ImGui | Works |
 | Logging / crash | `plat_crash.c` | the `__EMSCRIPTEN__` branch: the page prints the JS stack, plus `Port_CrashContext` | signal / SEH handlers | Works |
-| Threads | `plat_mem.c` (game thread), `plat_verify.c`, `gs_core.c` (`BT3_GS_THREAD`) | none: single thread. `plat_mem.c` has a browser branch | pthreads | **Defect**: `plat_verify.c` (section 5) |
+| Threads | `plat_mem.c` (game thread), `plat_verify.c`, `gs_core.c` (`BT3_GS_THREAD`) | none: single thread. `plat_mem.c` has a browser branch | pthreads | `plat_verify.c`'s thread is not started; this is reported since M1 (section 5) |
 | Networking | `Port_Net*` | `net_off.c` (not available; menu hidden) | `net*.c` | Excluded on purpose |
 | Movies | `plat_movie.c`, `plat_mpeg2.c` | the same code (software MPEG-2) | the same | Works in the boot run (the intro movie) |
-| Game data verification | `plat_verify.c` | **none in practice** (thread fails) | a thread | **Defect** |
+| Game data verification | `plat_verify.c` | **none in practice** (thread fails) | a thread | **Not run, and said** (M1: log, crash report, dashboard "Data check") |
 
 ## 5. Native PC dependencies and browser defects
 
@@ -141,7 +141,7 @@ The following are already excluded from the browser build, with nothing left to 
 
 ### 5.2 Native assumptions still inside shared code the browser runs (fact)
 
-1. **`port/src/plat_verify.c:264`** starts a detached `pthread_create` thread. The browser build has no threads, so `pthread_create` fails and the state becomes `DATA_OFF` with no message. **Game-data verification is silently off in the browser**, against the "no silent fallback" rule. Plan task M1.
+1. **`port/src/plat_verify.c:264`** starts a detached `pthread_create` thread. The browser build has no threads, so `pthread_create` fails and the state becomes `DATA_OFF` with no message. **Game-data verification is silently off in the browser**, against the "no silent fallback" rule. **Done (M1, `d62fe22`).** The check is not started and that is said, with the reason. Running it anyway would have been wrong: its quick pass `stat`s every data file, which is on the HTTP server, so all 68,605 files would have counted as missing and the original data would have been called modified.
 2. **Directory listing.** Two places scan the data folder, which lives on the HTTP server; `web_fs.c` wraps `fopen` only:
    - `plat_extras.c:48` (`opendir`/`readdir`), which `plat_stages.c` and `plat_songs.c` go through;
    - `gs/gs_texpack.c:105,130` (`SDL_GetPathInfo` / `SDL_EnumerateDirectory`).
@@ -149,7 +149,12 @@ The following are already excluded from the browser build, with nothing left to 
    So added stages, added songs and texture packs are unavailable in the browser.
    - **This is silent.** `PortExtras_Scan` returns 0 when `opendir` fails (`plat_extras.c:52`). `TexPack_Init` returns when the root is not a directory (`gs_texpack.c:122`).
    - Natively, both mean "none installed", which is legitimate. In the browser, they hide that the feature cannot work there.
-   - Plan tasks M2 and M3.
+   - Plan tasks M2 and M3. **Done:**
+     - **M2 (`dbc4ba1`):** reported.
+     - **M3a (`9f2f3ec`):** the data folder is looked through over HTTP, so stages and songs are found.
+     - **M3b (`d4ee2ff`):** texture packs are found and used, seen in screenshots on both renderers.
+     - Without a server that lists folders, all three are reported as unavailable, with the reason.
+     - Not seen: a battle on an added stage (6a), an added song played.
    - `plat_mc.c:214` also uses `opendir`, but on the memory card in MEMFS, which supports it (the saves test passes).
    - `mods/` overrides are looked up file by file through `fopen` (`plat_file.c:126`, `plat_fcache.c:52`), so they **probably** work over HTTP. Not tested.
 3. **`gs_core.c:1255`**: `pthread_create` with no check, only when `BT3_GS_THREAD` is set *and* the mode is `"gpu"` (Vulkan). This path is not reachable in the browser (**assumption**: `gs_mode()` is never `"gpu"` there; not traced). It is a pre-existing native defect.
@@ -158,7 +163,7 @@ The following are already excluded from the browser build, with nothing left to 
    - one is `sceCdSearchFile` (`src/sys/file.c:194`, reached only for an unknown disc type).
 
    None was reached in any run. Upstream's native `link.py` does the same. These fail clearly; keep them.
-5. **`plat_mem.c`, `plat_stub.c`, `plat_crash.c`, `gs_core.c`, `gs_draw.c`, `gs_gl.c`, `ui.cpp`/`ui.h`** were changed by the browser branch (`git diff --stat fff151e..HEAD -- port/src`). This is shared native code. **The native build was not rebuilt in this audit: blocked, no gcc, clang or mingw on this machine.** Plan task M0.
+5. **`plat_mem.c`, `plat_stub.c`, `plat_crash.c`, `gs_core.c`, `gs_draw.c`, `gs_gl.c`, `ui.cpp`/`ui.h`** were changed by the browser branch (`git diff --stat fff151e..HEAD -- port/src`). This is shared native code. **At the audit, the native build could not be rebuilt** (no gcc, clang or mingw on this machine). **Since then: M0 done**, using upstream's release container with Docker. The clang64 Linux and win64 Windows builds of `d4ee2ff` behave like upstream `fff151e`: identical headless traces, and byte-identical OpenGL and Vulkan screenshots. Details: BROWSER_MIGRATION_PLAN.md, M0.
 
 ### 5.3 Inconsistencies (fact)
 
@@ -167,8 +172,8 @@ The following are already excluded from the browser build, with nothing left to 
   - `PORT_OBJ_PREFIXES` lists `cxx`. This is **not** stale: it removes C++ objects left over from older builds before the link. A comment now says so (M4).
 - `plat_stub.c`'s header says "Headless stand-ins", and `headless.c` is named after its history. Both now hold real runtime code (pacing, pads, menus).
   - These are **upstream files**, so they are left as they are: changing a comment there would only add merge conflicts.
-- **Build reproducibility.** `shaders.h` embeds the shader text with its line endings. With `core.autocrlf=true`, a fresh clone has CRLF in the 4 shaders whose working copies here are LF (`alphakey`, `blit`, `dclut`, `outline` `.frag`). The result is a different `bt3.wasm` with identical output. Plan task M5.
-- The `port/tests/wasm_mem/build.py` verdict reads FAIL because it scores the rejected layout A as well (224 MB). Layout B passes 17/17 (1,472 MB). This is a test-design flaw, not a regression. Plan task M6.
+- **Build reproducibility.** `shaders.h` embeds the shader text with its line endings. With `core.autocrlf=true`, a fresh clone has CRLF in the 4 shaders whose working copies here are LF (`alphakey`, `blit`, `dclut`, `outline` `.frag`). The result is a different `bt3.wasm` with identical output. **Done (M5, `49a0419`)**: shaders are embedded with LF, and a fresh CRLF clone now builds a byte-identical `bt3.wasm` and `bt3.js`.
+- The `port/tests/wasm_mem/build.py` verdict reads FAIL because it scores the rejected layout A as well (224 MB). Layout B passes 17/17 (1,472 MB). This is a test-design flaw, not a regression. **Done (M6, `734a81e`)**: the verdict and exit status are layout B's; before the fix, the test always exited 0.
 
 ## 6. Data and assets
 
@@ -176,10 +181,17 @@ The following are already excluded from the browser build, with nothing left to 
 - **Data tables.** The game's data tables are not in the build: `port/data` holds only their shapes. At start, the values are copied from the user's `SLUS_216.78` and `DBZP.BIN` through the run list (`wasm_data.py` → `data_list.c`).
 - **Nothing copyrighted is committed.** `port/build/` and `gamedata/` are outside version control (fact: `git ls-files`).
 
+## 6a. Found during the approved tasks (2026-10-12)
+
+- **`BT3_TEST_STAGE=0x24` stops the game in the attract demo** at the battle's load, around frame 13, before the stage's file is read. This also happens on the build before M2 (`49a0419`, clean clone), and there with no added stage behind that id and with the old `BT3_EXTRA_STAGES` + `BT3_FILE_ALIAS` mechanism. Because of it, a battle on an added stage has **not** been seen in the browser. **Unknown — investigate further**, including whether it happens natively.
+- **The crash report's context names a stale stage.** During a running game it says "stage: memory ready, before the program's main" (`gPortStage`, `plat_mem.c`), which is existing behaviour. **Unknown — investigate further**: whether the browser branch of `plat_mem.c` updates `gPortStage` at all.
+- **`emscripten_set_main_loop_timing: Cannot set timing mode…`** is printed once at the start of every run, before M2 as well. It is harmless so far. **Unknown** which call makes it.
+- **SDL's file functions.** The Emscripten SDL build defines `HAVE_FOPEN64`, but `libSDL3.a` references plain `fopen` (`llvm-nm`), so the existing `fopen` wrap covers texture packs. No `fopen64` wrap is needed.
+
 ## 7. Unknowns
 
 Each is marked **unknown — investigate further**:
-1. Whether the native builds (gcc 32-bit, clang, win64) still build and behave the same with the browser branch's shared changes (5.2 item 5). This could not be checked here.
+1. ~~Whether the native builds still build and behave the same~~ The release configurations, clang64 and win64, are checked (M0). The 32-bit configurations (`BT3_CC=gcc`, `clang`), native rendering on a real GPU, the ImGui window and audio remain **unknown — investigate further**.
 2. ~~Whether the directory-listing features report their absence~~ Resolved: they are silent (5.2 item 2).
 3. The `7z` version and licence terms as installed on the user's machine.
 4. The content of upstream 0.1.32 (`c5d2917`) and its effect on the browser port. It was not fetched, by instruction.

@@ -2,6 +2,64 @@
 
 This is a proposal, awaiting approval; none of it has been carried out. The findings behind it are in [BROWSER_ONLY_AUDIT.md](BROWSER_ONLY_AUDIT.md), cited below as "audit §". The test commands are in [BROWSER_BUILD.md](BROWSER_BUILD.md) §4.
 
+## Status (2026-10-12)
+
+| Task | State | Commit | Tests (all run) |
+|---|---|---|---|
+| M4 stale comments | done | `6e40327` | build output byte-identical |
+| M5 reproducible build | done | `49a0419` | fresh CRLF clone: `bt3.wasm` / `bt3.js` byte-identical; demo and boot on both renderers 12/12 identical |
+| M6 memory test verdict | done | `734a81e` | B PASS, exit 0; with A scored instead, FAIL, exit 1 |
+| M2 unavailable extras reported | done | `dbc4ba1` | `web/extras.js`; R |
+| M1 data check not silent | done | `d62fe22` | `web/verify.js`; R |
+| M3 listing over HTTP | done: stages and songs `9f2f3ec`, texture packs `d4ee2ff` | — | `web/extras.js` (17 checks); R. **Not seen:** a battle on an added stage, an added song played (audit §6a) |
+| M7 CI | done; **not yet run on GitHub** (nothing pushed) | `b1a4d3b` | the workflow's steps in a plain ubuntu:24.04 container: PASS |
+| M8 `HUD_SCR` | verified; draft prepared, **not published** | `894827c` (`docs/drafts/upstream_hud_scr_report.md`) | preprocessing checks (see the draft) |
+| M0 native check | done (see below) | tool `1fd609a` (`port/tests/native/`) | see below |
+| M9 | **not started**: waits for approval | — | — |
+| M10 upstream 0.1.32 | deferred, not fetched | — | — |
+
+### M0: native validation
+
+**Toolchain:** upstream's own release container, `port/release/Dockerfile`, built here as `bt3-port-release:jammy`:
+
+| Component | Version |
+|---|---|
+| Base system | Ubuntu 22.04 |
+| Game-code compiler (both configurations) | clang 22.1.8 (apt.llvm.org) |
+| SDL3 | 3.4.12, built from source |
+| Windows cross toolchain | mingw-w64 GCC 10-posix (`x86_64-w64-mingw32-gcc 10-posix 20220113`) |
+| Software rendering for the rendered runs | Mesa 23.2.1: llvmpipe for OpenGL 4.5, lavapipe for Vulkan; Xvfb |
+
+The builds use no disc data (`BT3_SKELETON=1`). The runs use the user's data, mounted read-only.
+
+**Revisions:** upstream `fff151e` (0.1.31) against `browser-port` `d4ee2ff`, by hand. The committed script was then run against `894827c` (the same code, plus documents and CI): every comparison identical, exit 0.
+
+| Configuration | Run | Result |
+|---|---|---|
+| `BT3_CC=clang64`, Linux x86-64 (as the Linux release) | build | both OK: 409 objects, 103 stubs, link OK |
+| | attract demo, no window (`BT3_GS=none`, `BT3_TRACE=60`, 150 s) | traces **identical**, 70 lines |
+| | rendered, OpenGL on llvmpipe (`BT3_GS=gpu BT3_GPU_API=gl`, `BT3_SHOT=150`, 420 s) | 4 screenshots (frames 0–450) **byte-identical**; 13 trace lines identical |
+| | rendered, Vulkan on lavapipe (`BT3_GPU_API=vulkan`) | 15 screenshots (frames 0–2100) **byte-identical**; 70 trace lines identical |
+| `BT3_CC=win64`, Windows x86-64 (as the Windows release; clang 22 `--target=x86_64-w64-mingw32`) | build (cross) | both OK |
+| | run on this Windows 11 machine, no window, 150 s | traces **identical**, 70 lines, and identical to the Linux trace |
+
+**Browser against native:** the browser's demo trace, `8ad198bf58dbed33` (67 lines), equals the first 67 lines of the native trace.
+
+**Not covered by M0:**
+- the developer default `BT3_CC=gcc` (32-bit) and `BT3_CC=clang` (32-bit);
+- rendering on a real GPU natively;
+- the ImGui settings window: `ui.cpp` is compiled and linked, but the window was not opened;
+- audio (`SDL_AUDIODRIVER=dummy`);
+- online play.
+
+**Repeat with:**
+
+```bash
+RUN_WINDOWS=1 bash port/tests/native/compare.sh <rev A> <rev B> <gamedata folder> [work folder]
+```
+
+It needs Docker. M9 requires it after each file it moves.
+
 ## Principles
 
 1. The game code (`src/`, `include/`) stays as the PC port has it. The browser needs every `PORT` block (audit §2).

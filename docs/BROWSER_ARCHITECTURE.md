@@ -62,6 +62,26 @@ The full table, with each service's provider and state, is in the audit, section
 - **No threads** (`plat_verify.c`).
 - **No directory listing** of the data folder (`plat_extras.c`, `gs_texpack.c`).
 
+## 5a. Shared files that carry browser-specific changes
+
+These are the files outside `port/src/web/` and `port/tools/wasm_*` that the browser branch changed. The list comes from `git diff --stat fff151e..HEAD -- port/src port/include port/tools`. Natively compiled code that runs only in the browser is guarded by `__EMSCRIPTEN__`. These files are the candidates for isolation in plan task M9, which comes only after the native check (M0).
+
+| File | Change | Kind |
+|---|---|---|
+| `port/src/plat_mem.c` (+51) | No game thread in the browser; the start runs on the page's thread | `__EMSCRIPTEN__` branch |
+| `port/src/plat_stub.c` (+15) | The vblank wait gives control back to the page (`emscripten_sleep`) | `__EMSCRIPTEN__` branch |
+| `port/src/plat_crash.c` (+14) | `Port_CrashContext` for the page's crash report | `__EMSCRIPTEN__` branch |
+| `port/src/gs/gs_core.c` (+22) | `BT3_FRAME_LOG` frame timing line, **active natively too**, env-gated; `Web_FrameSample` for the dashboard | shared addition + `__EMSCRIPTEN__` branch |
+| `port/src/gs/gs_draw.c`, `gs_draw.h` | The renderer layer shared by every back end: pipeline keys, picture size, event polling, the smooth-motion limit | shared refactor (both builds) |
+| `port/src/gs/gs_gl.c` | WebGL 2 differences (13 `__EMSCRIPTEN__` sites); the shared layer above | `__EMSCRIPTEN__` branches + shared refactor |
+| `port/src/gs/gs_pipekey.c` (new) | Pipeline key encode/decode, pure functions; compiled natively too | shared addition |
+| `port/src/gs/gs_wgpu.c` (new) | The WebGPU back end; the whole file is inside `#ifdef __EMSCRIPTEN__` (natively empty) | browser-only, in a shared folder |
+| `port/src/gs/shaders/*.frag` (5) | WebGL 2 / WGSL needs (`SEPARATE_SAMPLERS`, `NO_DEPTH_QUALIFIER` switches) | shared sources with browser switches |
+| `port/src/gs/ui.cpp`, `ui.h` | Declarations shared with `web/web_ui.c` (the page's side of `ui.h`) | shared interface |
+| `port/tools/toolchain.py` (+7) | The `BT3_CC=wasm` variant's name and output path | shared tool |
+
+The browser work since this audit (M1–M3) added **no** changes to shared files. It uses link-time wraps and browser-only files (`web_extras.c`, `web_verify.c`, `web_fs.c`).
+
 ## 5. Proposed source structure (proposal only; nothing has been moved)
 
 | Proposed folder | Would hold | Today |
