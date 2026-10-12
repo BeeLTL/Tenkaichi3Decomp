@@ -1,0 +1,180 @@
+# Browser port: staged migration plan
+
+This is a proposal, awaiting approval; none of it has been carried out. The findings behind it are in [BROWSER_ONLY_AUDIT.md](BROWSER_ONLY_AUDIT.md), cited below as "audit §". The test commands are in [BROWSER_BUILD.md](BROWSER_BUILD.md) §4.
+
+## Principles
+
+1. The game code (`src/`, `include/`) stays as the PC port has it. The browser needs every `PORT` block (audit §2).
+2. Nothing native is deleted from the repository. "Decoupling" means two things: the browser build stops *depending* on native assumptions, and browser code leaves shared files. Native files keep working for upstream.
+3. No upstream file is renamed or moved (see [BROWSER_ARCHITECTURE.md](BROWSER_ARCHITECTURE.md) §5).
+4. Each task is one small commit that can be reverted.
+
+**Standard regression set ("R").** Every task must keep these passing:
+- the build: 269/269, 61/61, 73/73, link OK;
+- `wasm_sf`, `pipekey`, `wgsl` and `web_data`;
+- the demo run on both renderers, with trace `8ad198bf58dbed33` and screenshots 12/12 identical to `audit_base_gl` / `audit_base_wgpu`;
+- the boot run on both renderers, 12/12 identical to `boot_after`;
+- `dashboard` (both renderers), `controllers` and `saves`.
+
+## Stage 0: baseline (done in this audit)
+
+- Investigation, baseline results and these documents. Docs-only commit.
+
+## Stage 1: correctness gaps in what the browser already runs
+
+### M1. Game-data verification must not be silently off
+
+| Field | Detail |
+|---|---|
+| Objective | The check that the data is the original disc's runs in the browser, or the page says that it did not run |
+| Files | `port/src/plat_verify.c` (shared); new `port/src/web/web_verify.c` (or an `__EMSCRIPTEN__` branch), `port/web/index.html` |
+| Dependency removed | `pthread_create` in the browser path (audit §5.2 item 1) |
+| Replacement | Run `verify_thread`'s work synchronously at start; it reads through the same `fopen` wrap, and JSPI suspends on reads. **Or** start it in idle steps from the vblank hook. Report the result as the native build does (`Port_DataSummary`) |
+| Prerequisites | Measure the cost first: the native check reads every file's size and time, about 68,611 files over HTTP |
+| Risk | Medium: start-up time. If the full check is too slow, report "verification not run in the browser" visibly, rather than shortening the check |
+| Tests | R; new `port/tests/web/verify.js`: the original data is reported as verified; a file changed in a copy of the data folder is reported as changed |
+| Acceptance | No path leaves `DATA_OFF` without a message |
+| Isolated commit | Yes |
+
+### M2. Directory listing: decide and report
+
+| Field | Detail |
+|---|---|
+| Objective | Added stages, songs and texture packs either work or are reported as unavailable. Today the absence is silent (audit §5.2 item 2) |
+| Files | `port/src/plat_extras.c`, `port/src/gs/gs_texpack.c` (shared, read only); `port/src/web/web_fs.c` |
+| Dependency removed | none yet; investigation first |
+| Replacement | A visible "not available in the browser" message, as `net_off.c` does: a browser-only check that the data mount cannot be listed, reported once at start. It must not change the native meaning of "none installed" |
+| Prerequisites | none |
+| Risk | Low |
+| Tests | R; a check that the message appears |
+| Acceptance | No silent absence |
+| Isolated commit | Yes |
+
+### M3. Directory listing over HTTP (feature work; optional)
+
+| Field | Detail |
+|---|---|
+| Objective | Added stages, songs and texture packs available in the browser |
+| Files | `port/src/web/web_fs.c` (an `opendir`/`readdir` provider for the data mount); `port/web/devserver.py` (a listing endpoint or a manifest); `port/web/bt3_data.js` |
+| Dependency removed | the host file system's directory scan |
+| Replacement | A manifest generated next to the data. This also fills in the missing `make_manifest.py` (audit §5.3), and the sizes then need no HEAD requests |
+| Prerequisites | M2 |
+| Risk | Medium: SDL's `SDL_EnumerateDirectory` in `gs_texpack.c` goes through SDL's own file system code, not libc. It may need its own provider or a browser branch |
+| Tests | R; a stage added with `port/tools/add_stage.py` to a *copy* of the data appears in the select screen; one texture pack loads |
+| Acceptance | The native behaviour is reproduced; nothing is silent when the manifest is missing |
+| Isolated commit | Two commits: manifest + `web_fs`; then texture packs |
+
+## Stage 2: build hygiene
+
+### M4. Stale texts
+
+| Field | Detail |
+|---|---|
+| Objective | The comments say what the code does |
+| Files | `port/tools/wasm_build.py` (usage text mentions ImGui; `PORT_OBJ_PREFIXES` lists `cxx`), `port/web/bt3_data.js` (`make_manifest.py`), `port/src/plat_stub.c` header |
+| Dependency removed | none |
+| Replacement | Corrected comments. Do not rename `headless.c`: it is upstream's file |
+| Prerequisites | none (the manifest comment waits for M3, or is changed to say "not provided") |
+| Risk | None |
+| Tests | build byte-identical |
+| Acceptance | — |
+| Isolated commit | Yes |
+
+### M5. Reproducible build
+
+| Field | Detail |
+|---|---|
+| Objective | A fresh clone gives a byte-identical `bt3.wasm` |
+| Files | `.gitattributes` (`port/src/gs/shaders/* text eol=lf`), or normalise line endings in `wasm_build.py`'s `shaders_header()` |
+| Dependency removed | dependence on the user's `core.autocrlf` |
+| Replacement | Prefer the `wasm_build.py` normalisation: `.gitattributes` would also change the native build's embedded shaders (`undefined.py`) |
+| Prerequisites | none |
+| Risk | Low |
+| Tests | the clean-clone build is byte-identical to the working build; R |
+| Acceptance | `cmp` of the two `bt3.wasm` files is equal |
+| Isolated commit | Yes |
+
+### M6. Memory test verdict
+
+| Field | Detail |
+|---|---|
+| Objective | `port/tests/wasm_mem/build.py` passes when the layout in use passes |
+| Files | `port/tests/wasm_mem/build.py` |
+| Dependency removed | none |
+| Replacement | Score layout B; report layout A as information only (it was rejected, audit §5.3) |
+| Prerequisites | none |
+| Risk | None |
+| Tests | the test itself |
+| Acceptance | PASS for B, A listed as "rejected layout" |
+| Isolated commit | Yes |
+
+### M7. CI for the browser build (without game data)
+
+| Field | Detail |
+|---|---|
+| Objective | Every push builds the wasm and runs the tests that need no data |
+| Files | new `.github/workflows/browser.yml` |
+| Dependency removed | none |
+| Replacement | Pinned emsdk 6.0.12, Python 3.12 with `libclang` 18.1.1, and naga 30.0.1. Run the build and `wasm_sf`, `pipekey`, `wgsl`, `web_data`, `wasm_mem` |
+| Prerequisites | M5, M6. Ask the owner first: this adds a workflow, and it runs on GitHub's servers. No game data is ever used there |
+| Risk | Low; CI minutes |
+| Tests | the workflow |
+| Acceptance | Green on `browser-port` |
+| Isolated commit | Yes |
+
+## Stage 3: browser code out of shared files
+
+### M0. Native build check (prerequisite for all of stage 3)
+
+| Field | Detail |
+|---|---|
+| Objective | Prove that the browser branch's changes to shared files left the native builds unchanged (audit §5.2 item 5) |
+| Files | none changed. Build with `port/tools/undefined.py` / `link.py` (gcc 32-bit), run `port/run.sh demo`, and compare against an upstream 0.1.31 build |
+| Prerequisites | A native toolchain (MSYS2/gcc or Linux), which is not installed on this machine. **Owner decision** |
+| Risk | — |
+| Tests | Native demo trace equal between `fff151e` and `browser-port` |
+| Acceptance | Identical, or each difference explained |
+| Isolated commit | No commit (verification only) |
+
+### M9. Move `__EMSCRIPTEN__` branches into `port/src/web/`
+
+| Field | Detail |
+|---|---|
+| Objective | Shared files carry no browser code; upstream merges become simpler |
+| Files | `port/src/plat_mem.c`, `plat_stub.c`, `plat_crash.c`, `gs/gs_core.c`, `gs/gs_draw.c`, `gs/gs_gl.c` → new files under `port/src/web/` |
+| Dependency removed | browser code inside native files |
+| Replacement | One file at a time. Where a whole function differs, the browser version goes in `web/` and the shared file's version is left out of the browser build by name (a `WASM_SKIP`-style per-function rule is not available, so whole files only). Where the difference is a few lines inside a function, **leave it**: duplicating a large function is worse than a branch |
+| Prerequisites | M0 |
+| Risk | Medium: duplicated code can drift from upstream. Do only where the browser version already differs as a whole |
+| Tests | R after each file; native build (M0) after each file |
+| Acceptance | R identical; native identical |
+| Isolated commit | One per file |
+
+## Stage 4: upstream
+
+### M8. Report the `HUD_SCR` defect upstream
+
+| Field | Detail |
+|---|---|
+| Objective | The game code builds without `PORT` again (audit §2) |
+| Files | `src/battle/hud_a_b.c`, `hud_b.c`, `hud_c_b.c`, `hud_e_b.c` (upstream's) |
+| Replacement | A PS2 definition of `HUD_SCR(side)` as `(side)` under `#else`. Behaviour is unchanged on PC and in the browser |
+| Prerequisites | Owner decision: an issue or PR on z3xox/Tenkaichi3Decomp is public, outward-facing content |
+| Risk | Low |
+| Tests | R (the browser build defines `PORT`, so its output is unchanged) |
+| Isolated commit | Yes, if done here at all |
+
+### M10. Merge upstream 0.1.32 (`c5d2917`)
+
+A separate task, on request. It follows the procedure used for 0.1.31: merge, adapt, R, review before commit, no force-push.
+
+## Order and what is *not* proposed
+
+The order is: M4, M5, M6, M2, M1, M3, M7, then M0 → M9. M8 and M10 happen on request.
+
+**Not proposed:**
+- Deleting native files.
+- Renaming upstream folders.
+- Replacing the 103 aborting link stubs: they fail clearly.
+- Removing the vu0 reference library or any `PORT` block.
+- Changing the renderer architecture or the toolchain pins.

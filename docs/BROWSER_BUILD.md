@@ -1,0 +1,103 @@
+# Browser port: build and test
+
+How to build and check the browser version. For what the build is made of, see [BROWSER_ARCHITECTURE.md](BROWSER_ARCHITECTURE.md). For the dependency licences, see [BROWSER_ONLY_AUDIT.md](BROWSER_ONLY_AUDIT.md) §3.1. For the results, see [BROWSER_FEATURE_MATRIX.md](BROWSER_FEATURE_MATRIX.md).
+
+## 1. Toolchain (versions found 2026-10-12; do not update without a demonstrated need)
+
+| Tool | Version | Notes |
+|---|---|---|
+| Emscripten | 6.0.12 (clang 24.0.0git) | `C:\project\Tenkaichi3Web\tools\emsdk`, put on the PATH by `env.sh` |
+| SDL3 port | 3.4.2 | fetched by Emscripten (`-sUSE_SDL=3`) |
+| emdawnwebgpu | v20260423.175430 | `--use-port=emdawnwebgpu` |
+| Python | 3.12.10 | venv `C:\project\Tenkaichi3Web\tools\venv`, with `libclang` 18.1.1 (for `ptr32.r2l`) |
+| naga CLI | 30.0.1 | built with Rust 1.99.0; the default stable toolchain is 1.93.1 |
+| Node.js | 24.19.0 | tests |
+| Chrome | 154.0.8037.98 | tests (headless via CDP) |
+
+Python must load libclang from a short path. A very long working-directory path causes WinError 206; see [BROWSER_PORT_STATUS.md](../BROWSER_PORT_STATUS.md) §3.
+
+## 2. Build
+
+Run from the repository root in Git Bash:
+
+```bash
+source /c/project/Tenkaichi3Web/env.sh
+```
+
+```bash
+python port/tools/wasm_build.py game
+```
+
+```bash
+python port/tools/wasm_build.py port
+```
+
+```bash
+python port/tools/wasm_build.py data
+```
+
+```bash
+python port/tools/wasm_build.py link
+```
+
+| Step | Does | Output |
+|---|---|---|
+| `game` | The 269 game sources: `portsrc.prepare` → `eeconst` → `ptr32.r2l` → clang IR → `wasm_sf.py` → object | `port/build/obj_wasm` |
+| `port` | 61 port files: newlib libm, the vu0 references, `port/src/*.c`, `gs/*.c` (minus `WASM_SKIP`), `web/*.c`; also `shaders.h` | `port/build/obj_wasm` |
+| `data` | `wasm_data.py`: 73 data-table shapes and their disc-run list | `port/build/obj_wasm_data` |
+| `link` | Stubs for undefined symbols, `wasm_sig.py` repairs, WGSL by `wasm_shaders.py` (naga), the `wasm-ld` link, the page files copied | `port/build/web/` (`bt3.js`, `bt3.wasm`, page) |
+
+Environment options:
+- `BT3_WASM_VARIANT=<name>`: a separate set of object and output folders, e.g. `clean`.
+- `BT3_WASM_WEB=<dir>`: the output folder.
+- `BT3_WASM_HARDFLOAT=1` and `BT3_WASM_NO_FPCAST=1`: diagnosis only.
+
+**Measured (fact):**
+- A full variant build takes 129 s; a fresh clone takes 133 s.
+- The output is 269/269 game, 61/61 port and 73/73 data, link OK, 103 stubs, 0 signature mismatches left.
+- The variant build's `bt3.wasm` and `bt3.js` are byte-identical to the working build's.
+- A fresh clone differs only through CRLF line endings in the embedded shaders. See the audit, §5.3 and plan task M5.
+
+## 3. Game data and running
+
+The user's own disc is needed. Nothing from it is committed or uploaded.
+
+```bash
+python port/tools/extract_disc.py bt3.iso gamedata
+```
+
+```bash
+python port/web/devserver.py --port 8080 --mount gamedata=C:/project/Tenkaichi3Web/gamedata
+```
+
+Then open `http://127.0.0.1:8080/index.html`.
+
+| Option | Effect |
+|---|---|
+| `?gpu=webgpu` | the WebGPU renderer |
+| `?autostart=1` | start without clicking |
+| `?env=BT3_...` | engine variables, e.g. `BT3_DEMO=1`, `BT3_PAD=<frame>:<button>,...` |
+
+The server binds to 127.0.0.1 only.
+
+## 4. Tests
+
+Unless noted, every test runs against the server above. "Data" means the test needs the user's game data.
+
+| Command | Checks | Needs |
+|---|---|---|
+| `python port/tests/wasm_sf/run.py` | software-float lowering vs. the PS2 model | emcc |
+| `python port/tests/pipekey/run.py` | pipeline-key packing | emcc |
+| `node port/tests/wgsl/check.js` | WGSL generated for the 11 shaders validates | naga |
+| `node port/tests/web_data/test_data.js` | `bt3_data.js` range reads and cache | node |
+| `python port/tests/wasm_mem/build.py` | memory layouts (B is the one used) | emcc, node |
+| `node port/tests/bench/bench.js --label <l> --headless --shots 150 [--query gpu=webgpu]` | demo battle: trace hash, frame times, screenshots | data, Chrome |
+| `node port/tests/bench/bench.js ... --boot --from 600 --to 3000 --shots 200` | the boot sequence | data, Chrome |
+| `node port/tests/bench/compare_shots.js <a> <b>` | screenshot equality between two runs | — |
+| `node port/tests/bench/present_rate.js [--query gpu=webgpu]` | pictures presented per second | data, Chrome |
+| `node port/tests/web/dashboard.js [--query gpu=webgpu]` | the performance dashboard and the diagnostics export | data, Chrome |
+| `node port/tests/web/controllers.js` | controller set-up with simulated pads | data, Chrome |
+| `node port/tests/web/saves.js` | IndexedDB saves with the game's own saves | data, Chrome |
+| `port/tests/ps2float` | native, against PCSX2 | **blocked here**: needs the native toolchain and PCSX2 data |
+
+There is no CI for the browser build: `.github/workflows/release.yml` is native-only. See plan task M7.
