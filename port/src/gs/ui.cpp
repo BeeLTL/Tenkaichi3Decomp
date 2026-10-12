@@ -271,18 +271,10 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
     }
     if (device == NULL) { // the OpenGL back end (gs_gl.c), with its context current
         sGL = 1;
-#ifdef __EMSCRIPTEN__
-        const char *glsl = "#version 300 es"; // WebGL 2 (OpenGL ES 3.0)
-#else
-        const char *glsl = "#version 330 core";
-#endif
-        if (!ImGui_ImplSDL3_InitForOpenGL(window, (SDL_GLContext)gl_context) || !ImGui_ImplOpenGL3_Init(glsl)) {
+        if (!ImGui_ImplSDL3_InitForOpenGL(window, (SDL_GLContext)gl_context) || !ImGui_ImplOpenGL3_Init("#version 330 core")) {
             return 0;
         }
     } else {
-#ifdef __EMSCRIPTEN__
-        return 0; // the browser build has no SDL GPU device (gs_gpu.c is not built)
-#endif
         if (!ImGui_ImplSDL3_InitForSDLGPU(window)) {
             return 0;
         }
@@ -1261,10 +1253,6 @@ void Ui_DrawAgain(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target) {
     if (dd == NULL || dd->CmdListsCount == 0 || dd->DisplaySize.x <= 0.0f || dd->DisplaySize.y <= 0.0f) {
         return;
     }
-#ifdef __EMSCRIPTEN__
-    (void)cmd; (void)target; (void)ti; (void)pass;
-    return; // (the SDL GPU back end only)
-#endif
     ImGui_ImplSDLGPU3_PrepareDrawData(dd, cmd);
     SDL_zero(ti);
     ti.texture = target;
@@ -1456,9 +1444,7 @@ static bool frame_build(void) {
     if (sGL) {
         ImGui_ImplOpenGL3_NewFrame();
     } else {
-#ifndef __EMSCRIPTEN__
         ImGui_ImplSDLGPU3_NewFrame();
-#endif
     }
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();

@@ -76,6 +76,7 @@ Each step is committed on a temporary local branch first, checked, and only then
 | Step | Shared file | What moved where | Commit (tested as) | Browser | Native vs `fff151e` |
 |---|---|---|---|---|---|
 | 1 | `port/tools/toolchain.py` | The unused `BT3_CC=wasm` entry removed; the file is identical to upstream | `a3b4c94` | `bt3.wasm` / `bt3.js` **byte-identical**; every check PASS | headless 70, OpenGL 13 + 4 screenshots, Vulkan 70 + 15 screenshots, win64 70: **all identical** |
+| 2 | `port/src/gs/ui.cpp` | Four dead `__EMSCRIPTEN__` branches removed (the browser build compiles no C++); the file is identical to upstream | `fd88f29` | `bt3.wasm` / `bt3.js` **byte-identical**; every check PASS | the same four comparisons: **all identical** (first attempt not run: Docker had stopped; re-run after restarting it) |
 
 ## Principles
 
