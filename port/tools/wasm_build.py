@@ -110,8 +110,9 @@ def game_object(f):
 # exist there in this form. The Vulkan back end (gs/gs_gpu.c) has no browser back end in SDL3: the GL back end is used.
 # The setup window (port/setup) is not needed: the browser build has no installer. The settings window (gs/ui.cpp, Dear
 # ImGui) is not built either: the page has its own settings panel, and port/src/web/web_ui.c is the engine's side of
-# ui.h for it. With that the browser build has no C++ at all.
-WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c"}
+# ui.h for it. With that the browser build has no C++ at all. The crash handlers (plat_crash.c: signals, Windows
+# exceptions) are not built either: in the browser the page catches a crash, and web/web_crash.c gives it the context.
+WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c", "plat_crash.c"}
 HARD = {"plat_libm.c", "plat_fastvec.c"}  # host floats on purpose (undefined.py)
 SDL = ["-sUSE_SDL=3"]
 # Dawn's webgpu.h for Emscripten (the WebGPU back end, gs_wgpu.c): compile and link flag
@@ -147,6 +148,8 @@ def port_jobs():
     for f in sorted((ROOT / "port/third_party/newlib_libm").glob("*.c")):
         jobs.append(("libm", f, OBJ / ("nl_" + f.stem + ".o")))
     for f in [ROOT / "src/port/vu0_a.c", ROOT / "src/port/vu0_b.c"] + sorted((ROOT / "port/src").glob("*.c")):
+        if f.name in WASM_SKIP:
+            continue
         kind = "vu0ref" if f.parent.name == "port" and f.parent.parent.name == "src" else "hard" if f.name in HARD else "soft"
         jobs.append((kind, f, OBJ / ("pc_" + f.stem + ".o")))
     for f in sorted((ROOT / "port/src/gs").glob("*.c")):
