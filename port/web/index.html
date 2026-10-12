@@ -117,6 +117,7 @@
 <script src="bt3_data.js"></script>
 <script src="dashboard.js"></script>
 <script src="controllers.js"></script>
+<script src="saves.js"></script>
 <script src="settings.js"></script>
 <script>
 'use strict';
@@ -128,8 +129,10 @@ const dataBase = q.get('data') || '/gamedata/';
 const renderer = q.get('gpu') || 'gl';  // ?gpu=webgpu: the WebGPU back end; default the WebGL 2 one (the reference)
 const report = q.get('report');
 const data = new Bt3Data(dataBase, { log });  // the game's files, read on demand (bt3_data.js)
+// the game's saves, kept in the browser (saves.js); its notices go through the settings panel's
+const saves = new Bt3Saves({ log: (s) => log(s), notice: (t) => settings.notice(t) });
 const settings = new Bt3Settings({ canvas: document.getElementById('canvas'), stage: document.getElementById('stage'),
-                                   renderer, query: location.search, log: (s) => log(s), data, getLog: () => lines });
+                                   renderer, query: location.search, log: (s) => log(s), data, getLog: () => lines, saves });
 const logEl = document.getElementById('log'), stepsEl = document.getElementById('steps');
 const lines = [];
 let reported = 0, mod = null, stopped = false;
@@ -284,9 +287,13 @@ async function start() {
     // Dragon Net Battle (main-menu item 4): online play is not in the browser build (port/src/web/net_off.c)
     BT3_MENU_ITEM4: '0',
   };
+  // NAME=value,NAME=value; a part without "=" belongs to the value before it (BT3_PAD=2800:start,2950:cross)
+  let last = null;
   for (const kv of (q.get('env') || '').split(',').filter(Boolean)) {
     const i = kv.indexOf('=');
-    env[kv.slice(0, i)] = kv.slice(i + 1);
+    if (i < 0 && last !== null) { env[last] += ',' + kv; continue; }
+    last = kv.slice(0, i);
+    env[last] = kv.slice(i + 1);
   }
   let s = step('loading bt3.js');
   await new Promise((res, rej) => {
@@ -337,6 +344,9 @@ async function start() {
   mod.bt3Data = data;
   s(`instantiated in ${(performance.now() - t0).toFixed(0)} ms; memory ${(mod.HEAPU8.length / 1048576).toFixed(0)} MB; ` +
     'constructors done (memory map, game data tables)', 'ok');
+  s = step('putting the kept saves on the memory card');
+  await saves.prepare(mod);
+  s(`saves: ${saves.store.db ? (saves.loaded ? `the ${saves.loaded} version is on the card` : 'none kept yet') : 'browser storage not available'}`, 'ok');
   s = step('running the game (main)');
   document.getElementById('canvas').focus();  // (the game hears the keyboard on its canvas)
   try {

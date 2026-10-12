@@ -437,6 +437,49 @@ calls glGetError every frame, a GPU sync: don't compare GL timings taken with it
 **Not implemented**: native pass 2 (alpha key) is no longer recorded; if it ever were, it is reported, not drawn. (The
 settings window no longer depends on the renderer: see "Settings panel in the page".)
 
+### Game saves kept in the browser (IndexedDB), with recovery, export and import (2026-10-12) — verified with the game's own saves
+**Audit**: settings were kept (localStorage, the engine's settings file) but **game saves were not**: the game saves to an
+emulated memory card (`plat_mc.c`: `saves/card1/<save folder>/` — icon.sys 964 bytes, the icon, the data file named
+after the folder: the game save 0x4000 bytes, a replay 0x1AC00), which in the browser lay in the engine's in-memory
+file system and was lost with the page. The game's data files carry its own checksum (`McCard_Checksum`,
+src/battle/stgm_a_b.c: the first two words, over the rest of the block).
+
+**Engine side** (`web_ui.c`; plat_mc.c unchanged): the card's sync / write / close are linked wrapped
+(`--wrap=func_002A2498,func_002A2320,func_002A1FB8`): a file counts as open from sceMcSync's open result to its close;
+when a written file is closed and no card file is open, the card's files are whole and the page is told (`cardWritten`).
+`Bt3Ui_SaveChecksumOk` runs the game's own checksum on a buffer for the page (`_malloc` / `_free` exported).
+
+**Page** (`port/web/saves.js`, IndexedDB database `bt3-saves`, store `card`, records `current` and `backup`, record
+schema 1 — separate from the settings (localStorage), the data cache, the diagnostics):
+- **Keeping**: the card is copied at that moment, checked (every save folder has icon.sys of 964 bytes and its data
+  file; the data file has a size the game writes and passes the game's checksum; files of a save still being written —
+  the game writes icon.sys, the icon, then the data — are waited for, quietly), and written in one transaction with
+  strict durability; reported kept only on its completion. A card that fails is not kept and the stored one is not
+  touched. Each file gets a SHA-256 against damage in storage. `navigator.storage.persist()` is asked for after a save.
+- **Versions**: the previous distinct game save becomes the backup (a copy of the same save does not push it out; a
+  damaged current one never replaces a good backup).
+- **At start** (before the game runs): the current version is put on the card; if it is damaged (hash or game checks)
+  the backup is, with a notice. The game then sees its save (title: Continue; the main menu loads it).
+- **Saves tab**: storage state (lasting or not, usage / quota), last save (kept or not, why), both versions with their
+  checks, "Use the previous version" (swaps them; reload), export of a .zip in the card's own layout (BASLUS-21678...,
+  as a PS2 card folder or the native build's saves/card1), import of a .zip (stored or deflated) or a folder, checked
+  like the game's own saves, then kept as the current version (reload to play with it). The browser's limits are
+  explained: site data cleared, private windows, eviction when space runs short; export to keep a copy.
+- **Failures** are said: no IndexedDB (saves last for the session; said at start and at each save), quota full,
+  any write error — the stored save stays as it was.
+
+**Tests** (`port/tests/web/saves.js`, PASS, 18 checks; the game's real saves, driven by scripted pad presses at fixed
+frames, BT3_PAD — the page's env parser now allows commas inside a value): New Game creating the save (kept, generation
+1, the save under way waited for without a warning); reload (the stored bytes on the card, exactly); an update by the game
+after Unlock everything (Options > Save/Load > Save > overwrite: generation 2, generation 1 the backup); export (a zip in
+the card layout); import (the export: kept; a malformed zip, a save failing the game's checksum, a save cut short:
+refused, nothing changed); recovery (versions swapped); an interrupted write (an aborted transaction: the stored save
+unchanged); damaged stored data (the backup used at start, with a notice); no IndexedDB (said; the game still saves for
+the session); quota exceeded (reported, stored save unchanged). Done by hand too: New Game save, reload, Continue to the
+main menu with the save, Options > Save, the Saves tab. Not tested: a browser killed in the middle of a write (the
+transaction's atomicity is the browser's; an aborted transaction was tested), real eviction by the browser, replay saves
+(the format is checked by size and checksum, but no replay was saved in these runs).
+
 ### Controllers: devices, live view, guided set-up, presets, test (2026-10-12) — verified with simulated controllers
 The Controls tab's controller part (`port/web/controllers.js`), on the engine's own input model (gs_input.c: a key per
 action, a controller button per pad button, a controller slot per player = the n-th controller SDL lists):
@@ -766,6 +809,7 @@ with WebGL 2), browser console and device validation errors.
   --chrome-flags (25a1aab), the back end itself (c6a8aca); compared with WebGL 2 and measured (above).
 - 2026-10-11 (9): settings panel in the page, no ImGui in the browser build. Commits 65f1981, e36c449, 1fda3f3.
 - 2026-10-12 (10): upstream 0.1.31 (`fff151e`) merged into browser-port and the browser port adapted (above).
+- 2026-10-12 (11): smooth motion measured and limited (7a21686), live performance dashboard (59852b3), controllers (d9ded6b), game saves in IndexedDB (this commit).
 
 ## 6. Next milestone
 

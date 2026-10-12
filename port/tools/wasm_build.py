@@ -198,9 +198,11 @@ LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000
         "-sEMULATE_FUNCTION_POINTER_CASTS=1",
         "-sMODULARIZE=1", "-sEXPORT_NAME=createBt3", "-sENVIRONMENT=web",
         "-sFORCE_FILESYSTEM=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV,HEAPU8,UTF8ToString,callMain,ccall",
-        "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext", "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
+        "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext,_malloc,_free", "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
         "-Wl,--wrap=Progress_Main", "-Wl,--wrap=fopen",  # fopen: the data folder over HTTP (port/src/web/web_fs.c)
         "-Wl,--wrap=Port_PadRead",  # what the game receives from the pads, for the page (port/src/web/web_ui.c)
+        # the memory card's close / write / sync (plat_mc.c): when a save is whole, for the page to keep it (web_ui.c)
+        "-Wl,--wrap=func_002A1FB8", "-Wl,--wrap=func_002A2320", "-Wl,--wrap=func_002A2498",
         "-Wl,--error-limit=0", "--profiling-funcs", "-sASSERTIONS=1"]
 if os.environ.get("BT3_WASM_NO_FPCAST") == "1":  # (diagnosis only)
     LINK.remove("-sEMULATE_FUNCTION_POINTER_CASTS=1")
@@ -270,7 +272,7 @@ def link():
             break
         need |= more
         write_stubs()
-    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js"):  # the page (port/web)
+    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "saves.js"):  # the page (port/web)
         (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
     mism = re.findall(r"signature mismatch: (\S+)", r.stderr)
     errs = [l for l in r.stderr.splitlines() if "error" in l]

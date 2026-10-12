@@ -480,6 +480,54 @@ int __wrap_Port_PadRead(int socket, unsigned char *data) {
     return n;
 }
 
+/* ---- the memory card's files reach the page ------------------------------------------------------------------
+   Game saves are files on an emulated memory card (plat_mc.c: saves/card1/<save folder>/...), which in the browser lie
+   in the engine's in-memory file system. The browser build links the card calls wrapped (wasm_build.py --wrap) to see
+   when they are complete: a file is open from sceMcSync's "open" result until its close; when a file that was written
+   to is closed and no card file is open any more, every file on the card is whole, and the page is told (cardWritten):
+   it copies the card at once and keeps it (port/web/saves.js). plat_mc.c itself is unchanged. */
+#define MC_CMD_OPEN 2      /* libmc request numbers (plat_mc.c) */
+#define MC_FILES_SEEN 32   /* (plat_mc.c has 8 file handles; a bit each) */
+int __real_func_002A1FB8(int fd);                               /* sceMcClose */
+int __real_func_002A2320(int fd, void *buf, int size);          /* sceMcWrite */
+int __real_func_002A2498(int mode, int *cmd, int *result);      /* sceMcSync */
+static uint32_t sCardOpen;  /* card files open (bit = handle) */
+static int sCardWritten;    /* a file was written since the page was last told */
+
+int __wrap_func_002A2498(int mode, int *cmd, int *result) {
+    int c = 0, r = 0, done = __real_func_002A2498(mode, &c, &r);
+    if (done == 1 && c == MC_CMD_OPEN && r >= 0 && r < MC_FILES_SEEN) {
+        sCardOpen |= 1u << r;
+    }
+    if (cmd != NULL) { *cmd = c; }
+    if (result != NULL) { *result = r; }
+    return done;
+}
+
+int __wrap_func_002A2320(int fd, void *buf, int size) {
+    sCardWritten = 1;
+    return __real_func_002A2320(fd, buf, size);
+}
+
+int __wrap_func_002A1FB8(int fd) {
+    int r = __real_func_002A1FB8(fd);
+    if (fd >= 0 && fd < MC_FILES_SEEN) {
+        sCardOpen &= ~(1u << fd);
+    }
+    if (sCardWritten && sCardOpen == 0) {
+        sCardWritten = 0;
+        page_call("cardWritten", 0);
+    }
+    return r;
+}
+
+/* The game's own check of a save block (McCard_Checksum, src/battle/stgm_a_b.c: the sum in the block's first two
+   words): 1 = the `size` bytes at `buf` pass it. The page checks saves with it before keeping or loading them. */
+extern int McCard_Checksum(uint32_t *buf, int size, int write);
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_SaveChecksumOk(void *buf, int size) {
+    return McCard_Checksum((uint32_t *)buf, size, 0) == 0;
+}
+
 /* ---- the page's interface ------------------------------------------------------------------------------------ */
 
 /* A setting's value; -1 and a message for an unknown name. */

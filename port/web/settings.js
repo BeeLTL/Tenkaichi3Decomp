@@ -78,6 +78,7 @@ const PANEL = [
     { bindings: true },
     { controllers: true },
   ] },
+  { tab: 'Saves', items: [{ saves: true }] },
   { tab: 'Extras', items: [
     { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
       help: "How fast the game runs (the sound keeps its pitch). 100% is the game's own; 114% is what competitive play uses." },
@@ -86,7 +87,7 @@ const PANEL = [
 ];
 
 class Bt3Settings {
-  constructor({ canvas, stage, renderer, query, log, data, getLog }) {
+  constructor({ canvas, stage, renderer, query, log, data, getLog, saves }) {
     this.canvas = canvas;
     this.stage = stage;
     this.renderer = renderer;
@@ -98,6 +99,7 @@ class Bt3Settings {
     this.opener = null;     // what had the focus before the panel opened (it gets it back)
     this.refreshers = [];   // one per control: shows the engine's value again
     this.dialog = document.getElementById('settings');
+    this.saves = saves;  // the game's saves in the browser's storage (saves.js): the Saves tab
     this.captureListener = null;  // the guided set-up's, while it runs: the engine's captureDone goes there
     this.controllers = new Bt3Controllers(this);  // the Controls tab's controller part (controllers.js)
     // the Developer section's live numbers and the diagnostics export (dashboard.js)
@@ -130,6 +132,7 @@ class Bt3Settings {
       captureDone: () => this.captureDone(),
       notice: (text) => this.notice(text),
       screenshot: (rgba, w, h) => this.saveScreenshot(rgba, w, h),
+      cardWritten: () => this.saves.cardWritten(),
     };
   }
 
@@ -184,7 +187,7 @@ class Bt3Settings {
       tab.addEventListener('click', () => this.selectTab(tab));
       tabs.appendChild(tab);
       for (const item of t.items) {
-        page.appendChild(item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root
+        page.appendChild(item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root : item.saves ? this.saves.buildUi()
                          : item.unlock ? this.buildUnlock() : this.buildControl(item));
       }
       if (t.tab === 'Video') page.appendChild(this.buildRenderer());
@@ -452,6 +455,7 @@ class Bt3Settings {
     if (!this.mod) return;
     for (const r of this.refreshers) r();
     this.controllers.refresh();
+    this.saves.render();
   }
 
   // The stage's shape follows the picture's (the engine sizes the canvas to the aspect ratio: GsDraw_WindowShape).
