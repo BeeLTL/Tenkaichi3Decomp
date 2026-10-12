@@ -54,6 +54,7 @@ typedef struct GsParams {
     float misc[4];
     float rect[4];
     float orig[4];
+    float extra[4]; /* x: the depth buffer's largest value (GsDraw_DepthMax) */
 } GsParams;
 /* the full-screen passes' Params (dclut.frag, outline.frag, blit.frag): one vec4. Stored in a GsParams-sized slot, so
    that one bind group of sizeof(GsParams) serves every fragment stage. */
@@ -638,7 +639,7 @@ static void wg_scale_changed(void) {
 
 enum {
     WG_SHADER_GS_VERT, WG_SHADER_VU0_VERT, WG_SHADER_VU4_VERT, WG_SHADER_VU6_VERT, WG_SHADER_FX_VERT,
-    WG_SHADER_GS_FRAG, WG_SHADER_DCLUT_FRAG, WG_SHADER_OUTLINE_FRAG, WG_SHADER_BLIT_FRAG, WG_SHADER_COUNT
+    WG_SHADER_GS_FRAG, WG_SHADER_GSNZ_FRAG, WG_SHADER_DCLUT_FRAG, WG_SHADER_OUTLINE_FRAG, WG_SHADER_BLIT_FRAG, WG_SHADER_COUNT
 };
 static const struct {
     const char *name;
@@ -647,6 +648,7 @@ static const struct {
     [WG_SHADER_GS_VERT] = {"gs.vert", kGsVertWgsl},           [WG_SHADER_VU0_VERT] = {"vu0.vert", kVu0VertWgsl},
     [WG_SHADER_VU4_VERT] = {"vu4.vert", kVu4VertWgsl},        [WG_SHADER_VU6_VERT] = {"vu6.vert", kVu6VertWgsl},
     [WG_SHADER_FX_VERT] = {"fx.vert", kFxVertWgsl},           [WG_SHADER_GS_FRAG] = {"gs.frag", kGsFragWgsl},
+    [WG_SHADER_GSNZ_FRAG] = {"gsnz.frag", kGsnzFragWgsl}, /* (gs.frag without its depth output: key bit 23) */
     [WG_SHADER_DCLUT_FRAG] = {"dclut.frag", kDclutFragWgsl},  [WG_SHADER_OUTLINE_FRAG] = {"outline.frag", kOutlineFragWgsl},
     [WG_SHADER_BLIT_FRAG] = {"blit.frag", kBlitFragWgsl},
 };
@@ -776,7 +778,7 @@ static WGPURenderPipeline pipeline_create(const GsPipeState *s) {
         /* drawn in a pass without the depth attachment: it samples the target's depth (dclut.frag) */
         pipe_desc_init(&p, sPipeLayoutTable, WG_SHADER_FX_VERT, WG_SHADER_DCLUT_FRAG, "table pass");
     } else {
-        pipe_desc_init(&p, sPipeLayoutDraw, kVertexShader[s->vertices], WG_SHADER_GS_FRAG, "draw");
+        pipe_desc_init(&p, sPipeLayoutDraw, kVertexShader[s->vertices], s->noFragDepth ? WG_SHADER_GSNZ_FRAG : WG_SHADER_GS_FRAG, "draw");
         if (s->vertices == GS_VERTS_GS) {
             p.buffer.arrayStride = sizeof(Vtx);
             p.buffer.attributeCount = sizeof(kGsAttributes) / sizeof(kGsAttributes[0]);
@@ -1304,6 +1306,7 @@ static void replay_primitive(const GsDraw *d) {
     memcpy(p.misc, d->misc, sizeof(p.misc));
     memcpy(p.rect, d->rect, sizeof(p.rect));
     memcpy(p.orig, d->orig, sizeof(p.orig));
+    p.extra[0] = GsDraw_DepthMax(d);
     if (!sR.haveLastParams || memcmp(&p, &sR.lastParams, sizeof(p)) != 0) {
         sR.lastParams = p;
         sR.lastParamsOffset = uniforms_push(&p, sizeof(p), sUniforms.paramsSlot);

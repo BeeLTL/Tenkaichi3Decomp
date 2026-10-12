@@ -11,8 +11,12 @@ The translator is naga, the shader compiler of the wgpu project (https://github.
     (<tools> = C:/project/Tenkaichi3Web/tools on the development machine; BT3_NAGA names another naga executable.)
 Fragment shaders are translated with SEPARATE_SAMPLERS defined: WGSL has no combined texture + sampler, and naga's
 GLSL frontend does not accept `uniform sampler2D`; the shaders declare a texture at binding 2k and its sampler at
-2k + 1 instead under that switch (see their headers). naga validates every module it writes; a shader that does not
-translate or validate stops the build.
+2k + 1 instead under that switch (see their headers). And with NO_DEPTH_QUALIFIER: naga does not accept
+`layout(depth_less)` (conservative depth, which WGSL does not have either); gs.frag then writes gl_FragDepth as the
+plain built-in. naga validates every module it writes; a shader that does not translate or validate stops the build.
+
+Variants (VARIANTS): a shader made from another with a define, as undefined.py makes them for the native builds:
+gsnz.frag is gs.frag with NO_FRAG_DEPTH (without its own depth output; key bit 23, gs_draw.h).
 
 Output: port/build/gen_wasm/wgsl/<shader>.wgsl and port/build/gen_wasm/wgsl_shaders.h (one NUL-terminated
 `static const char k<Name><Stage>Wgsl[]` per shader, the naming of shaders.h).
@@ -24,7 +28,19 @@ SHADERS = ROOT / "port/src/gs/shaders"
 GEN = ROOT / "port/build/gen_wasm"
 NAGA_VERSION = "30.0.1"
 DEFAULT_NAGA = pathlib.Path("C:/project/Tenkaichi3Web/tools/rust/cargo/bin/naga.exe")
-STAGE_DEFINES = {"vert": [], "frag": ["SEPARATE_SAMPLERS"]}
+STAGE_DEFINES = {"vert": [], "frag": ["SEPARATE_SAMPLERS", "NO_DEPTH_QUALIFIER"]}
+# name -> (the shader it is made from, the define that makes it); the same as undefined.py's
+VARIANTS = {"gsnz.frag": ("gs.frag", "NO_FRAG_DEPTH")}
+
+def variant_glsl(name):
+    """A variant's GLSL text, as undefined.py writes it: the define on the line after #version."""
+    base, define = VARIANTS[name]
+    return (SHADERS / base).read_text().replace("\n", f"\n#define {define}\n", 1)
+
+def sources():
+    """(name, path of its source, extra defines) for every shader and variant, vertex stages first."""
+    files = sorted(SHADERS.glob("*.vert")) + sorted(SHADERS.glob("*.frag"))
+    return [(f.name, f, []) for f in files] + [(n, SHADERS / b, [d]) for n, (b, d) in sorted(VARIANTS.items())]
 
 def naga():
     exe = pathlib.Path(os.environ.get("BT3_NAGA", DEFAULT_NAGA))
@@ -35,25 +51,26 @@ def naga():
         sys.exit(f"{exe} is naga {version or '(unknown)'}; the build is pinned to {NAGA_VERSION}")
     return exe
 
-def c_name(src):
+def c_name(name):
     """gs.vert -> kGsVertWgsl, outline.frag -> kOutlineFragWgsl (as undefined.py names the SPIR-V / GLSL arrays)."""
-    return "k" + src.stem.capitalize() + src.suffix[1:].capitalize() + "Wgsl"
+    stem, stage = name.rsplit(".", 1)
+    return "k" + stem.capitalize() + stage.capitalize() + "Wgsl"
 
 def main():
     exe = naga()
     out = GEN / "wgsl"
     out.mkdir(parents=True, exist_ok=True)
     arrays, failed = [], []
-    for src in sorted(SHADERS.glob("*.vert")) + sorted(SHADERS.glob("*.frag")):
+    for name, src, extra in sources():
         stage = src.suffix[1:]
-        wgsl = out / (src.name + ".wgsl")
-        defines = [a for d in STAGE_DEFINES[stage] for a in ("-D", d)]
+        wgsl = out / (name + ".wgsl")
+        defines = [a for d in STAGE_DEFINES[stage] + extra for a in ("-D", d)]
         r = subprocess.run([str(exe), "--input-kind", "glsl", "--shader-stage", stage] + defines + [str(src), str(wgsl)],
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode:
-            failed.append((src.name, (r.stdout + r.stderr).strip()))
+            failed.append((name, (r.stdout + r.stderr).strip()))
             continue
-        arrays.append(f"static const char {c_name(src)}[] = {{" + ",".join(str(b) for b in wgsl.read_bytes() + b"\0") + "};\n")
+        arrays.append(f"static const char {c_name(name)}[] = {{" + ",".join(str(b) for b in wgsl.read_bytes() + b"\0") + "};\n")
     for name, msg in failed:
         print(f"FAILED {name}\n{msg}")
     if failed:

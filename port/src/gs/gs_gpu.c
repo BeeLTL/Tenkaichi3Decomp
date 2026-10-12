@@ -29,7 +29,7 @@ extern int Port_AspectMilli(void);
 
 static SDL_Window *sWindow; /* the shared window (GsDraw_WindowCreate) */
 static SDL_GPUDevice *sDev;
-static SDL_GPUShader *sVs, *sFs;
+static SDL_GPUShader *sVs, *sFs, *sFsNz; /* (Nz: gs.frag without its depth output, key bit 23) */
 static SDL_GPUBuffer *sVbuf;
 static SDL_GPUTransferBuffer *sVxfer;
 static SDL_GPUSampler *sSamplers[16]; /* bit 0 filtered, bit 1 / 2 clamped in u / v, bit 3 with the smaller copies (mip levels) */
@@ -221,7 +221,7 @@ static void blend_from_key(uint32_t bkey, SDL_GPUColorTargetBlendState *b) {
 
 /* Creates the pipeline of a key (everything a pipeline depends on is in the key):
    bits 0..8 blend, 10..11 depth test, 12 depth write, 13..14 topology, 16..19 colour write mask,
-   20..21 vertices: 0 GS vertices, 1 program 0, 2 program 4, 3 program 6. */
+   20..21 vertices: 0 GS vertices, 1 program 0, 2 program 4, 3 program 6, 23 gs.frag without its depth output. */
 static int pipeline_create(uint32_t key, int remember) {
     int ztst = (int)((key >> 10) & 3), zwrite = (int)((key >> 12) & 1), topo = (int)((key >> 13) & 3), vu = (int)((key >> 20) & 3);
     int fx = (int)((key >> 22) & 1); /* a full-screen table pass (dclut.frag): no vertices, no depth attachment */
@@ -256,7 +256,7 @@ static int pipeline_create(uint32_t key, int remember) {
         at[2].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4; at[2].offset = 32;
     }
     ci.vertex_shader = vu == 3 ? sVu6Vs : vu == 2 ? sVu4Vs : vu ? sVu0Vs : sVs;
-    ci.fragment_shader = sFs;
+    ci.fragment_shader = (key >> 23) & 1 ? sFsNz : sFs;
     ci.vertex_input_state.vertex_buffer_descriptions = &vb;
     ci.vertex_input_state.num_vertex_buffers = 1;
     ci.vertex_input_state.vertex_attributes = at;
@@ -338,6 +338,34 @@ static int pipe_get(uint32_t key) {
     return pipeline_create(key, 1);
 }
 
+/* How a finished picture reaches the display. on = 0: without waiting for it (MAILBOX: no tearing, no wait; else
+   IMMEDIATE); on = 1: at its refresh (VSYNC, the settings window's "V-sync"). */
+static int sVsyncPending = -1; /* asked for from the settings window: -1 nothing, else 0 / 1 */
+
+static void vsync_apply(int on);
+
+/* From the settings window, which is drawn inside a frame: the swapchain's picture of that frame is already taken,
+   and changing how it presents then made the driver crash in the window's own drawing (found by the user: ticking
+   "V-sync" closed the game). Kept until the next frame starts (frame_end, before anything of it is acquired). */
+void GsGpu_Vsync(int on) {
+    sVsyncPending = on != 0;
+}
+
+static void vsync_apply(int on) {
+    SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
+    if (sDev == NULL || sWindow == NULL) {
+        return;
+    }
+    SDL_WaitForGPUIdle(sDev); /* (nothing of an earlier frame still on its way to the old swapchain) */
+    if (!on && SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_MAILBOX)) {
+        mode = SDL_GPU_PRESENTMODE_MAILBOX;
+    } else if (!on && SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+        mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+    }
+    SDL_SetGPUSwapchainParameters(sDev, sWindow, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
+    fprintf(stderr, "bt3: present mode %s\n", mode == SDL_GPU_PRESENTMODE_MAILBOX ? "mailbox" : mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? "immediate" : "vsync");
+}
+
 /* --- init --------------------------------------------------------------------------------------- */
 
 static int vk_init(void) {
@@ -357,19 +385,11 @@ static int vk_init(void) {
     }
     /* The game paces itself at 30 frames per second; waiting for the display's own refresh on top of that
        (VSYNC) costs up to a refresh period per frame. Prefer MAILBOX (no tearing, no wait), then IMMEDIATE. */
-    {
-        SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
-        if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_MAILBOX)) {
-            mode = SDL_GPU_PRESENTMODE_MAILBOX;
-        } else if (SDL_WindowSupportsGPUPresentMode(sDev, sWindow, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
-            mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
-        }
-        SDL_SetGPUSwapchainParameters(sDev, sWindow, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
-        fprintf(stderr, "bt3: present mode %s\n", mode == SDL_GPU_PRESENTMODE_MAILBOX ? "mailbox" : mode == SDL_GPU_PRESENTMODE_IMMEDIATE ? "immediate" : "vsync");
-    }
+    vsync_apply(Port_Setting("vsync", 0)); /* (the setting "V-sync" asks for the wait all the same) */
     sVs = shader(kGsVertSpv, sizeof(kGsVertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
     sFs = shader(kGsFragSpv, sizeof(kGsFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
-    if (sVs == NULL || sFs == NULL) {
+    sFsNz = shader(kGsnzFragSpv, sizeof(kGsnzFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
+    if (sVs == NULL || sFs == NULL || sFsNz == NULL) {
         fprintf(stderr, "bt3: shaders: %s\n", SDL_GetError());
         return 0;
     }
@@ -492,12 +512,16 @@ static void vk_frame_end(void) {
     uint64_t sEndT[5];
     int lastPipe = -1, lastUni = -1, lastSampler = -1, haveFu = 0, haveScissor = 0; /* what the pass has set (the replay loop) */
     SDL_GPUTexture *lastTex = NULL;
-    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } lastFu;
+    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; float extra[4]; } lastFu;
     int lastScissor[4];
     float lastBlend = -1.0f;
     uint32_t n;
 
     GsGpu_TitlePoll();
+    if (sVsyncPending >= 0) {
+        vsync_apply(sVsyncPending);
+        sVsyncPending = -1;
+    }
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) {
             exit(0);
@@ -510,7 +534,7 @@ static void vk_frame_end(void) {
             continue;
         }
         if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) {
-            exit(0);
+            if (!ev.key.repeat && !Ui_QuitAsk()) { exit(0); } /* (asks first) */
         }
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
             extern int gsInterp;
@@ -539,6 +563,18 @@ static void vk_frame_end(void) {
             fprintf(stderr, "cut: first dropped draw: native %d target %d (fbp %03x) vu %d count %u tex_is_target %d mode %d %d %d %d\n", d->native,
                     d->target, d->target >= 0 ? gsTargets[d->target].fbp : 0, d->vu, d->count, d->tex_is_target, d->mode[0], d->mode[1], d->mode[2], d->mode[3]);
             gsDrawCount = n;
+        }
+    }
+    if (getenv("BT3_GPU_DUMP") != NULL && (int)gGsFrame == atoi(getenv("BT3_GPU_DUMP")) && strchr(getenv("BT3_GPU_DUMP"), ':') != NULL) {
+        /* BT3_GPU_DUMP=<frame>:<n>: every vertex of that frame's draw n (one the game transformed itself) */
+        uint32_t k = (uint32_t)atoi(strchr(getenv("BT3_GPU_DUMP"), ':') + 1), j;
+        if (k < gsDrawCount && !gsDraws[k].native && !gsDraws[k].vu) {
+            const GsDraw *d = &gsDraws[k];
+            fprintf(stderr, "dump: draw %u: %u vertices, pipeline key %08x, mode %d %d %d %d\n", k, d->count, sPipes[d->pipeline].key, d->mode[0], d->mode[1], d->mode[2], d->mode[3]);
+            for (j = 0; j < d->count; j++) {
+                const Vtx *v = &gsVerts[d->first + j];
+                fprintf(stderr, "dump: %3u (%.2f, %.2f) z %.9f st %.4f %.4f q %.5f rgba %u %u %u %u\n", j, v->x, v->y, v->z, v->s, v->t, v->q, v->r, v->g, v->b, v->a);
+            }
         }
     }
     if (getenv("BT3_GPU_TAIL") != NULL && (int)gGsFrame == atoi(getenv("BT3_GPU_TAIL"))) { /* the frame's last draws */
@@ -680,7 +716,7 @@ static void vk_frame_end(void) {
         SDL_GPUBufferBinding vb;
         SDL_GPUTextureSamplerBinding ts;
         SDL_FColor bc;
-        struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } fu;
+        struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; float extra[4]; } fu;
 
         if (d->native >= 100) { /* a picture uploaded into this display buffer (GsGpu_FbUpload): scaled into its texture */
             SDL_GPUBlitInfo bl;
@@ -883,6 +919,7 @@ static void vk_frame_end(void) {
         memcpy(fu.misc, d->misc, sizeof(fu.misc));
         memcpy(fu.rect, d->rect, sizeof(fu.rect));
         memcpy(fu.orig, d->orig, sizeof(fu.orig));
+        fu.extra[0] = d->vu ? (gsVuUni[d->uniform].misc[2] > 0.0f ? gsVuUni[d->uniform].misc[2] : 0.0f) : gsZMax;
         if (!haveFu || memcmp(&fu, &lastFu, sizeof(fu)) != 0) {
             SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
             memcpy(&lastFu, &fu, sizeof(fu));

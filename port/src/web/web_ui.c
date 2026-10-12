@@ -33,6 +33,11 @@ int Port_ClashSquareX(void);
 void Port_ClashSquareXSet(int quarters);
 void Port_SettingSave(const char *name, int value);
 void Port_SettingsWrite(void);
+int Port_Setting(const char *name, int def);
+int Port_GameSpeed(void);               /* plat_stub.c: the player's own game speed, percent (never used online) */
+void Port_GameSpeedSet(int percent);
+void Port_AudioRefresh(void);           /* snd_adx.c: playing streams follow the volumes and the speed at once */
+extern int gPortMusicFollows;           /* snd_adx.c: 1 = looping music follows the game speed; -1 before it is read */
 
 /* The picture GsGpu_ReadFrame gives: the GS's own resolution. */
 #define FRAME_W 512
@@ -74,6 +79,10 @@ VIDEO_FIELD(fxOff)
 VIDEO_FIELD(glow)
 VIDEO_FIELD(music)
 VIDEO_FIELD(effects)
+VIDEO_FIELD(voices)
+VIDEO_FIELD(stage)
+VIDEO_FIELD(hudLayout)
+VIDEO_FIELD(frameSkip)
 VIDEO_FIELD(texPack)
 static int get_texPackCount(void) { PortVideo v; GsGpu_GetSettings(&v); return v.texPackCount; }
 
@@ -85,6 +94,18 @@ static void set_interp(int x) {
     }
     gsInterp = x < 0 ? 0 : x > 3 ? 3 : x;
     Port_SettingSave("interp", gsInterp);
+    Port_SettingsWrite();
+}
+/* (as ui.cpp's Audio tab and Cheats tab change them) */
+static int get_music_follows(void) { return gPortMusicFollows < 0 ? Port_Setting("music_follows_speed", 0) != 0 : gPortMusicFollows; }
+static void set_music_follows(int x) {
+    gPortMusicFollows = x != 0;
+    Port_SettingSave("music_follows_speed", gPortMusicFollows);
+    Port_SettingsWrite();
+}
+static void set_game_speed(int x) {
+    Port_GameSpeedSet(x);
+    Port_AudioRefresh();
     Port_SettingsWrite();
 }
 static void set_clash_square(int x) { Port_ClashSquareSet(x); }
@@ -111,6 +132,12 @@ static const struct {
     {"glow", get_glow, set_glow},
     {"music", get_music, set_music},
     {"effects", get_effects, set_effects},
+    {"voices", get_voices, set_voices},
+    {"stage_sounds", get_stage, set_stage},
+    {"music_follows_speed", get_music_follows, set_music_follows},
+    {"hud_layout", get_hudLayout, set_hudLayout},
+    {"frame_skip", get_frameSkip, set_frameSkip},
+    {"game_speed", Port_GameSpeed, set_game_speed},
     {"texture_pack", get_texPack, set_texPack},
     {"texture_pack_count", get_texPackCount, NULL},
     {"interp", get_interp, set_interp},
@@ -277,6 +304,21 @@ void Ui_Toggle(void) {
 
 /* The OpenGL back end calls this after its present: the browser build draws nothing over the game. */
 void Ui_DrawGL(void) {
+}
+
+/* Escape outside the settings (gs_draw.c asks before the program closes): a browser tab is closed by the browser, not
+   by the game. The page keeps Escape from the game (settings.js); should one arrive, it says so instead of ending the
+   page's game. 1 = answered here (nothing closes). */
+int Ui_QuitAsk(void) {
+    page_notice("The game cannot be quit from inside a browser: close the tab to leave it.");
+    return 1;
+}
+
+/* gs_draw.c applies a change of V-sync to both desktop renderers (GsGl_Vsync, and this, the Vulkan one's). The browser
+   build has no Vulkan renderer and the page offers no V-sync: a browser shows a page's pictures at the display's
+   refresh whatever the setting. */
+void GsGpu_Vsync(int on) {
+    fprintf(stderr, "bt3: V-sync %d not applied: a browser shows pictures at the display's refresh\n", on);
 }
 
 void Port_UiNotice(const char *text) {

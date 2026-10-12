@@ -17,6 +17,7 @@
 #define KEY_WRITE_MASK_SHIFT 16
 #define KEY_VERTICES_SHIFT 20
 #define KEY_TABLE_PASS_SHIFT 22
+#define KEY_NO_FRAG_DEPTH_SHIFT 23
 #define KEY_BLEND_K_MASK 7u /* GsBlendK */
 #define KEY_TWO_BITS 3u     /* GsBlendC, GsDepthTest, GsTopology, GsVertexSource */
 #define KEY_WRITE_MASK_ALL (GS_CC_R | GS_CC_G | GS_CC_B | GS_CC_A)
@@ -88,6 +89,14 @@ GsPipeState GsPipeState_FromGs(uint64_t alpha, int abe, uint64_t test, uint64_t 
     return s;
 }
 
+/* What is in the depth buffer was written through the full shader, so it is whole numbers; and z >= N is the same as
+   floor(z) >= N for a whole N. So a draw that does not write depth and tests with "greater or equal" (or not at all)
+   gets the same picture without the shader's depth. ("Greater" is not the same: N + 0.5 > N but floor(N + 0.5) > N is
+   not. Those keep the full shader, and so does everything that writes depth.) The table pass has no depth at all. */
+int GsPipeState_FragDepthRedundant(const GsPipeState *s) {
+    return !s->tablePass && !s->depthWrite && s->depthTest != GS_DEPTH_GREATER;
+}
+
 uint32_t GsPipeKey_Encode(const GsPipeState *s) {
     uint32_t key = s->writeMask << KEY_WRITE_MASK_SHIFT;
 
@@ -99,7 +108,8 @@ uint32_t GsPipeKey_Encode(const GsPipeState *s) {
         return key | 1u << KEY_TABLE_PASS_SHIFT;
     }
     return key | (uint32_t)s->depthTest << KEY_DEPTH_TEST_SHIFT | (uint32_t)s->depthWrite << KEY_DEPTH_WRITE_SHIFT |
-           (uint32_t)s->topology << KEY_TOPOLOGY_SHIFT | (uint32_t)s->vertices << KEY_VERTICES_SHIFT;
+           (uint32_t)s->topology << KEY_TOPOLOGY_SHIFT | (uint32_t)s->vertices << KEY_VERTICES_SHIFT |
+           (uint32_t)(s->noFragDepth != 0) << KEY_NO_FRAG_DEPTH_SHIFT;
 }
 
 void GsPipeKey_Decode(uint32_t key, GsPipeState *s) {
@@ -113,6 +123,7 @@ void GsPipeKey_Decode(uint32_t key, GsPipeState *s) {
     s->writeMask = (key >> KEY_WRITE_MASK_SHIFT) & KEY_WRITE_MASK_ALL;
     s->vertices = (GsVertexSource)((key >> KEY_VERTICES_SHIFT) & KEY_TWO_BITS);
     s->tablePass = (int)((key >> KEY_TABLE_PASS_SHIFT) & 1u);
+    s->noFragDepth = (int)((key >> KEY_NO_FRAG_DEPTH_SHIFT) & 1u);
 }
 
 static GsBlendFactor blend_factor(GsBlendK k) {

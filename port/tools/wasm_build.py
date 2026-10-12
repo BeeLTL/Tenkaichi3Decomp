@@ -18,7 +18,7 @@ Usage (emcc on PATH):
 import concurrent.futures, os, pathlib, re, subprocess, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import eeconst, portsrc, wasm_sf
+import eeconst, portsrc, wasm_sf, wasm_shaders
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Diagnostic variants (measurements only, never the build that is used): BT3_WASM_VARIANT=<name> builds into
@@ -125,10 +125,12 @@ def shaders_header():
     No SPIR-V: the Vulkan back end is not built for the browser."""
     GEN.mkdir(parents=True, exist_ok=True)
     arrays = []
-    for src in sorted((ROOT / "port/src/gs/shaders").glob("*")):
-        if src.suffix in (".vert", ".frag"):
-            name = "k" + src.stem.capitalize() + src.suffix[1:].capitalize() + "Glsl"
-            arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in src.read_bytes() + b"\0") + "};\n")
+    texts = [(src.name, src.read_bytes()) for src in sorted((ROOT / "port/src/gs/shaders").glob("*")) if src.suffix in (".vert", ".frag")]
+    texts += [(name, wasm_shaders.variant_glsl(name).encode()) for name in sorted(wasm_shaders.VARIANTS)]  # gsnz.frag
+    for file, text in texts:
+        stem, stage = file.rsplit(".", 1)
+        name = "k" + stem.capitalize() + stage.capitalize() + "Glsl"
+        arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in text + b"\0") + "};\n")
     (GEN / "shaders.h").write_text("/* generated from port/src/gs/shaders by port/tools/wasm_build.py */\n" + "".join(arrays))
 
 # The names port_jobs gives the port's objects start with these (the game's own objects are named after their folders

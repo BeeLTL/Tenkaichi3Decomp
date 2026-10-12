@@ -32,7 +32,8 @@ game's data from it, and it stays on your computer.
   not offered in an online match. See [docs/port/adding_stages.md](docs/port/adding_stages.md) and
   [adding_songs.md](docs/port/adding_songs.md).
 - In the game, **F1** opens the settings, or **START + SELECT** on a controller (which also works the window: d-pad and
-  Cross). Controls has a row to choose another key or button. Its Cheats tab has "Unlock everything" (a debug function the game's
+  Cross, Circle to leave, L1 / R1 for the tabs). Controls has a row to choose another key or button. **Esc** asks
+  before it closes the game, and the window has an "Exit game" button. Its Cheats tab has "Unlock everything" (a debug function the game's
   developers left in: all characters, stages, music, items and Zenni).
 
 - **Online play, experimental** (from release 0.1.8): the main menu's hidden "Dragon Net Battle"

@@ -101,6 +101,12 @@ typedef struct GsTarget {
 
 /* One recorded primitive. Everything inside is GS state or a handle a back end made (`tex`, `pipeline`); a
    back end replays the list by rebuilding its passes around the current target and calling the pipeline. */
+extern float gsZMax; /* gs_draw.c */
+/* gs_draw.c: the depth buffer's largest value for a draw's per-pixel depth (gs.frag Params.extra.x): the vertex program's
+   (its constant block) or, for the GS's own vertices, the frame's; 0 = depth with its fractions (BT3_DEPTH_FRAC). */
+struct GsDraw;
+float GsDraw_DepthMax(const struct GsDraw *d);
+
 typedef struct GsDraw {
     int vu;      /* 1, 2, 3: vertex programs' vertices (gsVuVerts, uniform block at `uniform`); 0: gsVerts */
     int uniform;
@@ -120,6 +126,7 @@ typedef struct GsDraw {
     float orig[4];  /* a texture pack's replacement: xy = the original texture's size in texels, z = its largest alpha */
     float blendc;
     int scissor[4]; /* x, y, width, height, at SCALE */
+    int wall;       /* triangles of the wall at the edge of the map (gs_draw.c, Port_WallMesh): in-between pictures draw it anew */
 } GsDraw;
 
 /* The formats a texture pack's replacement can be in (matches gs_texpack.h's TexPackImage.format). */
@@ -175,6 +182,7 @@ extern uint64_t gGpuTexNs, gGpuPipeNs, gGpuEndNs;
      bits 10..11  depth test (GsDepthTest)       bit 12  depth write
      bits 13..14  topology (GsTopology)          bits 16..19  colour write mask (GS_CC_*)
      bits 20..21  vertices (GsVertexSource)      bit 22  the full-screen table pass (dclut.frag), nothing else set
+     bit 23       the fragment shader without its own depth output (gsnz.frag: gs.frag with NO_FRAG_DEPTH)
    (gs_gpu.c still decodes these bits itself; it is out of the browser port's scope.) */
 
 /* What one side of ((A - B) * C >> 7) + D is multiplied by (the GS's ALPHA register: each of A, B, D is source,
@@ -203,12 +211,16 @@ typedef struct GsPipeState {
     uint32_t writeMask;  /* GS_CC_* */
     GsVertexSource vertices;
     int tablePass;       /* the full-screen table pass: blend and write mask only, no vertices, no depth */
+    int noFragDepth;     /* gs.frag without its depth output (gsnz.frag): see GsPipeState_FragDepthRedundant */
 } GsPipeState;
 
 /* gs_pipekey.c. FromGs: the state of a draw from the GS registers of its context (ALPHA, PRIM.ABE, TEST, ZBUF, the
    FBMSK half of FRAME); tablePass: the full-screen table pass, for which only blending and the write mask count. */
 GsPipeState GsPipeState_FromGs(uint64_t alpha, int abe, uint64_t test, uint64_t zbuf, uint32_t fbmsk, GsTopology topology,
                                GsVertexSource vertices, int tablePass);
+/* 1 = the shader's own depth output (whole numbers per pixel, the end of gs.frag) changes nothing for a draw in this
+   state, so it can use the variant without (it lets the graphics chip leave out hidden pixels early). */
+int GsPipeState_FragDepthRedundant(const GsPipeState *s);
 uint32_t GsPipeKey_Encode(const GsPipeState *s);
 void GsPipeKey_Decode(uint32_t key, GsPipeState *s);
 

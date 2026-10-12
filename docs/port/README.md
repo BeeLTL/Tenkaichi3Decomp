@@ -1454,3 +1454,515 @@ was, and there is no way back from the controller yet (the user bound SELECT alo
 
 Checked by the user on screen (Linux): START + SELECT opens and closes it, pressed together. Not checked by
 anyone: Windows; a second controller; the online screen with a controller.
+
+## A day of reports: the window with a controller, leaving the game, volumes, V-sync, slow machines, depth (2026-10-11)
+
+**The settings window.**
+- **Esc asks first.** Outside the window Esc closed the game at once; it now puts up "Close the game?" (Exit /
+  Cancel, Cancel has the focus, Esc again takes it away). The window's own close button still closes at once.
+  `Ui_QuitAsk` (ui.cpp), called from both renderers' event loops.
+- **"Exit game"** on a last line of the window that every tab shows; the same question.
+- **Worked with a controller:** Circle / B closes the window (and the online screen, as its close button),
+  L1 / R1 go to the neighbouring tab. Any connected controller works it, one plugged in later too (the library
+  only took the first one found at start: `ImGui_ImplSDL3_SetGamepadMode(AutoAll)`, and added / removed events
+  are passed on while the window is closed).
+- **A binding taken from a controller pressed its own row again:** the button that became the binding was also
+  "choose" for the row it was bound in, so the row waited for a button a second time (how the user bound SELECT
+  alone without meaning to). The controller does not work the window while a binding is waited for, nor until
+  its buttons are let go (`sPadHold`). A binding waited for from a controller ends by itself after five seconds.
+- The button that closed the window or answered the question does not reach the game (`PortInput_Swallow`).
+
+**Music turned the voices down.** Every ADX stream took the Music slider: the songs, but also the voices, the
+stage's background sound and the streamed effects, while "Sound effects and voices" only reached the short
+effects. The game has one player per kind (`BGM`, `MAP`, `SE`, `SE`, `VIC`, `VIC`, docs/game_overview.md); seen
+with BT3_SND_VERBOSE on a recorded session: intro, menu and fight songs start on player 0, the stage's sound on
+1, effects on 2, a fighter's and the announcer's lines on 4 and 5. Player 0 takes Music, the others the other
+slider, and moving that one reaches the streams that are playing at once. Not listened to by me.
+
+**V-sync** (F1, Video; off by default, setting `vsync`). The port shows a picture without waiting for the display
+(MAILBOX, else IMMEDIATE, which tears: some Windows drivers, the OpenGL renderer). The option asks for the wait.
+Checked windowless: the setting switches the mode ("present mode vsync"), the game runs the same. Not checked: on
+a display, by anyone.
+
+**Smooth motion on a machine that cannot keep up.** Reported: "the fighters go 2D and glitch". The order of the
+pictures does not change when a machine is slow (looked for and not found: the tick's real picture is always
+shown and remembered). What happens: every in-between picture costs what a real one does, and they were shown
+whatever they cost, so the game itself slowed down: on an integrated GPU at 8x and "240", a picture every 186 ms.
+An in-between picture's faults (a part left behind, a blend of two far poses) are on screen for a few
+milliseconds on a machine that keeps up, and for 186 there. Now `interp_cost` (gs_draw.c) measures what showing
+a picture takes and allows as many per tick as fit in 70% of it (8, 4, 2 or none; more again when one step more
+would take under half). Measured on that GPU with a recorded session: at 8x / 240 the in-between pictures stop
+after the first tick (the fight then at about half speed: 8x is too much for it without them too); at 2x / 60
+every tick keeps its in-between picture and the limit never acts. BT3_INTERP_NOCAP=1 switches it off. The
+faults themselves are not fixed by this.
+
+**A triangle of a waterfall missing, another one as the camera moves** (Ruined Earth, found by the user). The lower
+fall is drawn by the game itself (vertices it transforms, whole-number depth) in the plane of a rock face that a
+vertex program draws. On the PS2 both are whole numbers at every pixel: they tie, and the fall, drawn later,
+passes the GEQUAL test. Here the rock's depth kept its fractions, so the rock was a hair in front for this
+triangle or that one. Rounding only at the vertices (first try) was not enough: between them the fractions were
+back, the triangle came back with the camera's movement and other stage textures flickered (found by the user).
+Now as the GS does it: gs.frag writes the depth rounded down to a whole number (`extra.x` = the depth buffer's
+largest value; not for 32 bits), and every vertex hands over its whole number plus a half (vu0 / vu4 / vu6.vert,
+`put` in gs_draw.c) so that nothing interpolated sits on the edge between two. Checked on the user's recording,
+windowless at 2x: the fall is whole in 57 samples of the stretch where the camera moves, and against the build
+before, the only pixels that differ in the mapped frame are the repaired triangle. The user, on screen: "looks
+like it's fixed". Not measured: the cost (the shader writes depth; declared `depth_less`, which the OpenGL 3.3 renderer
+has not and drops).
+
+**Not a fault: a glow cut in a straight line by the ground.** An explosive wave or a charge on the ground tints
+the scenery up to a line at the fighter's feet; in the air there is no line. The tint is one flat, camera-facing
+picture at the fighter's depth (seen with the new BT3_GPU_DUMP: six vertices of one depth, drawn with the depth
+test on), and ground nearer than the fighter hides it. PCSX2 shows the same (checked by the user).
+
+**Tools.** `BT3_GPU_DUMP=<frame>:<n>` prints every vertex of the frame's draw n (gs_gpu.c). A recorded session
+(BT3_PAD_PLAY) replayed with `BT3_UNCAPPED=1` gave the same pictures as at real speed (two frames compared
+byte for byte) and reaches a fight in six seconds: with BT3_GPU_CUT that makes a search for "the draw that
+paints this" a matter of minutes.
+
+## Windows: a crash when an online match starts, from files of two releases side by side (2026-10-11)
+
+Reported by the user from a Windows copy of 0.1.24: joining crashes, "exception 0xC0000005 ... msvcrt.dll, writing
+address 0x203364B0", the game running, an empty backtrace.
+
+- **The address is code in 0.1.24** (.text is 0x20001000 to 0x20338ED8 there) **and is the first line of
+  `Tenkaichi3Decomp.exe.mem` of releases 0.1.16 to 0.1.18** ("203364b0 1f4": checked in each release's Windows
+  package; 0.1.24's own list begins at 0x20339500 and fits its program). So that copy had the new program next to
+  an old list. The list says where the game's variables lie in the program (make_state.py, written at link time);
+  a state put back (the start of a session, a rollback) is copied to those addresses, here over code, which
+  Windows does not allow. Nothing reads the list before the first state is taken, so the copy played offline
+  without a sign of it.
+- **Now the list says which program it is for:** two first lines, "0 <address of gPortResim>" and
+  "1 <address of gPortVBlanks>". state.c compares them with its own two addresses; if they differ (or are not
+  there: an old list) the list is not used, the log and a line over the picture say that files of two releases
+  are mixed, and online play goes on the way it does without a list (the program starts again for the session,
+  no rollback).
+- Checked on Linux, two copies on one machine through the room-code lobby: with the right list they connect with
+  rollback; with a list whose first line was changed they connect without rollback and print the message, no
+  crash. Not checked: on Windows, by anyone; how that copy came to have an old list (only the .exe replaced is
+  the guess).
+
+## Online: the opponent's aura showed on what he stood behind (2026-10-11)
+
+Found by the user in online matches, and again offline with `BT3_VIEW=0` in a 1P vs 2P battle: while the opponent
+charges behind a tree or a building, a soft dark-blue oval sits on it, where he is.
+
+- **What it is:** one camera-facing sprite of the aura (the dark layer under its glow, subtracted from the
+  picture), sent with the nearest depth there is (z = 0xFFFFFF: seen with BT3_GPU_DUMP). `EftBill_Draw`
+  (src/battle/eft_z.c) draws a billboard that has EFT_BILL_FRONT in front of everything, and only "when its
+  fighter is in view": `BtlScene_IsCharInView`. In a one-player battle that is the camera's fighter; in the two
+  halves of a split screen, each half's own fighter. So the layer is only ever drawn around the fighter the
+  camera stands behind.
+- **Why online:** an online match is the two-player battle with the local player's view shown full screen
+  (`BtlCam_UpdateOverride`). The game takes that for its own "one view of a split-screen battle" (a cinematic),
+  where `BtlCharApi_IsCamShown` says yes for both fighters when neither has camera priority. The opponent's
+  layer was drawn too, in front of whatever hid him. In a real split screen it is not (compared on the same
+  recording).
+- **The fix** (src/battle/btl_scene.c, `#ifdef PORT`): in that case, and only when the game itself gives no view
+  priority, a fighter is in view if he is the view's own (`objId == Port_NetView()`), as in the two halves. All
+  nine callers are drawing routines (EftBill, EftPtcl, EftQuad, EftChain, EftRay, EftSpdLine, EftBolt, EftGlow,
+  EftAnimPart), so the two copies' game states are not touched by which view each shows.
+- Checked on the user's recording, windowless: the oval is gone and 158 pixels changed, all of them the oval;
+  the charging player's own view and the split-screen picture are the same byte for byte as before; the
+  regression replay passes. Not checked: in a real online match, by anyone (a host and a joiner connect as
+  before, but that test does not reach a fight).
+
+## In-between pictures: the wall at the edge of the map, a waterfall a step to the side; depth again (2026-10-11)
+
+**The wall at the edge of the map tore in in-between pictures** (found by the user, flying up and down along it).
+It is not scenery: `EftBound_BuildWall` (src/battle/eft_g.c) builds it anew every tick as a patch of 6 x 4 points on
+the map's cylinder, centred on the fighter's bearing and height, with a texture laid out in the world that also
+scrolls, and its triangles reach the GS cut off at the edges of the view, differently every tick. As pieces moved
+by the camera's change, some passed the questions asked of a piece and some did not. Two attempts on the pieces
+were worse and were taken back (told by the user in one case, seen in captures in the other): "none of a kind
+moves if one cannot" (the wall then stood still against what moved behind it) and "all move if most can" (the
+pieces that fail are really computed wrong: parts of the wall flew off).
+- Now the game hands the patch over (`Port_WallMesh`, called from EftBound_DrawMesh / DrawMeshCulled under
+  `#ifdef PORT`: the 24 points, texture coordinates, colours, the quads, the view's matrix), and `interp_wall`
+  (gs_draw.c) draws the patch part of the way between the two ticks', through the tick's matrix and the camera's
+  change for that part (sInterpDt), cut at the view's edges as the game cuts it (the GS shades a triangle
+  straight across the screen, so where its corners are decides the colours: left whole, the wall was brighter
+  towards the top). The tick's own wall triangles are taken out of that picture.
+- Patches come in a vertical blank before the list they belong to is shown, so they are kept in a ring and a
+  picture's are found by the view's matrix.
+- Two fighters at the same stretch: two patches in one surface, and in the game which one a pixel shows on top
+  falls to the last bit of depth, triangle by triangle. Here each patch is drawn a few depth steps in front of the
+  one before, and with in-between pictures on, the tick's REAL picture gets the wall drawn this way too
+  (`interp_wall_real`; BT3_INTERP_WALLGAME=1: the game's own). So with Smooth motion on, the wall's shade where
+  two patches overlap is not the original's (on Rocky Area up to 85 of 765 in a pixel, hard to see side by side);
+  with one fighter at the wall a handful of pixels differ; with Smooth motion off nothing is touched.
+- The test that was promised to the user: the patch drawn at the tick itself (BT3_INTERP_WALLTEST=1 with
+  BT3_INTERP_ONLY=1 and BT3_INTERP_T=1.0) against the real picture shown (BT3_INTERP_REALONLY=1): the same in
+  four frames of two stages (three identical, one with 2 pixels off). Checked by the user on screen.
+- A side finding: saving a picture every frame made `interp_cost` think the machine slow and the in-between
+  pictures stopped (captures of "in-between pictures" that were the real ones). BT3_INTERP_NOCAP=1 for captures.
+
+**A distant waterfall a camera's step to the side for one in-between picture in about 25** (found by the user,
+moving sideways; shown on a video of his screen, frame 47 of 100). The fall's water is a few textures shown in
+turn. A piece's kind has its texture in it, so in the tick the texture changed the fall was a kind that had not
+been there: nothing of it was found in the previous picture and all of it stayed where the tick has it.
+`interp_kinds_follow` gives the previous picture's pieces of a kind that is gone the name of the new kind that is
+drawn the same way but for the texture (only when there is exactly one such). Measured on his recording, 121
+in-between pictures with the camera moving sideways: the fall out of step with the rock in 4 before, in none
+after. Checked by the user on screen. Two wrong turns on the way, both from not having seen it: "the depth
+change" (his test with BT3_DEPTH_FRAC=1 seemed to say so; that switch breaks in-between pictures by itself) and
+"the stored depth's offset moves a far corner sideways" (corrected in `interp_reproject_with`, right in principle,
+no measurable effect).
+
+**Depth, third part.** With whole-number depth per pixel the fall's missing part was filled, but as a speckle that
+changed every picture while the camera moved: the rock's whole number, computed by the GPU, comes out one higher
+than the fall's on scattered pixels. What the game transforms itself now leads by two depth steps (`GS_Z_LEAD`,
+put() in gs_draw.c; not past the nearest depth). On the user's recording the lead changes about 24 pixels a
+frame of 917,504, nearly all at the fall. BT3_DEPTH_FRAC=1 turns the whole-number rule off, to compare (not
+with in-between pictures).
+
+Both renderers run with all of this (the user saw the same in each; an Nvidia card's OpenGL and an integrated
+GPU's Vulkan gave the same pictures windowless, 50 pixels apart at most).
+
+## A flat blue triangle across the picture after leaving the water, at 16:9 only (2026-10-11)
+
+Found by the user at Kame House ("a vertex explosion for two seconds"); not in PCSX2 (checked by him), not at 4:3
+here (checked on his recording), and in the game's own pictures, not the in-between ones.
+
+- A ripple ring on the water (`EftWaterRing`, src/battle/eft_e.c) grows by a share of itself every tick
+  (`sizeVel += sizeVel * sizeDamp`) and within two seconds its size is the largest number a float holds: the
+  quad `EftWater_DrawGroundQuad` hands to the clipper then has corners at 1.7e38 (seen in a trace of the
+  clipper's input: a five-cornered polygon with positions of 1e9 to 1e38 and "distances" to the planes that put
+  kept corners far outside them).
+- Cut off at the view's edges with such numbers, the result is where the rounding puts it. On the console and at
+  4:3 that is off the screen and the triangles are dropped (`EftWater_IsClipped` for all three corners). With
+  the side planes of a 16:9 view (`EftGfx_UpdateClipPlanes`, widened by Port_WideFactor) one corner is on the
+  screen and two behind the eye: a triangle from the ring's middle to the far ends of the GS's coordinates.
+- Under `#ifdef PORT`, a ring of 100,000 units or more (ten times a map) is not drawn. Checked on the recording:
+  the three frames that showed it are clean, the ring while small is drawn as before, a 4:3 frame is the same
+  pixel for pixel. Checked by the user on screen.
+- The first fault that comes from the widescreen setting meeting an effect that grows without limit; others of
+  the kind would look the same (a flat shape across the picture for a moment) and are found the same way: the
+  draw by BT3_GPU_CUT, its vertices by BT3_GPU_DUMP (a corner at x = 2303.94 or -1792 is the GS's coordinate
+  range), then the clipper's caller.
+
+## Online: each player's own camera type and screen shake (2026-10-11)
+
+Asked for by the user. A session starts from an empty save on both copies, so both sides of an online match had
+the option menu's defaults whatever each player had chosen.
+
+- The two options are save words 0x1694 and 0x1698 (`gOption->type` and `->value` in the option menu,
+  menu_x_c.c); `BattleSetup_DefaultOptions` copies them to both sides of the battle setup, from where they reach
+  each fighter (+0x49C; +0x4B8 `camShakeOn` = the second word is 0).
+- Each copy reads its player's own two words from his save file (as it does for the voice set: `own_options` beside
+  `own_voice_alt`, carried over the restart into a session in BT3_NET_OPTS) and sends them behind the name in the
+  greeting (the joiner) and in its answers (the host), with a mark. Both copies then set side 0 to the host's and
+  side 1 to the joiner's: the same on both, as it must be, the cameras being part of the game's state
+  (`Port_NetSideOptions`, called from BattleSetup_DefaultOptions under `#ifdef PORT`).
+- NET_VERSION is not raised. A copy of 0.1.25 or earlier neither sends nor reads the word; a new copy that gets
+  none uses none, so with an older copy both sides keep the defaults (the log says so).
+- Checked, two copies on one machine through the room-code lobby, saves made to differ (camera 1 shake 1 against
+  camera 2 shake 0): both log the same four values; with scripted input both reach a battle, log that it was set
+  up with them, and are at the same vertical blank with the same health at battle tick 400. Against the published
+  0.1.25 in either role: they connect and the new copy says the defaults are used. Not checked: what the camera
+  and the shake look like in the match (no picture was looked at), a match longer than that, Windows.
+- What is read is the save FILE: an option changed in the menu and not yet saved is not the one sent.
+
+## Ticking "V-sync" closed the game (0.1.25, the Vulkan renderer) (2026-10-11)
+
+Found by the user an hour after 0.1.25 was published; his backtrace ends in `Ui_DrawAgain`, in the Nvidia driver.
+The settings window is drawn inside a frame, after the swapchain's picture of that frame was acquired; the
+checkbox called `SDL_SetGPUSwapchainParameters` right there, and the window was then drawn onto a picture of a
+swapchain that was gone. `GsGpu_Vsync` now only notes the request; `frame_end` applies it at the start of the
+next frame, after `SDL_WaitForGPUIdle`. (The OpenGL renderer sets a swap interval, which is safe at any time.)
+The option had only been tried as a saved setting read at start; "ticking it while the game runs" was listed as
+not tested in the release notes and should have been tried before release. Checked by the user on screen (Nvidia,
+Vulkan): on and off, no crash.
+
+## Frame skipping: full speed with pictures left out, instead of slowing down (2026-10-11)
+
+Asked for by the user ("why does the game slow down instead of being choppy"). The game advances one step per
+picture and has no other clock; a machine that needs longer than a tick to show a picture ran the game slowly.
+
+- `skip_decide` (gs_draw.c), as each picture is finished: if the game is more than one vertical blank behind its
+  grid (`Port_PaceBehindUs`, plat_stub.c), the NEXT tick is not drawn. Its drawing is left out the way a re-run
+  frame's is (`GS_NO_PICTURE` = gPortResim or gsSkipFrame, in gs_core.c / gs_draw.c / gs_vu1.c: vertices are not
+  collected, vertex programs not run, nothing recorded), and `GsGpu_FrameEnd` shows nothing for it. The grid then
+  catches up by itself: a blank that is already due is not waited for (vblank_wait).
+- At most four ticks in a row, so something is shown at least every fifth; slower than that, the game slows down
+  as before. Not while the settings window is open, not with BT3_UNCAPPED or BT3_SHOT.
+- No in-between picture is made across a skipped tick (the previous tick's lists are forgotten).
+- Setting `frame_skip`, on by default: F1, Video, "Skip pictures instead of slowing down". BT3_FRAME_SKIP=0|1;
+  BT3_SKIP_FORCE=1 leaves out every other tick whatever the clock says (testing; what "choppy" looks like).
+- Measured on an integrated GPU at 8x in a stretch where a picture takes about 33 ms (a recorded session, 15
+  seconds): off, 29.9 vertical blanks a second, half speed, 30 pictures a second; on, 60.1 blanks a second, full
+  speed, 31.5 pictures a second. With every other tick forced out, the 31 pictures that are shown in a fight are
+  the same, pixel for pixel, as those ticks drawn normally. The regression replay passes.
+- It only helps where showing is what takes the time. Where computing the tick is too slow, nothing is gained.
+  Not checked: on a display by anyone, in an online match, with Smooth motion on, on Windows.
+- (Also: the "(F11)" beside "Full screen" had ended up beside "V-sync" in 0.1.25; put back.)
+
+## Quick match: queues by battle type (2026-10-11)
+
+Asked for by the user: "matchmaking where it searches for people queuing". Decided with him: five queues (single,
+team, DP battle of 10 / 15 / 20 DP), all without a time limit; the longest-waiting player first; connected as rooms
+with codes are (directly when the two can reach each other, through the relay when not), with a line in the window
+saying that a direct connection lets the other player see one's address.
+
+- **Service** (port/matchmaking/worker.js): `/v1/quick {v, name, addrs, queue, who}` joins the caller to the
+  oldest unjoined room of that queue and netcode version, or makes it a room there; `/v1/queues` counts who waits.
+  Two who search in the same moment both find nobody and both make a room: the one whose room came second (by
+  rowid) sees the first, gives its own up and joins. The room table has two more columns (`queue`, `who`); the
+  README there says how a Worker that runs is updated. Its tests (test.mjs, 11 new) pass under Node 24.
+- **Game**: `Match_Begin(3, ...)` in net_match.c (the thread goes on as a host or reports the peer as a joiner; a
+  room that runs out is given up and the search starts again, keeping its relay address), `Port_LobbyStartQuick`
+  in net.c (the lobby takes host or joiner from the service's answer), the tab "Quick match" in the online
+  screen (ui.cpp): the queues with how many search each, Search / Cancel. Whoever becomes the host uses its saved
+  rollback and input delay; the rules are the queue's. BT3_LOBBY=quick:<queue> for tests.
+- Checked on this machine with the Worker behind a local server and its test database (BT3_MATCH_URL): one copy
+  searches DP 15 and waits, a second searching the same queue eight seconds later is put with it, they connect
+  directly with rollback and both log "DP battle (15), time limit none". Against the Worker as deployed today
+  (not updated yet): rooms with codes work as before, a search says the service does not know quick match yet.
+- Not checked: the Worker on Cloudflare with its real database (the `rowid` tie-break and the two ALTER TABLE
+  lines among it), the window itself (nobody has looked at the tab), two players on two networks, the relay path
+  of a quick match, Windows.
+
+**Quick match: the same rollback and input delay for everyone** (the same day, before 0.1.27 was published). A quick
+match took the rollback and delay the host had saved on the Host tab, and who hosts is whoever searched first: a
+stranger's choices, unseen. Now fixed for quick matches: rollback of up to 8 frames, the input delay measured from
+the connection. Checked through the real service, two copies on one machine: both log "input delay 1 blanks,
+rollback of up to 8".
+
+**Quick match: a search ends after three minutes** (after 0.1.27; asked for by the user). The tab counts the time
+down, then says nobody was searching that queue and offers "Search again". It bounds what one search can ask of
+the service (about 60 requests) and replaces the open-ended wait, where a window left open asked for hours. Not
+seen on screen by me.
+
+**Quick match between two networks, seen once** (2026-10-11, the user, 0.1.27's code): while trying the search timer
+he was put with another player who was searching; the match "felt fine at 180 ping" (rollback of up to 8 frames,
+the measured input delay). Not known: whether that connection was direct or through the relay, and the delay chosen.
+
+**The log printed the other player's address** (asked by the user: "does the log leak ip?"). The copy that joins
+wrote "net: joining <address>:<port>" for every match, also when the address was the host's as the matchmaking
+service gave it (a room code, a quick match): a stranger's public address in a log that gets pasted into bug
+reports. In every release that has room codes, up to 0.1.27 (which one was the first was not looked up). Now the address is printed only when the player typed it (Join by
+address); otherwise the line says the host was found by the service. Checked: both logs of a room-code match
+between two copies hold no address at all. The crash report has none either (it never had). Not printed anywhere:
+the player's own address.
+
+## The matchmaking service can ask for a minimum release (2026-10-11)
+
+Asked for by the user ("only the newest version can play"). The game had no idea which release it is; now
+`port/src/port_release.h` says (129 = 0.1.29), **raised by hand in the commit a release is tagged on**, and
+net_match.c sends it as `rel` with a new room, a join and a search. The Worker refuses those from a game below its
+variable `MIN_RELEASE` (or that sends none: 0.1.28 and earlier) with the error "old", which a game of 0.1.29 or
+later turns into "This release is too old for online play through the matchmaking service. Get the newest
+release." Off unless the variable is set. What it does not do is in port/matchmaking/README.md: old copies can
+still meet by typed address, and a changed copy can claim any number. Checked: the Worker's tests (5 new), and
+that a game sending `rel` still makes and joins rooms on the Worker as deployed (which ignores it). Not checked:
+the refusal against the deployed Worker (it has no such variable yet), the message on screen.
+
+**"Update available. Online servers are unreachable until you update."** (the user's words; the same day). When
+the online screen opens the game asks the service once (`/v1/hello`) for the oldest release it lets in and the
+newest there is, and says so at the top of the screen: the line above with the two numbers when it is too old; a
+milder "Update available: release 0.1.NN" when a newer one exists (`LATEST_RELEASE`, optional) and it is still let
+in. A refused room, join or search answers with the same words. Checked against the Worker behind a local server
+with a minimum above this build: host, join and quick match all stop with that line. Not seen: the banner in the
+window. One request more per opening of the online screen; none while it is closed.
+
+## Joining a match reset the picture to 4:3 (2026-10-11)
+
+Reported to the user by a player. The shape of the picture (`sAspectMilli`, plat_stub.c) was an ordinary static of
+a file whose variables count as the game's state (make_state.py: PORT_STATE has plat_stub), so it was saved and
+put back with the game. An online session starts by going back to the state of the program's first vertical
+blank; a shape chosen in the settings window during that run went back to what it had been at start (4:3 on a
+first run, or whatever the settings file said then). The same at the session's end, and it sat in every rollback's
+state too. Now PORT_HOST, like the other things of plat_stub.c that are the player's and not the game's. Checked:
+before, the variable's address lies inside the ranges of the `.mem` list; after, outside; two copies still connect,
+reach a scripted battle and agree at tick 400; the regression replay passes. Not checked: on screen, by anyone.
+
+## The relay was off for everyone: a login was taken with every room (2026-10-11)
+
+A player with a VPN reported that quick match failed with "could not reach each other, directly or through the
+relay" while rooms with codes worked. My first reading (the VPN gives the one who joins no stable address) was
+wrong: he then said joining by code works too. A test that forced the relay showed the cause: the service
+answered "the day's relay logins are used up". The Worker handed a login out with every room, and since quick
+match every search that waits makes a room; the day's 500 were gone, and every pair that could not connect
+directly failed until midnight UTC. (My own tests of the day used some of them.)
+
+- **Now a login is asked for when a match needs it.** net_match.c: the host, once the other player is known, waits
+  four seconds for the lobby to connect (the lobby ends the search when it has); if not, it asks `/v1/relay`,
+  allocates on the match's socket (the lobby keeps off it meanwhile: `Match_SocketBusy`), adds `relay=` to the
+  room and raises `relayGen`, on which the lobby permits the other player's addresses again. The one who joined
+  asks the room every two seconds from the third on and takes the new address (`addrGen`). The room is kept until
+  the lobby is done. The knocking lasts 24 seconds instead of 20.
+- The Worker gives a game that sends `rel` >= 129 no login with its room; older games as before.
+- Checked against the Worker behind a local server (no relay key there): by code and by quick match, direct: the
+  two connect, `/v1/relay` is never asked, the room is left at once. With BT3_RELAY_ONLY: the host asks after the
+  direct ways stayed silent, is told why there is no relay, the one who joined asks the room eleven times, both
+  give up. The Worker's tests (7 new) pass. **Not checked: a relay address actually taken late and a match played
+  through it** (needs the Worker deployed with its key and logins left for the day).
+
+## Online matches at 120% speed (2026-10-11)
+
+Asked for by the user: "the whole match, that's the standard for competitive play".
+
+- **What it is here:** the vertical blanks' pace. `BLANK_NS` in plat_stub.c is 16.68 ms divided by
+  `Port_NetSpeedMilli()` / 1000 (gs/net.c: 1200 while a match is connected and the rules word has `RULE_FAST`, bit
+  12; else 1000). Every step of the game is computed as always, 72 of them a second instead of 60: nothing of the
+  game's state changes, so replays, rollback and the two copies' agreement are untouched. The in-between pictures'
+  timing, the frame-skip threshold and the automatic input delay take the blank's real length.
+- **Sound** goes with it: the game counts a stream's length in vertical blanks in a session, so streams and
+  effects are played a fifth faster (`SDL_SetAudioStreamFrequencyRatio` in snd_adx.c / snd_se.c), and higher.
+- **Both copies or neither.** The host's choice, sent with the rules. The one who joins says in its greeting that
+  it knows the pace (a capability word behind the options, `CAP_MARK | 1`); a host that hears none (0.1.28 and
+  earlier) takes the bit back before it answers, so the two never run at different paces.
+- **Where it is chosen:** every quick match is at 120%; the Host tab has "Game speed" (100% / 120%, setting
+  `net_speed`, 120% by default). BT3_NET_SPEED=120|100 for tests.
+- Checked with two copies connected by address, without a window: both log "game speed 120%", their blanks come
+  13.90 ms apart (16.68 at 100%), and with scripted input both are in the same battle with the same health at tick
+  400; with a 0.1.25 as the one who joins, the host logs 100% and both keep 16.68 ms. The regression replay
+  passes. Not checked: how it feels and sounds (nobody has played or heard it), a real match between two
+  networks, rollback's behaviour at a high ping with the shorter blank, Windows.
+
+## Four volume sliders (2026-10-11)
+
+Asked for: voices apart from the sound effects, and a slider for the stages' ambient sound. The game keeps these
+apart by itself, so the sliders follow its own grouping (snd_adx.c, snd_se.c):
+
+| Slider | Stream players (include/sys/adx.h) | Effect bank slots (src/sys/snd.c) |
+|---|---|---|
+| Music | 0, "BGM" | |
+| Sound effects | 2, 3 | 0 (common, loaded at boot), 2 (the battle's common bank), any other |
+| Voices | 4, 5 | 4, 5 (the two fighters' banks: battle_load.c loads `sndChara[0..1]` there) |
+| Stage sounds | 1, "MAP" (only stg_b.c plays there) | 3 (the stage's bank) |
+
+Settings `voices` and `stage_sounds`; a settings file from before has neither, and both then start at what
+`effects` is set to, so nobody's sound changes by updating. Streams follow a slider at once, a bank's sound with
+the next one that starts.
+
+Checked: it builds, the regression replay passes, and a replay with sound logging uses stream players 0, 1, 2, 4
+and 5, as the table says. Not checked: by ear, at all. In particular what the fighters' banks hold besides voices
+(a fighter's own effects would follow the Voices slider) and what a stage's bank holds was not looked at.
+
+## A fight's display in a wide picture: three layouts (2026-10-11)
+
+Setting `hud_layout` (F1, the UI tab: "HUD Style"; BT3_HUD=<n> for a test), `Port_HudLayout()`:
+
+- **0, at the screen's edges**: as since widescreen, the default.
+- **1, at the edges with long health bars**: pull request #28 (victor-g-lima), merged behind this setting. hud_b.c
+  draws the bar's frame and the bar in pieces and stretches a straight middle piece by half the extra width, so
+  the bars reach the timer as they do at 4:3; markers 0x15 / 0x16 (anchors 5 and 6) keep a piece wider than 480
+  pixels from being taken for a full-screen flash.
+- **2, in the middle, as in 4:3**: every part of the HUD is narrowed about the middle of the screen
+  (GsGpu_Draw: the pivot is 256 whatever side the part is marked with), which is the 4:3 arrangement as it is,
+  with the scene wider around it.
+
+Checked from screenshots of a recorded fight (offscreen): the three at 16:9, the long bars and the middle at 21:9,
+both sides, at full health. Not checked: a bar that is losing health (the moving mask over the longer bar),
+several bars in reserve, a team's portraits, split screen, Survival's counter, other aspect ratios.
+
+## The player's own game speed, outside online play (2026-10-11)
+
+"Game speed" on the Cheats tab: 50% to 200%, setting `game_speed`, `Port_GameSpeed()` in plat_stub.c. The same
+thing as an online match's 120%: the vertical blanks' pace and the pitch of the sound, nothing of the game's state.
+**An online match never reads it** (asked for by the user): `Port_SpeedMilli()` is the match's speed whenever a
+match is connected or a session runs, and the setting only otherwise.
+
+Checked without a window: with the setting at 150% the blanks come 11.1 ms apart offline; two connected copies that
+both have 150% in their settings run at 16.68 ms when the host chose 100% and at 13.9 ms when it chose 120%, and
+agree at tick 400. The regression replay passes. Not checked: the slider on screen, the sound by ear at any speed.
+
+## Sound at another game speed: stretched in time, not pitched (2026-10-12)
+
+Reported after 0.1.29: "audio is pitched at 120". The first version played everything faster by the speed, which
+is also higher. Now:
+
+- **Streams** (music, a stage's background, spoken lines; snd_adx.c `stretch_feed`): played at their own pitch
+  and shortened or lengthened in time, as emulators do at such speeds. Pieces of 40 ms, each faded over 8 ms into
+  the one before, each taken 32 ms * speed after the last and moved by up to 15 ms to where it continues the
+  previous piece best (the largest correlation). A stream still ends when the game, counting in vertical blanks,
+  expects it to.
+- **Effects and battle voices** (snd_se.c): at their own pitch and their own length. They are short, start when
+  the game starts them, and nothing waits for their end.
+
+BT3_SND_DUMP=<file> writes what the music player hands to the sound device. With it, at 120% and at 70%: two
+thirds of the audible windows of the output are exact copies of the sound at 100% (the rest are the fades), so the
+pitch is the original's, and the output moves through the original 1.200 and 0.701 samples per sample. Not
+checked: by ear. A time stretch can be heard on some material (a faint flutter on long held notes, doubled
+attacks on drums); how this one sounds on the game's music nobody has listened to yet.
+
+## The online match speed is a number (2026-10-12)
+
+Players reported 120% here as "a bit faster than Dolphin": the competitive standard is 120% of the PAL version
+there, which is 60 pictures a second, where 120% of this (USA) version is 72. How fast the PAL game moves per
+picture is not known (the USA code has no PAL handling to read it from; a search found one forum recollection
+that the series runs "at the same speed with lower FPS" on PAL and nothing measured), so the right number on this
+version's scale is somewhere from 100 to 120 and has to be found by the players.
+
+So the speed is now a percentage in the rules word (bits 16..23; bit 12 stays "120%" for 0.1.29), the Host tab has
+a slider from 100% to 150% (setting `net_speed_percent`), and `NET_SPEED_STANDARD` in net.c is the one number a
+quick match runs at and the slider starts from: 120 until the players name another. Capability word: | 2 = knows
+the number.
+
+Checked with connected pairs, without a window, against the published 0.1.29 build: new and new at 110% both run
+blanks 15.16 ms apart; a new host at 110% with a 0.1.29 joining: both 100%; a new host at 120% with a 0.1.29:
+both 120%; a 0.1.29 hosting at 120% with a new one joining: both 120%. The regression replay passes.
+
+## "Music follows game speed" (2026-10-12)
+
+Audio tab, setting `music_follows_speed`, off by default (`gPortMusicFollows`, snd_adx.c). Off: a looping stream
+on the music or the stage player is played as it is at any game speed; the game never waits for a loop's end, so
+nothing has to fit. On: it is stretched with the game, as in 0.1.30. A stream that plays once (a jingle, a spoken
+line) is always stretched: the game counts its length in vertical blanks.
+
+Checked from the music player's output at a game speed of 120% (BT3_SND_DUMP, the menu's looping music): off, 99%
+of it is an exact copy of the original, advancing 1.000 per sample; on, 70% and 1.201. Not checked: by ear; the
+checkbox on screen.
+
+## The online name is remembered (2026-10-12)
+
+The settings file takes text besides numbers: `name="text"` lines, written after the numbers
+(`Port_SettingText` / `Port_SettingTextSave`, plat_settings.c; a release from before reads past them, and drops
+them when it writes the file). The first one is `net_name`: the "Player name" of the online screen, read when the
+screen is first built and saved when the field is left after an edit and when a match is started. Checked: a
+settings file with `net_name="Goku 99"` shows that name in the field (offscreen screenshot). Not checked on
+screen: that typing a name writes it.
+
+## The online names: with the HUD, and where (2026-10-12)
+
+- **Only while the HUD is drawn.** The names were shown whenever a fight existed, so also over the intro.
+  GsGpu_Draw notes the frame in which a visible piece of a side panel was drawn (a 2D piece between the HUD's
+  left / right markers with a colour that is not fully transparent); `GsDraw_HudShown()` is true within 6 frames
+  of that (frame skipping leaves frames out), and ui.cpp draws the names only then. BT3_HUD_LOG=1 prints the
+  frame the HUD starts at. In a recorded fight: no HUD at the versus screen or in the fade, the log says frame
+  2257, and the screenshot of 2262 has the HUD. Not seen: an online intro itself.
+- **106 HUD pixels in from the outer edge** (was 62 picture pixels, which sat on the panel of a team's waiting
+  fighters), narrowed and placed like the HUD in a wide picture, including the "in the middle" style. Not seen on
+  screen yet.
+
+## The competitive standard is 114% (2026-10-12)
+
+The players tried the sliders of 0.1.30 and settled on 114% as what "120% on PAL in Dolphin" is on this version
+(told by the maintainer). `NET_SPEED_STANDARD` is 114: what every quick match runs at and what the Host tab's
+slider starts from (its setting has a new name, `net_speed_host`, so that a 120 saved by 0.1.30 does not stay).
+Checked with connected pairs, without a window: a host at 114% with the new build or the published 0.1.30
+joining: both run blanks 14.63 ms apart; with 0.1.29 joining: both 100%. A quick match hosted by a 0.1.30 still
+runs at its 120% on both sides, so the standard is only uniform once the service asks for this release.
+
+## The depth fix of 0.1.25 cost a quarter of the frame rate (2026-10-12)
+
+Reported: "huge performance drop from 0.1.24 compared to 0.1.30". Measured with the published builds on an
+integrated chip (offscreen, uncapped, 2x, 16:9, the same recorded fight): 0.1.24 draws 112 pictures a second,
+0.1.30 draws 82. Taking the `gl_FragDepth` line out of gs.frag gives 112 again: a fragment shader that writes
+depth keeps the chip from leaving out hidden pixels before it runs the shader, `layout(depth_less)` or not.
+
+Which draws pay: the GS's own primitives (2D, effects, the full-screen passes: 82 -> 108 with only those spared),
+not the vertex programs' (82 -> 84), which are the ones the fix was for.
+
+**The fix:** a second fragment shader, gs.frag compiled with NO_FRAG_DEPTH (the build writes gsnz.frag; key bit
+23; `sFsNz` in gs_gpu.c, `sMainProg[4..7]` in gs_gl.c). pipeline_get gives it to every draw that **does not write
+depth and tests with "greater or equal" or not at all**. For those nothing changes: what is in the depth buffer
+was written through the full shader, so it is whole numbers, and z >= N is floor(z) >= N for a whole N. Draws
+that write depth, and the few that test with "greater", keep the full shader. BT3_NZ=0 turns the rule off.
+
+Result: 103 pictures a second (82 before, 112 in 0.1.24). The pictures are the same bit for bit with the rule on
+and off: three frames of a fight, three of the waterfall recording (the scene the depth fix was made for), on the
+integrated chip's Vulkan, and one of the waterfall on an Nvidia card's OpenGL. Not done: the remaining 8%, which
+is the draws that do write depth (sparing all of the GS's own primitives gives 110, but those then store
+fractions, which is the state the waterfall fault came from); a run on a display; Windows.

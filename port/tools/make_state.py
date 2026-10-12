@@ -72,8 +72,18 @@ def main():
             merged[-1][1] = max(merged[-1][1], b)
         else:
             merged.append([a, b])
+    # Which program the list belongs to: where two of its variables lie (lines "0 <address>" and "1 <address>").
+    # state.c compares them with its own. A list left over from another release next to a new program (seen on
+    # Windows: only the .exe was replaced) named addresses that are code in the new one, and the first restored
+    # state was written over it.
+    marks = []
+    for k, name in enumerate(("gPortResim", "gPortVBlanks")):
+        m = re.search(r"^\s+0x([0-9a-fA-F]+)\s+" + name + r"\s*$", text, re.M)
+        if m is None:
+            sys.exit(f"make_state: {name} is not in the map")
+        marks.append(f"{k:x} {int(m.group(1), 16):x}\n")
     path = pathlib.Path(str(EXE) + ".mem")
-    path.write_text("".join(f"{a:x} {b - a:x}\n" for a, b in merged))
+    path.write_text("".join(marks) + "".join(f"{a:x} {b - a:x}\n" for a, b in merged))
     print(f"{path.name}: {len(merged)} ranges of game variables, {sum(b - a for a, b in merged):,} bytes")
 
 if __name__ == "__main__":

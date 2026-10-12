@@ -28,6 +28,12 @@ void Port_NetOptions(int rollback, int delay) { (void)rollback; (void)delay; }
 void Port_NetNameSet(const char *name) { (void)name; }
 void Port_NetRulesSet(int type, int dp, int time) { (void)type; (void)dp; (void)time; }
 
+/* net.c outside a session: the game's own speed (100%, plat_stub.c then uses the player's own game speed) */
+int Port_NetSpeedMilli(void) { return 1000; }
+
+/* net.c outside a match: no per-side camera type and screen shake (each side keeps its own save's, as before) */
+int Port_NetSideOptions(int *camera, int *shake) { (void)camera; (void)shake; return 0; }
+
 /* net.c with no rules set (sRules 0): single battle, no DP limit, time limit setting 0 */
 void Port_NetRules(int *type, int *dp, int *time) { *type = 0; *dp = 0; *time = 0; }
 

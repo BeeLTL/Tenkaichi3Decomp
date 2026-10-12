@@ -235,6 +235,10 @@ static char *translate(const char *src, int is_vertex) {
     while (*p) {
         if (!strncmp(p, "#version 450", 12)) { PUSH(GLSL_HEADER); p += 12; continue; }
         if (!strncmp(p, "gl_VertexIndex", 14)) { PUSH("gl_VertexID"); p += 14; continue; }
+        if (!strncmp(p, "layout(depth_less)", 18)) { /* (GL 4.2's; without it gl_FragDepth is simply written) */
+            while (*p && *p != '\n') { p++; }
+            continue;
+        }
         if (!strncmp(p, "layout(set", 10)) {
             const char *e = strchr(p, ')');
             if (e) {
@@ -387,7 +391,8 @@ static GLuint make_present_program(void) {
 /* ---- state -------------------------------------------------------------------------------------- */
 static SDL_Window *sWindow;
 static SDL_GLContext sCtx;
-static GLuint sMainProg[4]; /* gs.vert / vu0 / vu4 / vu6 + gs.frag */
+/* [0]: gs.frag, [1]: gsnz.frag (gs.frag without its depth output, key bit 23); each after gs.vert / vu0 / vu4 / vu6 */
+static GLuint sMainProg[2][4];
 static GLuint sOutlineProg, sKeyProg, sDclutProg, sPresentProg;
 static GLuint sVaoGs, sVaoVu, sVboGs, sVboVu, sIboVu;
 static GLuint sSamplers[GS_SAMPLER_COUNT]; /* indexed by GS_SAMPLER_* flags */
@@ -603,7 +608,7 @@ static void set_pipe(int pipe) {
     sCurPipe = pipe;
     p = &sPipes[pipe];
     {
-        GLuint prog = p->s.tablePass ? sDclutProg : sMainProg[p->s.vertices];
+        GLuint prog = p->s.tablePass ? sDclutProg : sMainProg[p->s.noFragDepth][p->s.vertices];
         if (sCurProgram != prog) { sCurProgram = prog; glUseProgram(prog); }
     }
     apply_blend(p->s.blend);
@@ -695,6 +700,12 @@ static void bind_target(int i, int clear) {
     }
 }
 
+void GsGl_Vsync(int on) { /* the settings window's "V-sync" */
+    if (sCtx != NULL) {
+        SDL_GL_SetSwapInterval(on != 0);
+    }
+}
+
 /* ---- init --------------------------------------------------------------------------------------- */
 static int gl_init(void) {
     static const uint32_t white = 0xFFFFFFFFu;
@@ -720,7 +731,7 @@ static int gl_init(void) {
         fprintf(stderr, "bt3: gl: no GL 3.3 core context: %s\n", SDL_GetError());
         return 0;
     }
-    SDL_GL_SetSwapInterval(0);
+    SDL_GL_SetSwapInterval(Port_Setting("vsync", 0) != 0);
     if (getenv("BT3_GL_TRACE") != NULL) { fprintf(stderr, "gl: current, loading the functions\n"); }
     if (!load_gl()) { return 0; }
     fprintf(stderr, "bt3: GL renderer: %s (%s)\n", (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
@@ -751,10 +762,14 @@ static int gl_init(void) {
 #endif
     if (!sHasIndexed) { fprintf(stderr, "bt3: gl: no per-attachment blend/mask (GL 3.0 indexed): the aux byte may be wrong\n"); }
 
-    sMainProg[0] = make_program(kGsVertGlsl, kGsFragGlsl, "gs", sGsSamplers, 2);
-    sMainProg[1] = make_program(kVu0VertGlsl, kGsFragGlsl, "vu0", sGsSamplers, 2);
-    sMainProg[2] = make_program(kVu4VertGlsl, kGsFragGlsl, "vu4", sGsSamplers, 2);
-    sMainProg[3] = make_program(kVu6VertGlsl, kGsFragGlsl, "vu6", sGsSamplers, 2);
+    sMainProg[0][GS_VERTS_GS] = make_program(kGsVertGlsl, kGsFragGlsl, "gs", sGsSamplers, 2);
+    sMainProg[0][GS_VERTS_PROGRAM0] = make_program(kVu0VertGlsl, kGsFragGlsl, "vu0", sGsSamplers, 2);
+    sMainProg[0][GS_VERTS_PROGRAM4] = make_program(kVu4VertGlsl, kGsFragGlsl, "vu4", sGsSamplers, 2);
+    sMainProg[0][GS_VERTS_PROGRAM6] = make_program(kVu6VertGlsl, kGsFragGlsl, "vu6", sGsSamplers, 2);
+    sMainProg[1][GS_VERTS_GS] = make_program(kGsVertGlsl, kGsnzFragGlsl, "gs nz", sGsSamplers, 2);
+    sMainProg[1][GS_VERTS_PROGRAM0] = make_program(kVu0VertGlsl, kGsnzFragGlsl, "vu0 nz", sGsSamplers, 2);
+    sMainProg[1][GS_VERTS_PROGRAM4] = make_program(kVu4VertGlsl, kGsnzFragGlsl, "vu4 nz", sGsSamplers, 2);
+    sMainProg[1][GS_VERTS_PROGRAM6] = make_program(kVu6VertGlsl, kGsnzFragGlsl, "vu6 nz", sGsSamplers, 2);
     sOutlineProg = make_program(kFxVertGlsl, kOutlineFragGlsl, "outline", sOneSampler, 1);
     sKeyProg = make_program(kFxVertGlsl, kAlphakeyFragGlsl, "alphakey", sOneSampler, 1);
     sDclutProg = make_program(kFxVertGlsl, kDclutFragGlsl, "dclut", sDclutSamplers, 3);
@@ -794,7 +809,7 @@ static int gl_init(void) {
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, sUboU);
     glGenBuffers(1, &sUboParams);
     glBindBuffer(GL_UNIFORM_BUFFER, sUboParams);
-    glBufferData(GL_UNIFORM_BUFFER, 64, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_UNIFORM_BUFFER, 80, NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 1, sUboParams);
 
     for (i = 0; i < GS_SAMPLER_COUNT; i++) {
@@ -846,7 +861,7 @@ void GsGl_StripTextureFree(unsigned id) {
 static void frame_end(void) {
     int cur = -1, best = -1, i;
     uint32_t n;
-    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } fu, lastFu;
+    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; float extra[4]; } fu, lastFu;
     int haveFu = 0;
 
     GsDraw_PollEvents();
@@ -1006,6 +1021,7 @@ static void frame_end(void) {
         memcpy(fu.misc, d->misc, sizeof(fu.misc));
         memcpy(fu.rect, d->rect, sizeof(fu.rect));
         memcpy(fu.orig, d->orig, sizeof(fu.orig));
+        fu.extra[0] = GsDraw_DepthMax(d);
         if (!haveFu || memcmp(&fu, &lastFu, sizeof(fu)) != 0) {
             set_params(&fu, sizeof(fu));
             memcpy(&lastFu, &fu, sizeof(fu));

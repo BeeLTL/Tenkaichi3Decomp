@@ -41,6 +41,11 @@ const PANEL = [
       help: 'Wider than 4:3 shows more of the fight to the sides. Menus are stretched.' },
     { key: 'smooth_2d', label: '2D filtering', type: 'select', options: [[0, 'Sharp (console)'], [1, 'Smooth']],
       help: 'Above 1×: sharp keeps each PlayStation 2 pixel a block, smooth samples it per screen pixel.' },
+    { key: 'hud_layout', label: 'HUD style', type: 'select',
+      options: [[0, "At the screen's edges"], [1, 'At the edges, long health bars'], [2, 'In the middle, as in 4:3']],
+      help: "Where a fight's health bars and gauges sit in a picture wider than 4:3." },
+    { key: 'frame_skip', label: 'Skip pictures instead of slowing down', type: 'checkbox',
+      help: 'When this machine cannot show a picture in time, the game stays at full speed and leaves pictures out instead (choppier, not slower).' },
     { key: 'texture_pack', label: 'Texture pack', type: 'checkbox', when: (s) => s.get('texture_pack_count') > 0,
       help: 'Replacement textures found next to the game.' },
   ] },
@@ -54,8 +59,14 @@ const PANEL = [
   ] },
   { tab: 'Audio', items: [
     { key: 'music', label: 'Music', type: 'range', min: 0, max: 200, unit: '%' },
-    { key: 'effects', label: 'Sound effects and voices', type: 'range', min: 0, max: 200, unit: '%',
-      help: 'Takes effect with the next sound that starts.' },
+    { key: 'effects', label: 'Sound effects', type: 'range', min: 0, max: 200, unit: '%',
+      help: 'Hits, blasts, menu sounds. Takes effect with the next sound that starts.' },
+    { key: 'voices', label: 'Voices', type: 'range', min: 0, max: 200, unit: '%',
+      help: "The fighters' voices in a fight and the spoken lines outside one." },
+    { key: 'stage_sounds', label: 'Stage sounds', type: 'range', min: 0, max: 200, unit: '%',
+      help: "A stage's background sound (wind, water) and its own effects." },
+    { key: 'music_follows_speed', label: 'Music follows game speed', type: 'checkbox',
+      help: 'At a game speed other than 100% (Extras): off, the music plays as it is; on, it is sped up or slowed down with the game, at its own pitch.' },
   ] },
   { tab: 'Controls', items: [
     { key: 'clash_square', label: 'Clashes: Square counts as a direction', type: 'checkbox',
@@ -64,7 +75,11 @@ const PANEL = [
       options: [[4, '1'], [6, '1.5'], [7, '1.75'], [8, '2']] },
     { bindings: true },
   ] },
-  { tab: 'Extras', items: [{ unlock: true }] },
+  { tab: 'Extras', items: [
+    { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
+      help: "How fast the game runs (the sound keeps its pitch). 100% is the game's own; 114% is what competitive play uses." },
+    { unlock: true },
+  ] },
 ];
 
 class Bt3Settings {
@@ -202,6 +217,11 @@ class Bt3Settings {
       input.addEventListener('input', () => { out.textContent = `${input.value}${item.unit}`; });
       input.addEventListener('change', () => this.set(item.key, Number(input.value)));
       row.append(el('label', { for: id }, item.label), input, out);
+      if (item.reset !== undefined) {
+        const reset = el('button', { type: 'button', class: 'secondary' }, `Reset to ${item.reset}${item.unit}`);
+        reset.addEventListener('click', () => this.set(item.key, item.reset));
+        row.appendChild(reset);
+      }
       this.refreshers.push(() => { out.textContent = `${input.value}${item.unit}`; });
     }
     if (item.help) {

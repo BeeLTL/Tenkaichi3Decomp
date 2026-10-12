@@ -122,7 +122,13 @@ def main():
     gen = ROOT / "port/build/gen/gs"
     gen.mkdir(parents=True, exist_ok=True)
     arrays = []
-    for src in sorted((ROOT / "port/src/gs/shaders").glob("*.*")):  # gs.vert -> kGsVertSpv, outline.frag -> kOutlineFragSpv
+    # gsnz.frag: gs.frag without its depth output (NO_FRAG_DEPTH), for the draws that do not need it
+    nz = gen / "gsnz.frag"
+    nz_text = (ROOT / "port/src/gs/shaders/gs.frag").read_text().replace("\n", "\n#define NO_FRAG_DEPTH\n", 1)
+    if not nz.exists() or nz.read_text() != nz_text:
+        nz.write_text(nz_text)
+    shader_sources = sorted((ROOT / "port/src/gs/shaders").glob("*.*")) + [nz]
+    for src in shader_sources:  # gs.vert -> kGsVertSpv, outline.frag -> kOutlineFragSpv
         stage = src.suffix[1:]
         name = "k" + src.stem.capitalize() + stage.capitalize() + "Spv"
         spv = gen / (src.name + ".spv")
@@ -139,7 +145,7 @@ def main():
         arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in spv.read_bytes()) + "};\n")
     # The GL back end (gs_gl.c) compiles the GLSL at run time (it translates Vulkan GLSL to GL 3.3 the way
     # port/tools/glprobe.c proved), so the sources are embedded here too, NUL-terminated.
-    for src in sorted((ROOT / "port/src/gs/shaders").glob("*")):
+    for src in shader_sources:
         if src.suffix not in (".vert", ".frag"):
             continue
         stage = src.suffix[1:]

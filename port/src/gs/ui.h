@@ -12,10 +12,13 @@ typedef struct PortVideo {
     int fullscreen;
     int fxOff;       /* bits: 1 outline, 2 see-through tint, 4 depth tint, 8 glare and glow, 16 distance blur, 32 movement blur */
     int glow;        /* percent */
-    int music, effects; /* volumes, percent */
+    int music, effects, voices, stage; /* volumes, percent */
     int display;     /* 0 = the desktop chooses, n = the n-th display; used at the next start */
     int texPack;     /* 1 = the texture pack's replacements are used */
     int texPackCount; /* read only: replacement textures found in the textures folder */
+    int vsync;       /* 1 = a picture waits for the display's refresh (no tearing where the driver has no other way) */
+    int frameSkip;   /* 1 = a tick's picture is left out when the machine is behind, instead of the game slowing down */
+    int hudLayout;   /* a fight's HUD in a wide picture: 0 at the edges, 1 at the edges with long health bars, 2 in the middle as in 4:3 */
     int smooth2d;    /* "2D filtering": 0 sharp (a PS2 pixel is a block), 1 smooth (sampled per output pixel) */
 } PortVideo;
 
@@ -47,6 +50,7 @@ int *PortInput_PadSlot(int player);    /* which connected controller: -1 none, 0
 int *PortInput_OverlayKey(void);       /* the key that opens and closes the settings window (scancode, 0 = none) */
 int *PortInput_OverlayPad(void);       /* the controller button that does (-1 = none; START + SELECT always do) */
 int PortInput_Hotkey(const SDL_Event *ev); /* 1 = the event opens or closes the settings window */
+void PortInput_Swallow(void);           /* the controller buttons held now are not the game's until they are let go */
 void PortInput_ResetDefaults(int player);
 void PortInput_Save(void);
 extern int gPortOverlayOpen;   /* the settings window is open: neither keyboard nor controller reaches the game */
@@ -56,7 +60,13 @@ extern int gPortInputCapture;  /* it is waiting for a key or button to bind: not
 int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context); /* device: the SDL GPU back end; NULL and a GL context: the OpenGL one */
 void Ui_DrawGL(void); /* the OpenGL back end: draws this frame's window with the context current */
 int Ui_Event(const SDL_Event *ev); /* 1 = the window used the event */
+int GsDraw_FrameSkip(void);       /* gs_draw.c */
+void GsDraw_FrameSkipSet(int on);
+void GsGpu_Vsync(int on); /* gs_gpu.c */
+void GsGl_Vsync(int on);  /* gs_gl.c */
+int Port_Setting(const char *name, int def); /* plat_settings.c */
 void Ui_Toggle(void);
+int Ui_QuitAsk(void); /* Esc outside the window: asks before the game closes. 0 = there is no window to ask in */
 void Ui_Draw(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target);      /* builds and draws this frame's window */
 void Ui_DrawAgain(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target); /* the same picture onto another texture */
 

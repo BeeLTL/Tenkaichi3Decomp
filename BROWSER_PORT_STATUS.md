@@ -437,6 +437,66 @@ calls glGetError every frame, a GPU sync: don't compare GL timings taken with it
 **Not implemented**: native pass 2 (alpha key) is no longer recorded; if it ever were, it is reported, not drawn. (The
 settings window no longer depends on the renderer: see "Settings panel in the page".)
 
+### Upstream 0.1.31 integrated (2026-10-12) — verified
+**Upstream commit**: `fff151eb989ecaa5a0aaeb637984e33e07ef3ad9` (z3xox/Tenkaichi3Decomp `main`, "Release 0.1.31"): 39
+commits on top of the previous base `80e0dd4` (0.1.25 to 0.1.31). **Strategy**: a merge of `origin/main` into
+`browser-port` (no rebase, no force-push; our 38 commits kept as they were). Backup of the branch before the merge:
+`browser-port-pre-0.1.31`.
+
+**What upstream changed** (36 files): online play (quick match, match speed, names), the settings window (UI tab "HUD
+Style", V-sync, frame skipping, voice and stage-sound volumes, "music follows game speed", a game speed of one's own,
+Esc asks before closing), audio (streams keep their pitch at another speed), the renderer (depth as whole numbers per
+pixel: `gs.frag` writes `gl_FragDepth`, the vertex programs hand over whole-number depth; a variant without the depth
+output, `gsnz.frag`, key bit 23; Params grew by `extra`; frame skipping; in-between-picture and water-ring fixes), the
+HUD in a wide picture (`hud_b.c`), and its native build (`undefined.py` generates `gsnz.frag`). No removed files; one
+added (`port_release.h`). No game-data or build-dependency change.
+
+**Conflicts and how they were resolved** (4 files):
+| file | resolution |
+|---|---|
+| `shaders/gs.frag` | both: upstream's depth output and our SEPARATE_SAMPLERS block |
+| `plat_stub.c` | upstream's `BLANK_NS` (the game speed's vertical blank) with our browser yield (`emscripten_sleep(0)`) |
+| `gs_draw.c` (`pipeline_get`) | our shared encoder (`GsPipeState`), with upstream's bit-23 rule moved into `gs_pipekey.c` as `GsPipeState_FragDepthRedundant` (+ `noFragDepth` in `GsPipeState`, encoded and decoded); `BT3_NZ` kept |
+| `gs_gl.c` | our decoded `GsPipeState` and shared event loop; upstream's programs, Params size, depth-qualifier stripping and V-sync kept; its 8 programs as `sMainProg[variant][vertex source]` |
+
+**Adaptations of the browser port** (Vulkan untouched: `gs_gpu.c` and `undefined.py` are byte-identical to upstream):
+- `GsDraw_PollEvents` (the shared event loop) takes upstream's "Esc asks first" (`Ui_QuitAsk`); `GsDraw_DepthMax`
+  (gs_draw.c) is the one place of the Params `extra.x` formula for GL and WebGPU (Vulkan keeps its own copy).
+- Shaders: `wasm_shaders.py` makes `gsnz.frag` (variants table, the same rule as `undefined.py`; the GLSL table of
+  `wasm_build.py` uses it). naga 30.0.1 does not accept `layout(depth_less)` (conservative depth, absent from WGSL):
+  `gs.frag` skips that declaration under `NO_DEPTH_QUALIFIER`, which only the WebGPU build defines, and writes the
+  built-in. 11 WGSL shaders, all pass Chrome's compiler.
+- WebGPU: Params 80 bytes with `extra`, the `gsnz` module for keys with bit 23.
+- Functions upstream added that the browser build lacked (the link had made aborting stubs of them; one,
+  `Port_NetSideOptions`, runs at every battle load): `Port_NetSpeedMilli` / `Port_NetSideOptions` in `net_off.c`
+  (net.c's values outside a session), `Ui_QuitAsk` (a notice: a tab cannot be quit from the game) and `GsGpu_Vsync`
+  (reports that a browser has no V-sync setting) in `web_ui.c`. Stubs back to the 103 of before.
+- Settings panel: voices and stage-sound volumes, music follows game speed, HUD style, frame skipping, game speed
+  50-200 % with a reset. Not offered: V-sync (a browser shows pictures at the display's refresh; SDL's swap interval
+  only changes the page's timer mode), the online screen's new parts (online play is not in the browser build).
+
+**Build**: Emscripten 6.0.12, naga 30.0.1, SDL3 port 3.4.2, Dawn v20260423.175430 (all unchanged). Port 61/61, the 5
+changed game files recompiled, link OK, 103 stubs, 0 signature mismatches.
+
+**Regression** (Chrome 154, RTX 5070 Ti; references from before the merge):
+| test | result |
+|---|---|
+| pipeline key (`tests/pipekey`, now with upstream 0.1.31's encoding and BT3_NZ on / off) | PASS, 19 906 560 combinations |
+| WGSL (`tests/wgsl/check.js`) | PASS, 11 shaders |
+| fight trace, demo battle, WebGL 2 and WebGPU | `8ad198bf58dbed33` on both: unchanged (upstream did not change the demo's fight) |
+| demo battle screenshots, WebGL 2 vs before | 0/12 identical, 0.01-0.23 % of pixels: upstream's whole-number depth. **With `BT3_DEPTH_FRAC=1`** (upstream's switch back to depth with fractions): **12/12 identical** — every difference is that change |
+| demo battle, WebGPU with `BT3_DEPTH_FRAC=1` vs before | 12/12 identical, 0 device errors |
+| demo battle, WebGPU vs WebGL 2 (new depth), hardware | 0.19-1.40 %, the same driver pattern as before the merge (D3D11 vs D3D12) |
+| the same on SwiftShader (both APIs), frames 300-750 | 0.008-0.012 %, every one by 1 level |
+| boot (logos, movie, title), WebGL 2 and WebGPU vs before | 12/12 identical each |
+| page: launches, both renderers selectable (panel switch to WebGPU and back), new settings change the engine | verified in the browser pane: game speed 100 / 114 / 150 % measured 100 / 114 / 149 %; with frame skipping off at 150 % the game slows to 115 % (the pane draws 35 pictures a second) — both settings act as upstream intends |
+Cost of the new depth on WebGL 2 (demo, work per frame): 12.0 ms with `BT3_DEPTH_FRAC=1`, 14.1 ms without; WebGPU
+7.4 ms (one 88 ms frame in the run).
+
+**Not verified**: the native builds (no native toolchain here; their sources are upstream's except our earlier,
+behaviour-preserving shared-layer changes), a physical controller, the HUD styles' look in a wide picture (the setting
+reaches the engine; the demo is 4:3).
+
 ### Settings panel in the page; no Dear ImGui in the browser build (2026-10-11) — verified
 The browser build compiles no C++: `gs/ui.cpp` and Dear ImGui are left out (`wasm_build.py`); `port/src/web/web_ui.c`
 is the engine's side of `ui.h` there, and the settings are an HTML panel beside the game (`port/web/settings.js`). The
@@ -587,6 +647,7 @@ with WebGL 2), browser console and device validation errors.
 - 2026-10-11 (8): WebGPU back end: init (bf2196f), blit shader (122dd4e), shared screenshot writer (7a251db), bench
   --chrome-flags (25a1aab), the back end itself (c6a8aca); compared with WebGL 2 and measured (above).
 - 2026-10-11 (9): settings panel in the page, no ImGui in the browser build. Commits 65f1981, e36c449, 1fda3f3.
+- 2026-10-12 (10): upstream 0.1.31 (`fff151e`) merged into browser-port and the browser port adapted (above).
 
 ## 6. Next milestone
 

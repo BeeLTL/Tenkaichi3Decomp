@@ -50,8 +50,9 @@ static float se_gain(void) {
     }
     return g;
 }
-extern int gPortSePercent; /* the settings overlay's volume (snd_adx.c); takes effect with the next sound */
-#define SE_GAIN (se_gain() * (float)gPortSePercent / 100.0f)
+/* The settings overlay's volumes (snd_adx.c), by bank slot; they take effect with the next sound. */
+extern int gPortSePercent, gPortVoicePercent, gPortStagePercent;
+#define SE_GAIN(slot) (se_gain() * (float)((slot) == 3 ? gPortStagePercent : (slot) == 4 || (slot) == 5 ? gPortVoicePercent : gPortSePercent) / 100.0f)
 
 typedef struct Bank {
     int set;
@@ -294,8 +295,8 @@ static void play(int mask, int id, int volume, int pan, int pitch, int handle) {
     v->frac = 0.0;
     v->fade = 1.0f;
     theta = (sMono ? 0.5 : (double)pan / 127.0) * 1.5707963267948966;
-    v->gl = (float)(cos(theta) * 1.41421356) * ((float)volume / 127.0f) * sBanks[slot].volume * SE_GAIN;
-    v->gr = (float)(sin(theta) * 1.41421356) * ((float)volume / 127.0f) * sBanks[slot].volume * SE_GAIN;
+    v->gl = (float)(cos(theta) * 1.41421356) * ((float)volume / 127.0f) * sBanks[slot].volume * SE_GAIN(slot);
+    v->gr = (float)(sin(theta) * 1.41421356) * ((float)volume / 127.0f) * sBanks[slot].volume * SE_GAIN(slot);
     v->on = 1;
     if (getenv("BT3_SND_VERBOSE") != NULL) {
         fprintf(stderr, "se: play bank %d effect %d: %u Hz, volume %d, pan %d, pitch %d, handle %d\n", slot, id, rate, volume, pan, pitch, handle);
