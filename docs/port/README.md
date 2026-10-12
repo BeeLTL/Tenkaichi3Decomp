@@ -2035,3 +2035,15 @@ to the game (where `textures` goes) with a `trim.png` and / or a `fill.png` take
 set; either file alone replaces only its piece. Any size: the border is drawn as high as the picture and at its own
 width-to-height proportion, the panel is stretched. They are read once, when bars are first drawn, and the log says
 `bt3: side bars: bars/trim.png, W x H`. Checked offscreen at 16:9 with a made-up pair.
+
+## The model viewer is shown wide (2026-10-12)
+
+The character reference's model viewer (`ChrView`, battle code run from the menu screen `CharRef_Run` while its
+state is `CHARREF_ST_VIEW`) is a 3D scene, but it ran in menu mode, where the projection is the 4:3 one and the
+page is stretched to the width: the model and the arena came out a third too wide at 16:9 (seen by the user).
+`CharRef_Run` now calls `Port_MenuScene3D(state == VIEW)` every frame (headless.c): while it is on, the menu mode
+is off, so `Port_WideFactor` gives the wide projection (the view's matrices follow it within the frame, see
+`View_UpdateMatrices`) and the renderer treats 2D as in a fight. With "Menus in 4:3" the viewer fills the window
+like a fight does. Checked offscreen at 16:9 by jumping into the viewer with a temporary hook (not in the code):
+the model and the arena's columns have their proportions. Not seen: entering and leaving it by hand, and the
+viewer's own 2D (button hints), which is now narrowed about the middle like a fight's messages.
