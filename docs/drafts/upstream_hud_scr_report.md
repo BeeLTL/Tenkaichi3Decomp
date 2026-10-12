@@ -1,3 +1,5 @@
+# SUPERSEDED: upstream fixed this in 0.1.32 (PR #52, `ae803c6`); not to be published
+
 # DRAFT: report for z3xox/Tenkaichi3Decomp (not published; for review)
 
 This is a draft of an issue report for upstream. Nothing has been sent; publishing it is the owner's decision. The
