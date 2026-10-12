@@ -15,6 +15,7 @@
 #define STGGRID_ID_LOCKED 0x3E
 #define STGGRID_ID_EMPTY 0x3F
 static s32 sPortStagesAdded; /* this stage select shows stages from outside the disc */
+static s32 sPortSongsAdded;  /* ... and its music list songs from outside the disc */
 static s32 sPortSongNameHidden, sPortStageNameHidden;
 /* The port's stage-name overlay (port/src/gs/ui.cpp / gs_draw.c): the names of added stages are drawn by the
    port, over the picture, from its own stylized art. The menu only fills the name's rectangle and which image. */
@@ -625,6 +626,7 @@ void CharSel_Init(s32 section) {
            added: both players must have the same list. */
         extern int Port_NetSession(void); /* port/src/gs/net.c */
         s32 added = Port_NetSession() ? 0 : gPortSongCount;
+        sPortSongsAdded = 0;
         if (added > 0) {
             static s32 sBgmIds[72];
             s32 n = gCharSel->bgmCount, k, last = gCharSel->bgmIds[n - 1];
@@ -644,6 +646,7 @@ void CharSel_Init(s32 section) {
             sBgmIds[n - 1] = last;          /* the "random" entry stays last */
             gCharSel->bgmIds = sBgmIds;
             gCharSel->bgmCount = n;
+            sPortSongsAdded = 1;
         }
     }
 #endif
@@ -1863,6 +1866,14 @@ extern void BattleSetup_SetMember(s32 sideNo, s32 idx, s32 chara, s32 costume, s
 extern void BattleSetup_Finish(void);
 extern s32 CpuLevel_FromSetting(u32 setting);
 
+/* The song a chosen "random" stands for: one of the nine battle songs. PC build, with songs added from outside
+   the disc: any entry of the music list before "random", the disc's and the added ones alike. */
+#ifdef PORT
+#define CHARSEL_RANDOM_BGM() (sPortSongsAdded ? gCharSel->bgmIds[Rand_Range(gCharSel->bgmCount - 1)] : Rand_Range(9) + 8)
+#else
+#define CHARSEL_RANDOM_BGM() (Rand_Range(9) + 8)
+#endif
+
 /* Runs the screen. Returns 0 when it was cancelled, otherwise non-zero with the battle set up. */
 s32 CharSel_Run(s32 section) {
     s32 result = 1;
@@ -1922,6 +1933,17 @@ s32 CharSel_Run(s32 section) {
         s32 flag[2] = { 1, 1 };
         s32 mode;
 
+#ifdef PORT
+        /* PC build: "random" also draws the stages added from outside the disc. The game's own draw leaves out the
+           list's last entry (its "random") and anything numbered from "random" up, which is every added stage; with
+           stages added the whole list is drawn from, and only "random" itself and the locked / empty markers are
+           drawn again. With nothing added (and in an online session, where nothing is) the draw is the game's. */
+        if (gCharSel->stage->stage == CHARSEL_STAGE_RANDOM && sPortStagesAdded) {
+            do {
+                gCharSel->stage->stage = gCharSel->stageIds[Rand_Range(gCharSel->stageCount)];
+            } while (gCharSel->stage->stage == CHARSEL_STAGE_RANDOM || gCharSel->stage->stage >= STGGRID_ID_LOCKED);
+        }
+#endif
         if (gCharSel->stage->stage == CHARSEL_STAGE_RANDOM) {
             do {
                 gCharSel->stage->stage = gCharSel->stageIds[Rand_Range(gCharSel->stageCount - 1)];
@@ -1932,7 +1954,7 @@ s32 CharSel_Run(s32 section) {
             bgm = gCharSel->bgmIds[gCharSel->stage->bgmPlaying];
             screenMode = 0;
             if (bgm == CHARSEL_BGM_RANDOM) {
-                bgm = Rand_Range(9) + 8;
+                bgm = CHARSEL_RANDOM_BGM();
             }
             announcer = 1;
             timeLimit = 0;
@@ -1946,7 +1968,7 @@ s32 CharSel_Run(s32 section) {
             bgm = gCharSel->bgmIds[gCharSel->stage->bgmPlaying];
             screenMode = gCharSel->players == 1;
             if (bgm == CHARSEL_BGM_RANDOM) {
-                bgm = Rand_Range(9) + 8;
+                bgm = CHARSEL_RANDOM_BGM();
             }
             switch (gSaveData->rule[0]) {
             case 0:

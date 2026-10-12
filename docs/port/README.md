@@ -2047,3 +2047,19 @@ is off, so `Port_WideFactor` gives the wide projection (the view's matrices foll
 like a fight does. Checked offscreen at 16:9 by jumping into the viewer with a temporary hook (not in the code):
 the model and the arena's columns have their proportions. Not seen: entering and leaving it by hand, and the
 viewer's own 2D (button hints), which is now narrowed about the middle like a fight's messages.
+
+## "Random" draws added stages and songs (2026-10-12)
+
+Asked by the user. In the duel's select (`CharSel_Run`, which Ultimate Training uses too: progress mode 0x2D) and the
+team select (`TeamSel_Run`), a chosen "random" was the game's own draw:
+- the stage: `stageIds[Rand_Range(stageCount - 1)]`, drawn again while the id is 0x23 ("random") or more. Added
+  stages are numbered from 0x24, and are listed after "random", so none could come out;
+- the song: `Rand_Range(9) + 8`, one of nine battle songs by number, whatever the list holds.
+
+With stages added (or replaced) the whole list is drawn from, and only "random" and the locked / empty markers
+(0x3E, 0x3F in the PC build) are drawn again. With songs added the song is any entry of the list before "random"
+(`CHARSEL_RANDOM_BGM` / `TS_RANDOM_BGM`), the disc's and the added alike. With nothing added, and in an online
+session (where nothing is added to the lists), both draws are the game's, call for call: recordings and online
+agreement are as before. The other modes' random stages (`Rand_Range(0x23)`) are left alone; added stages are not
+listed there. Not checked in the game: reaching the select needs a hand on the controller. The regression run and
+the matching build pass.
