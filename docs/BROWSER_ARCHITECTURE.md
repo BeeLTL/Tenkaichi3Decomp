@@ -70,15 +70,16 @@ These are the files outside `port/src/web/` and `port/tools/wasm_*` that the bro
 |---|---|---|
 | `port/src/plat_mem.c` (+51) | No game thread in the browser; the start runs on the page's thread | `__EMSCRIPTEN__` branch |
 | `port/src/plat_stub.c` (+15) | The vblank wait gives control back to the page (`emscripten_sleep`) | `__EMSCRIPTEN__` branch |
-| `port/src/plat_crash.c` (+14) | `Port_CrashContext` for the page's crash report | `__EMSCRIPTEN__` branch |
+| `port/src/plat_crash.c` | ~~`Port_CrashContext`~~ **isolated (M9 step 3):** identical to upstream; the function is in `web/web_crash.c` | — |
 | `port/src/gs/gs_core.c` (+22) | `BT3_FRAME_LOG` frame timing line, **active natively too**, env-gated; `Web_FrameSample` for the dashboard | shared addition + `__EMSCRIPTEN__` branch |
 | `port/src/gs/gs_draw.c`, `gs_draw.h` | The renderer layer shared by every back end: pipeline keys, picture size, event polling, the smooth-motion limit | shared refactor (both builds) |
 | `port/src/gs/gs_gl.c` | WebGL 2 differences (13 `__EMSCRIPTEN__` sites); the shared layer above | `__EMSCRIPTEN__` branches + shared refactor |
 | `port/src/gs/gs_pipekey.c` (new) | Pipeline key encode/decode, pure functions; compiled natively too | shared addition |
-| `port/src/gs/gs_wgpu.c` (new) | The WebGPU back end; the whole file is inside `#ifdef __EMSCRIPTEN__` (natively empty) | browser-only, in a shared folder |
+| ~~`port/src/gs/gs_wgpu.c`~~ | **moved (M9 step 4)** to `port/src/web/gs_wgpu.c` | browser-only |
 | `port/src/gs/shaders/*.frag` (5) | WebGL 2 / WGSL needs (`SEPARATE_SAMPLERS`, `NO_DEPTH_QUALIFIER` switches) | shared sources with browser switches |
-| `port/src/gs/ui.cpp`, `ui.h` | Declarations shared with `web/web_ui.c` (the page's side of `ui.h`) | shared interface |
-| `port/tools/toolchain.py` (+7) | The `BT3_CC=wasm` variant's name and output path | shared tool |
+| `port/src/gs/ui.cpp` | **isolated (M9 step 2):** identical to upstream (its browser branches were dead code) | — |
+| `port/src/gs/ui.h` | Declarations of the shared renderer layer, used by `gs_draw.c`, `gs_gl.c` and `web/web_ui.c` | shared interface |
+| `port/tools/toolchain.py` | **isolated (M9 step 1):** identical to upstream (the entry was unused) | — |
 
 The browser work since this audit (M1–M3) added **no** changes to shared files. It uses link-time wraps and browser-only files (`web_extras.c`, `web_verify.c`, `web_fs.c`).
 
@@ -89,7 +90,7 @@ The browser work since this audit (M1–M3) added **no** changes to shared files
 | `game/` | decompiled code | `src/`, `include/` (**do not move**: upstream merges and the BT3-Decompiled comparison depend on these paths) |
 | `runtime/` | compatibility layer, platform services | `port/include`, `port/src/plat_*.c`, `headless.c`, `softfloat_ps2.c`, `mathf_pc.c`, `port/third_party/newlib_libm`, `port/data` |
 | `engine/` | GS emulation, input, audio | `port/src/gs/*.c` minus the renderers |
-| `renderers/webgl2`, `renderers/webgpu` | the two back ends | `port/src/gs/gs_gl.c`, `port/src/gs/gs_wgpu.c`, `port/src/web/web_gl.c` |
+| `renderers/webgl2`, `renderers/webgpu` | the two back ends | `port/src/gs/gs_gl.c`, `port/src/web/gs_wgpu.c`, `port/src/web/web_gl.c` |
 | `shaders/` | GLSL sources, generated WGSL | `port/src/gs/shaders/` (WGSL generated into `port/build/gen_wasm`) |
 | `web/` | page and browser glue | `port/web/`, `port/src/web/` |
 | `tools/` | build tools | `port/tools/wasm_*.py`, plus the shared `portsrc.py`, `eeconst.py`, `ptr32.py`, `toolchain.py` |

@@ -115,7 +115,10 @@ def game_object(f):
 WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c", "plat_crash.c"}
 HARD = {"plat_libm.c", "plat_fastvec.c"}  # host floats on purpose (undefined.py)
 SDL = ["-sUSE_SDL=3"]
-# Dawn's webgpu.h for Emscripten (the WebGPU back end, gs_wgpu.c): compile and link flag
+# Renderer back ends that exist only in the browser build: in port/src/web/, compiled with the renderer's flags and
+# headers (port/src/gs) under the renderer's object names
+WEB_RENDERERS = {"gs_wgpu.c"}
+# Dawn's webgpu.h for Emscripten (the WebGPU back end, web/gs_wgpu.c): compile and link flag
 WEBGPU = ["--use-port=emdawnwebgpu"]
 PC = ["-std=gnu99", "-fno-strict-aliasing", "-ffp-contract=off", "-fno-builtin", "-w", "-Iinclude", "-Iport/include", "-Iport/src"]
 SOFT_FORCED = ["-DSF_FAST_CALLS", "-include", "math.h", "-include", "stdlib.h", "-include", "port_libm.h"]
@@ -156,7 +159,10 @@ def port_jobs():
         if f.name not in WASM_SKIP:
             jobs.append(("gs", f, OBJ / ("gs_" + f.stem + ".o")))
     for f in sorted((ROOT / "port/src/web").glob("*.c")):  # the browser build's own files
-        jobs.append(("web", f, OBJ / ("web_" + f.stem + ".o")))
+        if f.name in WEB_RENDERERS:  # a renderer back end: compiled as the renderer's files are
+            jobs.append(("gs", f, OBJ / ("gs_" + f.stem + ".o")))
+        else:
+            jobs.append(("web", f, OBJ / ("web_" + f.stem + ".o")))
     return jobs
 
 def port_object(job):
@@ -179,7 +185,7 @@ def port_object(job):
             cmd = [EMCC, "-c"] + OPT + SDL + PC
         else:  # gs
             cmd = [EMCC, "-c"] + OPT + SDL + WEBGPU + ["-std=gnu99", "-fno-strict-aliasing", "-Wall", "-Wno-unused",
-                                             "-Wno-misleading-indentation", f"-I{GEN}"]
+                                             "-Wno-misleading-indentation", f"-I{GEN}", f"-I{ROOT / 'port/src/gs'}"]
         # through LLVM IR like every other file, so that wasm_sig.py can repair calls in it (see there)
         ll = o.with_suffix(".ll")
         r = run([c for c in cmd if c != "-c"] + ["-S", "-emit-llvm", f, "-o", ll])

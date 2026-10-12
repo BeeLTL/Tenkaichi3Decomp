@@ -15,7 +15,7 @@ This is a proposal, awaiting approval; none of it has been carried out. The find
 | M7 CI | done; **not yet run on GitHub** (nothing pushed) | `b1a4d3b` | the workflow's steps in a plain ubuntu:24.04 container: PASS |
 | M8 `HUD_SCR` | verified; draft prepared, **not published** | `894827c` (`docs/drafts/upstream_hud_scr_report.md`) | preprocessing checks (see the draft) |
 | M0 native check | done (see below) | tool `1fd609a` (`port/tests/native/`) | see below |
-| M9 | **not started**: waits for approval | — | — |
+| M9 | **done for 4 files** (toolchain.py, ui.cpp, plat_crash.c, gs_wgpu.c moved); plat_stub.c, plat_mem.c, gs_core.c and the renderer layer left, with reasons (M9 progress) | `4f15740`, `d309d46`, `377975a`, step 4 | per step, below |
 | M10 upstream 0.1.32 | deferred, not fetched | — | — |
 
 ### M0: native validation
@@ -78,6 +78,17 @@ Each step is committed on a temporary local branch first, checked, and only then
 | 1 | `port/tools/toolchain.py` | The unused `BT3_CC=wasm` entry removed; the file is identical to upstream | `a3b4c94` | `bt3.wasm` / `bt3.js` **byte-identical**; every check PASS | headless 70, OpenGL 13 + 4 screenshots, Vulkan 70 + 15 screenshots, win64 70: **all identical** |
 | 2 | `port/src/gs/ui.cpp` | Four dead `__EMSCRIPTEN__` branches removed (the browser build compiles no C++); the file is identical to upstream | `fd88f29` | `bt3.wasm` / `bt3.js` **byte-identical**; every check PASS | the same four comparisons: **all identical** (first attempt not run: Docker had stopped; re-run after restarting it) |
 | 3 | `port/src/plat_crash.c` | Its `__EMSCRIPTEN__` branch (`Port_CrashContext`) moved unchanged to the new `port/src/web/web_crash.c`; the browser build leaves `plat_crash.c` out (`wasm_build.py`: `WASM_SKIP`, now also applied to `port/src/*.c`); the file is identical to upstream | `8115de8` | `bt3.wasm` differs (one object replaced by another), `bt3.js` identical; demo and boot traces + screenshots identical on both renderers; `verify` checks the crash context; every check PASS | Against `fff151e`: headless 70, Vulkan 70 + 15 screenshots, win64 70, all **identical**. OpenGL was identical as far as it ran: 11 lines and 3 screenshots, twice; the run stopped before frame 450. **Control** (step 2 vs step 3, same conditions): OpenGL 12 lines + 4 screenshots, Vulkan, headless all identical. Native binaries vs step 2: `.text` / `.data` identical; 20 bytes of build-id and 36 bytes after `.bss` (probably debug line numbers) differ |
+
+| 4 | `port/src/gs/gs_wgpu.c` → `port/src/web/gs_wgpu.c` | Moved unchanged (`git mv`). `wasm_build.py`'s `WEB_RENDERERS` keeps the renderer's flags and object name; the renderer compile adds `-Iport/src/gs`. The native build no longer sees the file (it compiled to an empty object there) | `ce85c35` | `bt3.wasm` / `bt3.js` **byte-identical** to step 3's (built from a clean worktree of `377975a`); every check PASS (`web_data` printed PASS and then hit the known libuv exit assertion, exit 127) | headless 70, OpenGL 13 + 4 screenshots, Vulkan 70 + 15 screenshots, win64 70: **all identical** |
+
+**Left unchanged, with the reason** (each would need a semantic change, or touches the renderer architecture, which M9 must not change):
+
+| Shared file | Browser-specific part | Why it stays |
+|---|---|---|
+| `port/src/plat_stub.c` | `emscripten_sleep` in `vblank_wait` (static): the timed wait, plus two `emscripten_sleep(0)` yields in the "late" and "new grid" branches | The timed wait could become a `--wrap=nanosleep` with the same duration. The two yields have no call to hook: moving them to a wrapper of the caller changes when the page gets control, or adds a yield when a wait measures 0 ns. That is a pacing change. A partial move would split the logic across two places |
+| `port/src/plat_mem.c` | The platform branch of the static memory helpers (`map`, `map_heap`); a branch in the static `Port_LoadGameData` that feeds the compiled-in run list | Static functions inside a platform `#if` chain. Isolating means making native functions non-static, or a different browser start-up (writing a `.dat` file into the in-memory file system and wrapping `readlink`). Both are semantic changes |
+| `port/src/gs/gs_core.c` | `Web_FrameSample` (the dashboard's ring); the `BT3_FRAME_LOG` line, active natively too | The values are local variables of the frame function: no call to hook |
+| `port/src/gs/gs_draw.c`, `gs_draw.h`, `gs_gl.c`, `gs_pipekey.c`, `port/src/gs/ui.h`, `port/src/gs/shaders/*.frag` | The renderer layer shared by every back end; WebGL 2 branches in `gs_gl.c`; shader switches for WebGL 2 / WGSL | Renderer architecture (out of scope for M9). Most of it is shared code used natively too, not browser-only code |
 
 **Limitation of the native check (found in step 3):** the OpenGL run on llvmpipe stops after a fixed 420 s. How far it gets varies, 11–13 trace lines (frames 300–450), so a missing last screenshot is a run-length effect. It shows as "DIFFERENT or missing" and exit 1. A missing frame is therefore checked with a control run of the previous step under the same conditions before a step is accepted.
 
