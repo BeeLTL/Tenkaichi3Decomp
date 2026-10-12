@@ -25,6 +25,8 @@ void Match_Begin(int role, int sock, int localPort, const char *code, const char
 int Match_SocketBusy(void); /* the search's thread is using the match's socket (asking for a relay address): hands off */
 void Match_QueuesAsk(int version);
 void Match_HelloAsk(void);
+void Match_UpdateAsk(void);   /* asks GitHub for the newest release (a thread; once is enough) */
+int Match_UpdateLatest(void); /* its number as PORT_RELEASE counts, 0 while unknown */
 int Match_Release(int *min, int *latest);
 int Match_QueueWaiting(int queue);
 void Match_Poll(MatchStatus *out);

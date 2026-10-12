@@ -2063,3 +2063,35 @@ session (where nothing is added to the lists), both draws are the game's, call f
 agreement are as before. The other modes' random stages (`Rand_Range(0x23)`) are left alone; added stages are not
 listed there. Not checked in the game: reaching the select needs a hand on the controller. The regression run and
 the matching build pass.
+
+## "An update is available" (2026-10-12)
+
+Asked by the user: players were only told of a newer release by the matchmaking service, and only once theirs was
+too old to be let online.
+
+Once per run, when the window is there, the game asks GitHub for the repository's newest published release:
+one GET of `https://api.github.com/repos/<PORT_UPDATE_REPO>/releases/latest` (net_match.c, `update_thread`; drafts
+and pre-releases are not "latest"). It goes out the way the matchmaking requests do: WinHTTP on Windows, the curl
+library on Linux, the `curl` program failing those (`http_post_native` with no body is a GET, with a user agent,
+which GitHub requires). Nothing is sent but the request. The tag `v0.a.b` becomes a number as `PORT_RELEASE`
+counts (0.1.33 is 133). The log says `bt3: update check: the newest release is 0.1.32, this is 0.1.32`, or
+`no answer`.
+
+If the number is higher than this program's:
+- a line over the picture for ten seconds, once: "Update available: 0.1.33. F1 for the download page.";
+- at the top of the settings window, for the rest of the run, the same with a "Download page" button, which opens
+  `https://github.com/<repo>/releases/latest` in the browser (`SDL_OpenURL`).
+Nothing is downloaded or installed by the game. Updating is copying the new files over the old ones.
+
+F1, UI: "Check for updates" (setting `update_check`, on by default) turns the request off. It is not made under the
+offscreen or dummy video drivers (test runs). `BT3_UPDATE_CHECK=1` / `0` overrides both; `BT3_UPDATE_LATEST=<n>`
+is taken as the answer without asking. `PORT_UPDATE_REPO` (port_release.h) names the repository: a fork that
+publishes its own releases changes it, or its players are told of this repository's.
+
+GitHub allows 60 such requests an hour from one address without an account; one per start is far inside it, and a
+refused request is only "no answer".
+
+Checked on Linux: the real request by the library and by the program (both give 0.1.32); no request in an
+offscreen run without the override; with a pretended 0.1.40, the line over the picture and the settings window's
+row, from the window's own picture. Not checked: the WinHTTP path (written, not run), and the button's opening of
+a browser.
