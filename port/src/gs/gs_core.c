@@ -1345,6 +1345,15 @@ void Port_GsVif1Chain(uint32_t tadr, int tte) {
                             (unsigned)(gGpuTexNs / 1000), (unsigned)(gGpuPipeNs / 1000), (unsigned)(gGpuEndNs / 1000));
                 }
             }
+#ifdef __EMSCRIPTEN__
+            {   /* the browser page's live numbers (port/src/web/web_ui.c): the same values, into a ring the page reads */
+                extern void Web_FrameSample(unsigned frame, unsigned vblanks, uint64_t workNs, uint64_t gameNs, uint64_t listNs,
+                                            uint64_t submitNs);
+                extern unsigned gPortVBlanks;
+                Web_FrameSample(sFrame, gPortVBlanks, work, tChain - start > waited ? tChain - start - waited : 0, t - tChain,
+                                gGpuEndNs);
+            }
+#endif
             /* per second: where the work goes (the game's own code, walking the list, and of that the GPU side) */
             sumGame += tChain - start > waited ? tChain - start - waited : 0;
             sumList += t - tChain;

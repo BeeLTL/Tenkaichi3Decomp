@@ -706,6 +706,109 @@ void GsGl_Vsync(int on) { /* the settings window's "V-sync" */
     }
 }
 
+#ifdef __EMSCRIPTEN__
+/* ---- GPU time per frame (the browser page's Developer section) ------------------------------------------
+   Where the browser has EXT_disjoint_timer_query_webgl2: a TIME_ELAPSED query around the frame's commands. A few
+   queries go round and a result is read once it is available (the game never waits for one); a frame during which
+   the GPU's clock was disturbed (GPU_DISJOINT) is dropped. The times go to the page's ring (web_ui.c). */
+#define GL_TIME_ELAPSED_EXT 0x88BF
+#define GL_GPU_DISJOINT_EXT 0x8FBB
+#define GL_QUERY_RESULT 0x8866
+#define GL_QUERY_RESULT_AVAILABLE 0x8867
+#define GL_TIMER_QUERIES 4
+extern void Web_GpuSample(unsigned frame, double ms); /* port/src/web/web_ui.c */
+static void (*glGenQueries)(GLsizei, GLuint *);
+static void (*glBeginQuery)(GLenum, GLuint);
+static void (*glEndQuery)(GLenum);
+static void (*glGetQueryObjectuiv)(GLuint, GLenum, GLuint *);
+static struct {
+    GLuint id;
+    int busy;
+    unsigned frame;
+} sTimer[GL_TIMER_QUERIES];
+static int sTimerOn, sTimerActive = -1;
+static unsigned sTimerSkipped; /* frames not timed: every query still waiting for its result */
+
+static void timer_init(void) {
+    int i;
+    if ((getenv("BT3_GPU_TIMING") != NULL && atoi(getenv("BT3_GPU_TIMING")) == 0) || /* (=0: off, to measure its cost) */
+        !Port_WebGLExtension("EXT_disjoint_timer_query_webgl2")) {
+        return;
+    }
+    glGenQueries = (void (*)(GLsizei, GLuint *))SDL_GL_GetProcAddress("glGenQueries");
+    glBeginQuery = (void (*)(GLenum, GLuint))SDL_GL_GetProcAddress("glBeginQuery");
+    glEndQuery = (void (*)(GLenum))SDL_GL_GetProcAddress("glEndQuery");
+    glGetQueryObjectuiv = (void (*)(GLuint, GLenum, GLuint *))SDL_GL_GetProcAddress("glGetQueryObjectuiv");
+    if (glGenQueries == NULL || glBeginQuery == NULL || glEndQuery == NULL || glGetQueryObjectuiv == NULL) {
+        fprintf(stderr, "bt3: gl: the timer-query extension is there but its functions are not: no GPU times\n");
+        return;
+    }
+    for (i = 0; i < GL_TIMER_QUERIES; i++) {
+        glGenQueries(1, &sTimer[i].id);
+    }
+    sTimerOn = 1;
+}
+
+/* Results that are ready, into the page's ring. */
+static void timer_collect(void) {
+    GLint disjoint = 0;
+    int i;
+    glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint); /* (reading it also clears it) */
+    for (i = 0; i < GL_TIMER_QUERIES; i++) {
+        GLuint ready = 0, ns = 0;
+        if (!sTimer[i].busy) {
+            continue;
+        }
+        glGetQueryObjectuiv(sTimer[i].id, GL_QUERY_RESULT_AVAILABLE, &ready);
+        if (!ready) {
+            continue;
+        }
+        glGetQueryObjectuiv(sTimer[i].id, GL_QUERY_RESULT, &ns);
+        if (!disjoint) {
+            Web_GpuSample(sTimer[i].frame, (double)ns / 1e6);
+        }
+        sTimer[i].busy = 0;
+    }
+}
+
+static void timer_begin(void) {
+    int i;
+    if (!sTimerOn) {
+        return;
+    }
+    timer_collect();
+    for (i = 0; i < GL_TIMER_QUERIES && sTimer[i].busy; i++) {
+    }
+    if (i == GL_TIMER_QUERIES) {
+        sTimerSkipped++;
+        return;
+    }
+    glBeginQuery(GL_TIME_ELAPSED_EXT, sTimer[i].id);
+    sTimerActive = i;
+}
+
+static void timer_end(void) {
+    if (sTimerActive < 0) {
+        return;
+    }
+    glEndQuery(GL_TIME_ELAPSED_EXT);
+    sTimer[sTimerActive].busy = 1;
+    sTimer[sTimerActive].frame = gGsFrame;
+    sTimerActive = -1;
+}
+
+/* 1 = frames are timed on the GPU; the frames left untimed (for the page's Developer section). */
+int GsGl_GpuTiming(void) { return sTimerOn; }
+unsigned GsGl_GpuTimingSkipped(void) { return sTimerSkipped; }
+#define TIMER_INIT() timer_init()
+#define TIMER_BEGIN() timer_begin()
+#define TIMER_END() timer_end()
+#else
+#define TIMER_INIT()
+#define TIMER_BEGIN()
+#define TIMER_END()
+#endif
+
 /* ---- init --------------------------------------------------------------------------------------- */
 static int gl_init(void) {
     static const uint32_t white = 0xFFFFFFFFu;
@@ -829,6 +932,7 @@ static int gl_init(void) {
     glGenFramebuffers(1, &sScratchDraw);
 
     glDisable(GL_CULL_FACE);
+    TIMER_INIT();
     glEnable(GL_SCISSOR_TEST);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glViewport(0, 0, GS_W * SCALE, GS_H * SCALE);
@@ -857,6 +961,7 @@ void GsGl_StripTextureFree(unsigned id) {
     glDeleteTextures(1, &t);
 }
 
+
 /* ---- the frame ---------------------------------------------------------------------------------- */
 static void frame_end(void) {
     int cur = -1, best = -1, i;
@@ -883,6 +988,7 @@ static void frame_end(void) {
         }
     }
 
+    TIMER_BEGIN(); /* (the browser build: the frame's GPU time, from its uploads to its present) */
     if (gsVertCount != 0) {
         glBindBuffer(GL_ARRAY_BUFFER, sVboGs);
         glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(gsVertCount * sizeof(Vtx)), gsVerts);
@@ -1107,6 +1213,7 @@ static void frame_end(void) {
         }
         free(wp);
     }
+    TIMER_END();
     Ui_DrawGL(); /* the overlay, over the presented picture */
     SDL_GL_SwapWindow(sWindow);
     if (getenv("BT3_GS_VERBOSE") != NULL) {

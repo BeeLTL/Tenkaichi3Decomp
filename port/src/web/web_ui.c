@@ -27,6 +27,10 @@ extern int gGsMainFbp;                   /* gs_sony.c: the shown frame buffer, -
 extern volatile int gPortUnlockAll, gPortUnlockDone; /* headless.c: the game's own "unlock everything" */
 extern void *gSaveData; /* the game's save in memory, NULL until one is loaded (a game pointer: 32 bits, as wasm's) */
 extern unsigned GsWgpu_DeviceErrors(void); /* gs_wgpu.c */
+extern const char *GsWgpu_Error(unsigned i);
+extern unsigned GsWgpu_GpuKBytes(void);
+extern int GsWgpu_GpuTiming(void), GsGl_GpuTiming(void); /* gs_wgpu.c, gs_gl.c: 1 = frames are timed on the GPU */
+extern unsigned GsWgpu_GpuTimingSkipped(void), GsGl_GpuTimingSkipped(void);
 int GsGpu_ReadFrame(uint32_t fbp, uint8_t *rgba);
 int Port_ClashSquare(void);
 void Port_ClashSquareSet(int on);
@@ -141,6 +145,10 @@ static int get_frame(void) { return (int)gGsFrame; }
 static int get_vblanks(void) { return (int)gPortLiveBlanks; }
 static int get_interp_shown(void) { return (int)gInterpShown; }
 static int get_webgpu_errors(void) { return (int)GsWgpu_DeviceErrors(); }
+/* (only the renderer that runs ever turns its timing on) */
+static int get_gpu_timing(void) { return GsWgpu_GpuTiming() || GsGl_GpuTiming(); }
+static int get_gpu_timing_skipped(void) { return (int)(GsWgpu_GpuTimingSkipped() + GsGl_GpuTimingSkipped()); }
+static int get_webgpu_kbytes(void) { return (int)GsWgpu_GpuKBytes(); }
 static int get_actions(void) { return PORT_ACTIONS; }
 static int get_pad_buttons(void) { return PORT_PAD_BUTTONS; }
 
@@ -175,6 +183,9 @@ static const struct {
     {"vblanks", get_vblanks, NULL},
     {"interp_shown", get_interp_shown, NULL},
     {"webgpu_errors", get_webgpu_errors, NULL},
+    {"gpu_timing", get_gpu_timing, NULL},
+    {"gpu_timing_skipped", get_gpu_timing_skipped, NULL},
+    {"webgpu_kbytes", get_webgpu_kbytes, NULL},
     {"actions", get_actions, NULL},
     {"pad_buttons", get_pad_buttons, NULL},
 };
@@ -350,6 +361,57 @@ void GsGpu_Vsync(int on) {
 
 void Port_UiNotice(const char *text) {
     page_notice(text != NULL ? text : "");
+}
+
+/* ---- performance samples (the page's Developer section) ---------------------------------------------------------
+   One sample per game tick, as gs_core.c measures it (the same numbers BT3_FRAME_LOG prints), and one per GPU time a
+   renderer could measure (it arrives frames later, so it has its own ring). Fixed size: the page reads what is new
+   straight from memory (Bt3Ui_PerfRing; the layout below is the page's contract, settings.js PerfReader). */
+#define PERF_RING 1024 /* samples: about 34 s of ticks at 30 a second */
+typedef struct PerfSample {
+    uint32_t frame, vblanks;
+    float timeMs;   /* when the tick ended (the page's performance.now() clock) */
+    float workMs;   /* the tick's CPU time, the wait for the vertical blank left out */
+    float gameMs;   /* of that: the game's own code (the simulation) */
+    float listMs;   /* of that: drawing (the display list walked, the renderer's frame) */
+    float submitMs; /* of the list: the renderer's replay and submission (GsGpu_FrameEnd) */
+} PerfSample;
+typedef struct GpuSample {
+    uint32_t frame;
+    float gpuMs;    /* the GPU's own time for the frame (timer / timestamp queries) */
+} GpuSample;
+static struct {
+    uint32_t capacity, written, gpuWritten, sampleBytes; /* (written counts up for ever: index = written % capacity) */
+    PerfSample sample[PERF_RING];
+    GpuSample gpu[PERF_RING];
+} sPerf = {PERF_RING, 0, 0, sizeof(PerfSample)};
+
+void Web_FrameSample(unsigned frame, unsigned vblanks, uint64_t workNs, uint64_t gameNs, uint64_t listNs, uint64_t submitNs) {
+    PerfSample *s = &sPerf.sample[sPerf.written % PERF_RING];
+    s->frame = frame;
+    s->vblanks = vblanks;
+    s->timeMs = (float)emscripten_get_now();
+    s->workMs = (float)workNs / 1e6f;
+    s->gameMs = (float)gameNs / 1e6f;
+    s->listMs = (float)listNs / 1e6f;
+    s->submitMs = (float)submitNs / 1e6f;
+    sPerf.written++;
+}
+
+void Web_GpuSample(unsigned frame, double ms) {
+    GpuSample *g = &sPerf.gpu[sPerf.gpuWritten % PERF_RING];
+    g->frame = frame;
+    g->gpuMs = (float)ms;
+    sPerf.gpuWritten++;
+}
+
+EMSCRIPTEN_KEEPALIVE const void *Bt3Ui_PerfRing(void) {
+    return &sPerf;
+}
+
+/* WebGPU device error i, 0 the latest ("" past what is kept). */
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_WebGpuError(int i) {
+    return GsWgpu_Error(i < 0 ? 0u : (unsigned)i);
 }
 
 /* ---- the page's interface ------------------------------------------------------------------------------------ */

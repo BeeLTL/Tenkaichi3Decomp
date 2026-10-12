@@ -59,6 +59,7 @@
   #settings summary { cursor: pointer; color: var(--dim); }
   #settings dl.stats { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font: 12px ui-monospace, monospace; margin: 8px 0 12px; }
   #settings dl.stats dt { color: var(--dim); } #settings dl.stats dd { margin: 0; }
+  #settings canvas.graph { width: 100%; height: 120px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
   #unlock-confirm { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; max-width: 420px; }
   #unlock-confirm::backdrop { background: #0009; }
   #unlock-confirm menu { display: flex; gap: 8px; justify-content: flex-end; padding: 0; margin: 16px 0 0; }
@@ -97,7 +98,7 @@
   <div class="head"><h2 id="settings-title">Settings</h2><button id="settings-close" type="button" aria-label="Close the settings">Close</button></div>
   <div id="settings-tabs" role="tablist" aria-label="Settings sections"></div>
   <div class="body" id="settings-pages"></div>
-  <details id="dev"><summary>Developer</summary></details>
+  <details id="dev"><summary>Developer</summary><div id="dev-dashboard"></div></details>
 </dialog>
 <dialog id="unlock-confirm" aria-labelledby="unlock-title">
   <form method="dialog">
@@ -107,6 +108,7 @@
   </form>
 </dialog>
 <script src="bt3_data.js"></script>
+<script src="dashboard.js"></script>
 <script src="settings.js"></script>
 <script>
 'use strict';
@@ -117,8 +119,9 @@ const q = new URLSearchParams(location.search);
 const dataBase = q.get('data') || '/gamedata/';
 const renderer = q.get('gpu') || 'gl';  // ?gpu=webgpu: the WebGPU back end; default the WebGL 2 one (the reference)
 const report = q.get('report');
+const data = new Bt3Data(dataBase, { log });  // the game's files, read on demand (bt3_data.js)
 const settings = new Bt3Settings({ canvas: document.getElementById('canvas'), stage: document.getElementById('stage'),
-                                   renderer, query: location.search, log: (s) => log(s) });
+                                   renderer, query: location.search, log: (s) => log(s), data, getLog: () => lines });
 const logEl = document.getElementById('log'), stepsEl = document.getElementById('steps');
 const lines = [];
 let reported = 0, mod = null, stopped = false;
@@ -221,7 +224,6 @@ if (q.get('gldebug')) {
   setInterval(() => { if (counts.size) log('gldebug: counts ' + [...counts].map(([k, v]) => `${k}: ${v}`).join(', ')); }, 5000);
 }
 
-const data = new Bt3Data(dataBase, { log });
 setInterval(() => {
   const s = data.stats;
   document.getElementById('stats').textContent =

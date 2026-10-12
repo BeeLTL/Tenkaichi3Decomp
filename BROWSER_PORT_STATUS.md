@@ -437,6 +437,45 @@ calls glGetError every frame, a GPU sync: don't compare GL timings taken with it
 **Not implemented**: native pass 2 (alpha key) is no longer recorded; if it ever were, it is reported, not drawn. (The
 settings window no longer depends on the renderer: see "Settings panel in the page".)
 
+### Live performance dashboard and diagnostics export (2026-10-12) — verified
+The settings panel's **Developer** section (`port/web/dashboard.js`) shows, twice a second while it is open:
+| row | source and definition |
+|---|---|
+| Renderer | WebGL 2 / WebGPU and the adapter the page's checks found |
+| Pictures shown | display refreshes with a new picture presented since the last one (requestAnimationFrame + the present: WebGL 2 binding the window's framebuffer, WebGPU taking the canvas texture), now (last second) and average over the window |
+| Game ticks, game speed | the engine's ticks per second; vertical blanks per second against 59.94 |
+| Work / game / drawing / submit | the engine's per-tick CPU times (gs_core.c, the values of BT3_FRAME_LOG): work = the tick without the wait for the display; game = the simulation; drawing = the display list and the renderer's frame; submit = the renderer's replay and submission (CPU) — mean / p95 / p99 over the last 10 s |
+| GPU time | the GPU's own time per frame: WebGPU `timestamp-query` (first pass's start to the present pass's end), WebGL 2 `EXT_disjoint_timer_query_webgl2` (TIME_ELAPSED around the frame; disjoint frames dropped); "not measurable here" where the browser offers neither. Browser-rounded; the two APIs measure different spans (here WebGL 2 ~10 ms, WebGPU ~1 ms) |
+| Long frames | ticks over the 33.4 ms budget in the window; page frames over 50 ms (long-animation-frame) since opened |
+| Memory | JS heap (Chrome's performance.memory, a browser estimate), WebAssembly (the engine's linear memory, reserved), GPU: WebGPU = the engine's own sum of the sizes of the textures and buffers it asked for (an estimate; no browser API reports GPU memory), WebGL 2 = not measurable (not tracked). A button asks the browser for `measureUserAgentSpecificMemory` |
+| Game data | the loader's real counts: files, requests, bytes, blocks in flight, cache, errors (read on demand: there is no total) |
+| WebGPU errors | count and latest message (the last 8 kept) |
+| This section's cost | its own updates as a share of the time since it was opened (0.13 % measured) |
+Plus a graph of the last 300 ticks' CPU work and GPU time against the budget line.
+
+**Data path**: `web_ui.c` keeps one sample per tick (and one per GPU time, which arrives frames later) in fixed rings of
+1024 (`Bt3Ui_PerfRing`); the page reads what is new straight from memory. Nothing runs while the section is closed (no
+timer, no present counter, no long-frame observer); ticks from while the tab was hidden (throttled) are left out of the
+statistics. Renderer restarts reload the page (fresh numbers).
+
+**Export diagnostics**: a download (never sent) of `bt3-diagnostics` JSON version 1: renderer, GPU, the page's query,
+browser capabilities (user agent, processors, memory class, WebGPU, JSPI, screen), engine state (frame, GPU timing,
+WebGPU error texts), every setting's current value and the settings file if written, the whole tick and GPU rings with
+column names and definitions, the window's summary, memory, loader state, and the log's error lines only (at most 200).
+Not in it: saves, game data, the rest of the log. About 45 KB.
+
+**WebGPU timestamp workaround**: emdawnwebgpu v20260423.175430 passes `WGPU_QUERY_SET_INDEX_UNDEFINED` to the browser as
+4294967295 (library_webgpu.js copies the field as a number); the browser rejects the pass and the frame. A pass that
+times one end writes its other end into a scratch query (`WG_TIMESTAMP_SCRATCH_QUERY`, gs_wgpu.c, documented there).
+
+**Cost** (`BT3_GPU_TIMING=0` switches the GPU timing off, to measure it): work per tick, demo battle, two alternating
+runs each: WebGL 2 on 14.56 / 14.07, off 13.70 / 14.44 ms; WebGPU on 8.02 / 6.83, off 7.26 / 8.50 ms: no difference above
+the run-to-run variation (about +-0.8 ms). Pictures unchanged (demo 12/12 identical, trace unchanged, both renderers).
+
+**Tests**: `port/tests/web/dashboard.js` (both renderers: PASS): every row has a value, the graph is drawn, the present
+counter only while open and removed after, the export's schema, samples, settings, error lines only, no save or game
+data, a .json download, ticks of a hidden tab left out (another tab in front: 120 left out).
+
 ### Smooth motion in the browser: measured, limited per renderer (2026-10-12) — verified
 **How it works**: after a tick the engine shows in-between pictures (`gs_draw.c` GsGpu_InterpPump / interp_show): each
 one replays the whole frame's list with blended vertices (a full `frameEnd`), spaced over the tick with

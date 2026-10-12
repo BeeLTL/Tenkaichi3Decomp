@@ -133,11 +133,26 @@ static const char *error_name(WGPUErrorType type) {
     }
 }
 
+/* The latest device errors, for the page's Developer section (GsWgpu_Error): a fixed ring of short copies. */
+#define WG_ERRORS_KEPT 8
+#define WG_ERROR_TEXT 240
+static char sErrorText[WG_ERRORS_KEPT][WG_ERROR_TEXT];
+
 static void on_device_error(WGPUDevice const *device, WGPUErrorType type, WGPUStringView message, void *unused1, void *unused2) {
     (void)device; (void)unused1; (void)unused2;
+    snprintf(sErrorText[sDeviceErrors % WG_ERRORS_KEPT], WG_ERROR_TEXT, "%s: %.*s", error_name(type), string_length(message),
+             message.data != NULL ? message.data : "");
     sDeviceErrors++;
     fprintf(stderr, "bt3: webgpu: %s error: %.*s\n", error_name(type), string_length(message), message.data);
 }
+
+/* GPU memory the engine asked for: the sizes of its live textures and buffers. An estimate, not a measurement: a page
+   cannot see what the driver really holds (alignment, compression, its own copies). */
+static uint64_t sGpuBytes;
+/* GPU time (timestamp-query): whether the device has it, and frames that could not be timed (every slot was busy) */
+static int sTimestamps;
+static unsigned sTimingSkipped;
+static void timing_create(void); /* (with the fixed objects; the timing itself is with the replay) */
 
 static void on_device_lost(WGPUDevice const *device, WGPUDeviceLostReason reason, WGPUStringView message, void *unused1, void *unused2) {
     (void)device; (void)unused1; (void)unused2;
@@ -197,7 +212,7 @@ static void print_adapter(void) {
 }
 
 static int device_create(void) {
-    WGPUFeatureName features[2];
+    WGPUFeatureName features[3];
     size_t featureCount = 0;
     WGPUDeviceDescriptor desc = WGPU_DEVICE_DESCRIPTOR_INIT;
 
@@ -211,6 +226,12 @@ static int device_create(void) {
     }
     if (sBcTextures) {
         features[featureCount++] = WGPUFeatureName_TextureCompressionBC;
+    }
+    /* the GPU's own time per frame for the page's Developer section, where the browser offers it (it may round it) */
+    sTimestamps = wgpuAdapterHasFeature(sAdapter, WGPUFeatureName_TimestampQuery) &&
+                  (getenv("BT3_GPU_TIMING") == NULL || atoi(getenv("BT3_GPU_TIMING")) != 0); /* (=0: off, to measure its cost) */
+    if (sTimestamps) {
+        features[featureCount++] = WGPUFeatureName_TimestampQuery;
     }
     desc.label = string_view("bt3");
     desc.requiredFeatureCount = featureCount;
@@ -282,6 +303,7 @@ typedef struct WgTexture {
     unsigned copiesEpoch;                 /* sCopiesEpoch when `draw` was made (they hold the DATE copy) */
     WGPUBindGroup draw[GS_SAMPLER_COUNT]; /* gs.frag's group 2: this texture with each sampler, and the DATE copy */
     WGPUBindGroup blit;                   /* blit.frag's group 2: this texture, bilinear and clamped */
+    uint64_t bytes;                       /* its size as asked for (sGpuBytes) */
 } WgTexture;
 
 typedef struct WgTarget {
@@ -301,6 +323,24 @@ static WgTexture *wg_texture(GsTex handle) {
     return (WgTexture *)handle;
 }
 
+/* The bytes of a texture of this size and format, every level counted (BC: 4 x 4 blocks of 8 or 16 bytes). */
+static uint64_t texture_bytes(uint32_t w, uint32_t h, WGPUTextureFormat format, uint32_t levels) {
+    uint64_t bytes = 0;
+    uint32_t level;
+    for (level = 0; level < levels; level++) {
+        uint32_t lw = w >> level ? w >> level : 1, lh = h >> level ? h >> level : 1;
+        uint64_t blocks = (uint64_t)((lw + WG_BC_BLOCK - 1) / WG_BC_BLOCK) * ((lh + WG_BC_BLOCK - 1) / WG_BC_BLOCK);
+        switch (format) {
+        case WGPUTextureFormat_R8Unorm: bytes += (uint64_t)lw * lh; break;
+        case WGPUTextureFormat_BC1RGBAUnorm: bytes += blocks * WG_BC1_BLOCK_BYTES; break;
+        case WGPUTextureFormat_BC2RGBAUnorm:
+        case WGPUTextureFormat_BC3RGBAUnorm: bytes += blocks * WG_BC23_BLOCK_BYTES; break;
+        default: bytes += (uint64_t)lw * lh * 4; break; /* RGBA8, Depth32Float */
+        }
+    }
+    return bytes;
+}
+
 static WgTexture *texture_new(uint32_t w, uint32_t h, WGPUTextureFormat format, uint32_t levels, WGPUTextureUsage usage,
                               const char *label) {
     WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
@@ -315,6 +355,8 @@ static WgTexture *texture_new(uint32_t w, uint32_t h, WGPUTextureFormat format, 
     t->texture = wgpuDeviceCreateTexture(sDevice, &desc);
     t->view = wgpuTextureCreateView(t->texture, NULL);
     t->copiesEpoch = sCopiesEpoch;
+    t->bytes = texture_bytes(w, h, format, levels);
+    sGpuBytes += t->bytes;
     sMade.textures++;
     sTexturesLive++;
     return t;
@@ -344,6 +386,7 @@ static void texture_free(WgTexture *t) {
     wgpuTextureViewRelease(t->view);
     wgpuTextureDestroy(t->texture);
     wgpuTextureRelease(t->texture);
+    sGpuBytes -= t->bytes;
     free(t);
     sTexturesLive--;
 }
@@ -882,7 +925,14 @@ static WGPUBuffer buffer_create(uint64_t size, WGPUBufferUsage usage, const char
     desc.label = string_view(label);
     desc.size = size;
     desc.usage = usage;
+    sGpuBytes += size;
     return wgpuDeviceCreateBuffer(sDevice, &desc);
+}
+
+static void buffer_free(WGPUBuffer buffer) {
+    sGpuBytes -= wgpuBufferGetSize(buffer);
+    wgpuBufferDestroy(buffer);
+    wgpuBufferRelease(buffer);
 }
 
 static WGPUBindGroup uniform_group(WGPUBindGroupLayout layout, uint64_t size) {
@@ -904,8 +954,7 @@ static void uniforms_reserve(uint64_t bytes) {
     if (sUniforms.buffer != NULL) {
         wgpuBindGroupRelease(sUniforms.program);
         wgpuBindGroupRelease(sUniforms.params);
-        wgpuBufferDestroy(sUniforms.buffer);
-        wgpuBufferRelease(sUniforms.buffer);
+        buffer_free(sUniforms.buffer);
     }
     sUniforms.cpu = realloc(sUniforms.cpu, (size_t)bytes);
     sUniforms.capacity = bytes;
@@ -973,8 +1022,7 @@ static int texture_read(WgTexture *t, uint32_t w, uint32_t h, uint32_t texelByte
         }
         wgpuBufferUnmap(buffer);
     }
-    wgpuBufferDestroy(buffer);
-    wgpuBufferRelease(buffer);
+    buffer_free(buffer);
     return ok;
 }
 
@@ -1037,6 +1085,7 @@ static int objects_create(void) {
     sWhite = texture_new(1, 1, WGPUTextureFormat_RGBA8Unorm, 1, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, "white");
     texture_write(sWhite, 0, 1, 1, GS_TEXFMT_RGBA8, &white, sizeof(white));
     copies_create();
+    timing_create();
     cb.mode = WGPUCallbackMode_WaitAnyOnly;
     cb.callback = on_scope;
     cb.userdata1 = &scope;
@@ -1091,6 +1140,144 @@ unsigned GsWgpu_DeviceErrors(void) {
     return sDeviceErrors;
 }
 
+/* Error i, 0 the latest; "" past what is kept. */
+const char *GsWgpu_Error(unsigned i) {
+    return i < WG_ERRORS_KEPT && i < sDeviceErrors ? sErrorText[(sDeviceErrors - 1 - i) % WG_ERRORS_KEPT] : "";
+}
+
+/* What the engine's live GPU textures and buffers take by their sizes (an estimate: see sGpuBytes), in KB. */
+unsigned GsWgpu_GpuKBytes(void) {
+    return (unsigned)(sGpuBytes / 1024u);
+}
+
+/* 1 = frames are timed on the GPU (timestamp-query); the frames left untimed because every slot was busy. */
+int GsWgpu_GpuTiming(void) {
+    return sTimestamps;
+}
+unsigned GsWgpu_GpuTimingSkipped(void) {
+    return sTimingSkipped;
+}
+
+/* ---- GPU time per frame (timestamp-query) --------------------------------------------------------------------
+   The first render pass of a frame writes a timestamp as it begins, the present pass one as it ends; the pair is
+   resolved and copied into a small buffer that is mapped without waiting (the game never waits for it). A few slots
+   go round; a frame that finds none free is not timed (sTimingSkipped). The result goes to the page's ring
+   (web_ui.c Web_GpuSample) when the map completes. */
+#define WG_TIMING_SLOTS 4
+#define WG_TIMESTAMPS_PER_FRAME 2
+#define WG_QUERY_RESOLVE_ALIGNMENT 256u /* WebGPU: a resolve's destination offset */
+/* Emscripten's WebGPU glue (emdawnwebgpu v20260423.175430, library_webgpu.js) copies a pass's two timestamp indices as
+   numbers and does not turn WGPU_QUERY_SET_INDEX_UNDEFINED into "none": the browser then rejects the pass
+   ("endOfPassWriteIndex (4294967295) is too large") and the frame's commands with it. So a pass that times one end
+   writes its other end into this query, which is never read. */
+#define WG_TIMESTAMP_SCRATCH_QUERY (WG_TIMING_SLOTS * WG_TIMESTAMPS_PER_FRAME)
+extern void Web_GpuSample(unsigned frame, double ms); /* port/src/web/web_ui.c */
+static WGPUQuerySet sQuerySet;
+static WGPUBuffer sQueryResolve;
+static struct {
+    WGPUBuffer readback;
+    int busy;
+    unsigned frame;
+} sTiming[WG_TIMING_SLOTS];
+static struct {
+    int slot;   /* this frame's, -1: not timed */
+    int begun;  /* the begin timestamp has a pass */
+    int ended;  /* the end one has (the present pass ran) */
+} sFrameTiming = {-1, 0, 0};
+
+static void timing_create(void) {
+    WGPUQuerySetDescriptor desc = WGPU_QUERY_SET_DESCRIPTOR_INIT;
+    int i;
+    if (!sTimestamps) {
+        return;
+    }
+    desc.label = string_view("frame time");
+    desc.type = WGPUQueryType_Timestamp;
+    desc.count = WG_TIMING_SLOTS * WG_TIMESTAMPS_PER_FRAME + 1; /* (+ WG_TIMESTAMP_SCRATCH_QUERY) */
+    sQuerySet = wgpuDeviceCreateQuerySet(sDevice, &desc);
+    sQueryResolve = buffer_create(WG_TIMING_SLOTS * WG_QUERY_RESOLVE_ALIGNMENT, WGPUBufferUsage_QueryResolve | WGPUBufferUsage_CopySrc,
+                                  "frame time resolve");
+    for (i = 0; i < WG_TIMING_SLOTS; i++) {
+        sTiming[i].readback = buffer_create(WG_TIMESTAMPS_PER_FRAME * sizeof(uint64_t), WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst,
+                                            "frame time read-back");
+    }
+}
+
+static void timing_frame_begin(void) {
+    int i;
+    sFrameTiming.slot = -1;
+    sFrameTiming.begun = sFrameTiming.ended = 0;
+    if (!sTimestamps) {
+        return;
+    }
+    for (i = 0; i < WG_TIMING_SLOTS && sTiming[i].busy; i++) {
+    }
+    if (i == WG_TIMING_SLOTS) {
+        sTimingSkipped++;
+        return;
+    }
+    sFrameTiming.slot = i;
+}
+
+/* The timestamp writes of a pass: the frame's begin on its first pass, its end on the present pass (`last`). NULL when
+   the frame is not timed or the pass writes none. */
+static const WGPUPassTimestampWrites *timing_pass(WGPUPassTimestampWrites *w, int last) {
+    WGPUPassTimestampWrites init = WGPU_PASS_TIMESTAMP_WRITES_INIT;
+    if (sFrameTiming.slot < 0 || (sFrameTiming.begun && !last)) {
+        return NULL;
+    }
+    *w = init;
+    w->querySet = sQuerySet;
+    w->beginningOfPassWriteIndex = sFrameTiming.begun ? WG_TIMESTAMP_SCRATCH_QUERY : (uint32_t)(sFrameTiming.slot * WG_TIMESTAMPS_PER_FRAME);
+    w->endOfPassWriteIndex = last ? (uint32_t)(sFrameTiming.slot * WG_TIMESTAMPS_PER_FRAME + 1) : WG_TIMESTAMP_SCRATCH_QUERY;
+    sFrameTiming.begun = 1;
+    sFrameTiming.ended = last;
+    return w;
+}
+
+/* Into the encoder before it is finished: the frame's pair resolved and copied for reading. */
+static void timing_resolve(WGPUCommandEncoder encoder) {
+    const int s = sFrameTiming.slot;
+    if (s < 0 || !sFrameTiming.ended) {
+        sFrameTiming.slot = -1; /* (no present this frame: nothing to read) */
+        return;
+    }
+    wgpuCommandEncoderResolveQuerySet(encoder, sQuerySet, (uint32_t)(s * WG_TIMESTAMPS_PER_FRAME), WG_TIMESTAMPS_PER_FRAME,
+                                      sQueryResolve, (uint64_t)s * WG_QUERY_RESOLVE_ALIGNMENT);
+    wgpuCommandEncoderCopyBufferToBuffer(encoder, sQueryResolve, (uint64_t)s * WG_QUERY_RESOLVE_ALIGNMENT, sTiming[s].readback, 0,
+                                         WG_TIMESTAMPS_PER_FRAME * sizeof(uint64_t));
+}
+
+static void on_timing_mapped(WGPUMapAsyncStatus status, WGPUStringView message, void *slot, void *unused) {
+    const int s = (int)(intptr_t)slot;
+    (void)unused;
+    if (status == WGPUMapAsyncStatus_Success) {
+        const uint64_t *ns = wgpuBufferGetConstMappedRange(sTiming[s].readback, 0, WG_TIMESTAMPS_PER_FRAME * sizeof(uint64_t));
+        if (ns != NULL && ns[1] > ns[0]) { /* (a pair the GPU did not write, or that the browser rounded to equal: no time) */
+            Web_GpuSample(sTiming[s].frame, (double)(ns[1] - ns[0]) / 1e6);
+        }
+        wgpuBufferUnmap(sTiming[s].readback);
+    } else if (status != WGPUMapAsyncStatus_CallbackCancelled) {
+        fprintf(stderr, "bt3: webgpu: a frame time could not be read: %.*s\n", string_length(message), message.data);
+    }
+    sTiming[s].busy = 0;
+}
+
+/* After the submit: the read-back is mapped when the GPU is done with the frame (the game does not wait). */
+static void timing_frame_end(void) {
+    const int s = sFrameTiming.slot;
+    WGPUBufferMapCallbackInfo cb = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+    if (s < 0) {
+        return;
+    }
+    sTiming[s].busy = 1;
+    sTiming[s].frame = gGsFrame;
+    cb.mode = WGPUCallbackMode_AllowSpontaneous;
+    cb.callback = on_timing_mapped;
+    cb.userdata1 = (void *)(intptr_t)s;
+    wgpuBufferMapAsync(sTiming[s].readback, WGPUMapMode_Read, 0, WG_TIMESTAMPS_PER_FRAME * sizeof(uint64_t), cb);
+}
+
 /* ---- the replay ----------------------------------------------------------------------------------------------- */
 
 /* Which attachments a pass has. The table pass samples the target's depth, so its pass leaves depth out (it neither
@@ -1130,6 +1317,7 @@ static void pass_begin(WgPassKind kind, int target, int clear) {
     WGPURenderPassDepthStencilAttachment depth = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
     WGPURenderPassDescriptor desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
     const WGPULoadOp load = clear ? WGPULoadOp_Clear : WGPULoadOp_Load;
+    WGPUPassTimestampWrites timestamps;
     int i;
 
     pass_end();
@@ -1150,6 +1338,7 @@ static void pass_begin(WgPassKind kind, int target, int clear) {
     desc.colorAttachments = colors;
     desc.colorAttachmentCount = kind == WG_PASS_UPLOAD ? 1 : 2;
     desc.depthStencilAttachment = kind == WG_PASS_DRAW ? &depth : NULL;
+    desc.timestampWrites = timing_pass(&timestamps, 0);
     sR.pass = wgpuCommandEncoderBeginRenderPass(sR.encoder, &desc);
     sR.kind = kind;
     sR.target = target;
@@ -1404,6 +1593,7 @@ static void present(int best) {
     WGPUSurfaceTexture surfaceTexture = WGPU_SURFACE_TEXTURE_INIT;
     WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
     WGPURenderPassDescriptor desc = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    WGPUPassTimestampWrites timestamps;
     WGPUTextureView view;
 
     surface_fit();
@@ -1420,6 +1610,7 @@ static void present(int best) {
     color.clearValue.a = 1.0; /* black around the picture */
     desc.colorAttachmentCount = 1;
     desc.colorAttachments = &color;
+    desc.timestampWrites = timing_pass(&timestamps, 1);
     sR.pass = wgpuCommandEncoderBeginRenderPass(sR.encoder, &desc);
     if (best >= 0 && gsTargets[best].cleared) {
         const int sw = (int)sSurfaceW, sh = (int)sSurfaceH;
@@ -1490,6 +1681,7 @@ static void wg_frame_end(void) {
     frame_uploads();
     frame_uniforms();
     sR.encoder = wgpuDeviceCreateCommandEncoder(sDevice, NULL);
+    timing_frame_begin();
     replay();
     /* the shown buffer: the one sceGsSwapDBuff set up for this frame, else the first target */
     best = gGsMainFbp >= 0 ? GsDraw_TargetGet((uint32_t)gGsMainFbp, 0) : -1;
@@ -1497,9 +1689,11 @@ static void wg_frame_end(void) {
         best = i;
     }
     present(best);
+    timing_resolve(sR.encoder);
     wgpuQueueWriteBuffer(sQueue, sUniforms.buffer, 0, sUniforms.cpu, (size_t)sUniforms.used);
     commands = wgpuCommandEncoderFinish(sR.encoder, NULL);
     wgpuQueueSubmit(sQueue, 1, &commands);
+    timing_frame_end();
     wgpuCommandBufferRelease(commands);
     wgpuCommandEncoderRelease(sR.encoder);
     sR.encoder = NULL;

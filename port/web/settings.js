@@ -12,13 +12,9 @@ const PAD_LABELS = ['A / Cross', 'B / Circle', 'X / Square', 'Y / Triangle', 'Ba
   'D-pad right', 'Misc 1', 'Right paddle 1', 'Left paddle 1', 'Right paddle 2', 'Left paddle 2', 'Touchpad'];
 const PAD_TRIGGERS = { 100: 'Left trigger', 101: 'Right trigger' };
 const CAPTURE_KEY = 1, CAPTURE_PAD = 2;
-const STATS_EVERY_MS = 500;
 const NOTICE_MS = 6000;
 // The unlock is carried out by the game at its next vertical blank (headless.c): the panel looks for the result this long.
 const UNLOCK_WAIT_MS = 2000, UNLOCK_POLL_MS = 100;
-// The vertical blanks a second the game is made for (the PS2's 59.94 Hz): the developer panel's "game speed" is the
-// share of them the game reaches (ui.cpp's meter counts 60).
-const PS2_VBLANKS_PER_S = 59.94;
 // The renderers the browser build has (gs_draw.c: BT3_GPU_API), chosen with the page's ?gpu=.
 const RENDERERS = [['gl', 'WebGL 2'], ['webgpu', 'WebGPU']];
 // The engine's start-up switches the developer panel can restart with (each read once at start).
@@ -89,7 +85,7 @@ const PANEL = [
 ];
 
 class Bt3Settings {
-  constructor({ canvas, stage, renderer, query, log }) {
+  constructor({ canvas, stage, renderer, query, log, data, getLog }) {
     this.canvas = canvas;
     this.stage = stage;
     this.renderer = renderer;
@@ -100,9 +96,10 @@ class Bt3Settings {
     this.capturing = null;  // the button waiting for a key or controller button
     this.opener = null;     // what had the focus before the panel opened (it gets it back)
     this.refreshers = [];   // one per control: shows the engine's value again
-    this.statsTimer = 0;
-    this.statsLast = null;
     this.dialog = document.getElementById('settings');
+    // the Developer section's live numbers and the diagnostics export (dashboard.js)
+    this.dashboard = new Bt3Dashboard({ root: document.getElementById('dev-dashboard'), renderer, data, log, getLog,
+                                        getSettings: () => this.snapshot() });
     this.openButton = document.getElementById('settings-open');
     this.noticeEl = document.getElementById('notice');
     this.build();
@@ -135,7 +132,12 @@ class Bt3Settings {
 
   attach(mod) {
     this.mod = mod;
+    this.dashboard.attach(mod);
   }
+
+  // the GPU's name as the page's checks found it (shown in the Developer section)
+  set gpuName(name) { this.dashboard.gpuName = name; }
+  get gpuName() { return this.dashboard.gpuName; }
 
   // ---- the engine's interface ------------------------------------------------------------------------------------
   get(name) { return this.mod.ccall('Bt3Ui_Get', 'number', ['string'], [name]); }
@@ -159,6 +161,12 @@ class Bt3Settings {
     try {
       if (this.mod.FS.analyzePath('bt3_settings.txt').exists) localStorage.setItem('bt3.settings', this.mod.FS.readFile('bt3_settings.txt', { encoding: 'utf8' }));
     } catch (e) { this.log(`settings: not kept for the next visit (${e.message})`); }
+  }
+
+  // The engine's current value of every setting the panel shows (for the diagnostics export).
+  snapshot() {
+    const keys = new Set(PANEL.flatMap((t) => t.items).filter((i) => i.key).map((i) => i.key));
+    return Object.fromEntries([...keys].map((k) => [k, this.get(k)]));
   }
 
   // ---- building the panel ----------------------------------------------------------------------------------------
@@ -186,7 +194,7 @@ class Bt3Settings {
       this.selectTab(list[(next + list.length) % list.length]);
     });
     document.getElementById('dev').appendChild(this.buildDeveloper());
-    document.getElementById('dev').addEventListener('toggle', (e) => this.statsRun(e.target.open));
+    document.getElementById('dev').addEventListener('toggle', (e) => this.dashboard.run(e.target.open && this.dialog.open));
   }
 
   selectTab(tab) {
@@ -374,7 +382,6 @@ class Bt3Settings {
   }
 
   buildDeveloper() {
-    const stats = el('dl', { class: 'stats', id: 'dev-stats' });
     const shot = el('button', { type: 'button', class: 'secondary' }, `Save a screenshot (${GS_DISPLAY.w} × ${GS_DISPLAY.h} PNG)`);
     shot.addEventListener('click', () => this.action('screenshot'));
     const env = new Set((new URLSearchParams(this.query).get('env') || '').split(',').filter(Boolean).map((kv) => kv.split('=')[0]));
@@ -397,31 +404,8 @@ class Bt3Settings {
       if (kept.length) q.set('env', kept.join(',')); else q.delete('env');
       location.search = q.toString();
     });
-    return el('div', {}, stats, shot, el('h3', {}, 'Start-up switches'),
+    return el('div', {}, shot, el('h3', {}, 'Start-up switches'),
       el('p', { class: 'help' }, 'The engine reads these once, at start: applying them restarts the game.'), ...switches, restart);
-  }
-
-  // The developer numbers, twice a second while that section is open (nothing is polled otherwise).
-  statsRun(on) {
-    clearInterval(this.statsTimer);
-    this.statsTimer = 0;
-    this.statsLast = null;
-    if (on && this.mod) { this.stats(); this.statsTimer = setInterval(() => this.stats(), STATS_EVERY_MS); }
-  }
-
-  stats() {
-    const now = performance.now(), frame = this.get('frame'), vblanks = this.get('vblanks');
-    const rows = [['Renderer', RENDERERS.find(([v]) => v === this.renderer)[1]], ['GPU', this.gpuName || '—'],
-      ['Internal resolution', `${this.get('scale')}× (${GS_DISPLAY.w * this.get('scale')} × ${GS_DISPLAY.h * this.get('scale')})`],
-      ['Frame', String(frame)]];
-    if (this.statsLast) {
-      const s = (now - this.statsLast.t) / 1000;
-      rows.push(['Pictures per second', ((frame - this.statsLast.frame) / s).toFixed(1)]);
-      rows.push(['Game speed', `${((vblanks - this.statsLast.vblanks) / s / PS2_VBLANKS_PER_S * 100).toFixed(0)}%`]);
-    }
-    if (this.renderer === 'webgpu') rows.push(['WebGPU device errors', String(this.get('webgpu_errors'))]);
-    this.statsLast = { t: now, frame, vblanks };
-    document.getElementById('dev-stats').replaceChildren(...rows.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v)]));
   }
 
   // ---- opening, closing, keys ------------------------------------------------------------------------------------
@@ -436,7 +420,7 @@ class Bt3Settings {
     this.openButton.setAttribute('aria-expanded', 'true');
     const tab = this.dialog.querySelector('[role=tab][aria-selected=true]');
     tab.focus();
-    if (document.getElementById('dev').open) this.statsRun(true);
+    if (document.getElementById('dev').open) this.dashboard.run(true);
   }
 
   close() {
@@ -444,7 +428,7 @@ class Bt3Settings {
     if (this.capturing) { this.call('Bt3Ui_CaptureCancel', null, []); }
     this.call('Bt3Ui_SetOpen', null, [0]);
     this.dialog.close();
-    this.statsRun(false);
+    this.dashboard.run(false);
     this.openButton.setAttribute('aria-expanded', 'false');
     // back to the game (its keyboard is the canvas's), unless the panel was opened from another control of the page
     (this.opener && this.opener !== document.body && this.opener !== this.openButton ? this.opener : this.canvas).focus();
