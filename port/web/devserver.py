@@ -7,10 +7,12 @@
   - Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy (cross-origin isolation, for SharedArrayBuffer and
     precise memory measurement) unless --no-isolation;
   - POST /__result?name=<n>: appends the request body to <folder>/__results/<n>.txt (test pages report here);
-  - extra mounts: --mount /gamedata=D:/path/to/gamedata serves another folder under a URL prefix.
+  - extra mounts: --mount /gamedata=D:/path/to/gamedata serves another folder under a URL prefix. A mount may lie
+    inside another (--mount /gamedata/stages=D:/my/stages): the longest prefix wins;
+  - GET <folder>/?list: the folder's entries as JSON (the browser build looks through the data folder with it).
 
 Usage: python port/web/devserver.py [--port 8080] [--root DIR] [--mount /prefix=DIR]... [--no-isolation]"""
-import argparse, http.server, os, pathlib, re, shutil, sys, urllib.parse
+import argparse, http.server, json, os, pathlib, re, shutil, sys, urllib.parse
 
 TYPES = {".wasm": "application/wasm", ".js": "text/javascript", ".mjs": "text/javascript", ".html": "text/html",
          ".json": "application/json", ".txt": "text/plain; charset=utf-8", ".css": "text/css", ".png": "image/png",
@@ -33,20 +35,42 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Cache-Control", "no-cache")
 
-    def resolve(self, path):
+    def resolve(self, path, folder_as_is=False):
         path = urllib.parse.unquote(path.split("?", 1)[0])
-        for prefix, folder in self.mounts.items():
+        for prefix in sorted(self.mounts, key=len, reverse=True):  # the longest prefix: a mount inside a mount wins
             if path == prefix or path.startswith(prefix + "/"):
-                base, rel = folder, path[len(prefix):]
+                base, rel = self.mounts[prefix], path[len(prefix):]
                 break
         else:
             base, rel = self.root, path
         f = (base / rel.lstrip("/")).resolve()
         if base.resolve() not in f.parents and f != base.resolve():
             return None  # outside the served folder
-        if f.is_dir():
+        if f.is_dir() and not folder_as_is:
             f = f / "index.html"
         return f
+
+    def send_listing(self):
+        """GET <folder>/?list: the folder's entries as JSON, [{"name", "dir", "size"}] (the browser build looks through
+        the data folder with it: added stages, songs, texture packs). Mounts directly inside the folder are entries."""
+        f = self.resolve(self.path, folder_as_is=True)
+        if f is None or not f.is_dir():
+            return self.send_error_text(404, "not a folder\n")
+        entries = {e.name: {"name": e.name, "dir": e.is_dir(), "size": 0 if e.is_dir() else e.stat().st_size}
+                   for e in f.iterdir()}
+        here = urllib.parse.unquote(self.path.split("?", 1)[0]).rstrip("/")
+        for prefix in self.mounts:
+            parent, _, name = prefix.rpartition("/")
+            if parent == here and name and self.mounts[prefix].is_dir():
+                entries[name] = {"name": name, "dir": True, "size": 0}
+        body = json.dumps(sorted(entries.values(), key=lambda e: e["name"])).encode()
+        self.send_response(200)
+        self.common_headers()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def send_error_text(self, code, text):
         body = text.encode()
@@ -62,6 +86,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self):
+        if urllib.parse.urlparse(self.path).query == "list":
+            return self.send_listing()
         f = self.resolve(self.path)
         if f is None or not f.is_file():
             return self.send_error_text(404, "not found\n")

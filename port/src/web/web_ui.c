@@ -100,6 +100,11 @@ VIDEO_FIELD(texPack)
 static int get_texPackCount(void) { PortVideo v; GsGpu_GetSettings(&v); return v.texPackCount; }
 /* Content added from outside the disc: what was found, and whether it has been looked for yet (web_extras.c) */
 extern int PortStages_Count(void), PortSongs_Count(void), WebExtras_Checked(void);
+/* Whether the data server lists its folders; -1 while not asked yet (it is asked by the game's first look, at start:
+   asking from here, outside the game's own run, could not wait for the answer) */
+static int sListable = -1;
+static int get_data_listable(void) { return sListable; }
+void WebUi_NoteListable(int can) { sListable = can; }
 /* Whether the game data was checked against the original disc's (web_verify.c) */
 extern int WebVerify_State(void);
 
@@ -181,6 +186,7 @@ static const struct {
     {"added_checked", WebExtras_Checked, NULL},
     {"added_stage_count", PortStages_Count, NULL},
     {"added_song_count", PortSongs_Count, NULL},
+    {"data_listable", get_data_listable, NULL},
     {"data_check", WebVerify_State, NULL},
     {"interp", get_interp, set_interp},
     {"interp_limit", get_interp_limit, NULL},

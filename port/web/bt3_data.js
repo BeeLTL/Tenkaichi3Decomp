@@ -17,6 +17,8 @@ class Bt3Data {
     this.pending = new Map();  // "rel#index" -> Promise of the block being fetched
     this.cached = 0;
     this.sizes = new Map();
+    this.listings = new Map(); // folder -> its entries (null: no such folder), from the server's listing
+    this.listable = undefined; // whether the server lists folders (canList)
     this.manifest = null;
     this.stats = { requests: 0, bytes: 0, hits: 0, misses: 0, errors: 0, files: 0 };
     this.module = null;        // set by the page: the Emscripten module (for HEAPU8)
@@ -38,6 +40,62 @@ class Bt3Data {
       this.log(`data: no manifest (${e.message})`);
     }
     return 0;
+  }
+
+  // Looking through the data folder (the engine's web_fs.c: stat, opendir, for added stages, songs, texture packs).
+  // The server lists a folder at <folder>/?list as JSON [{name, dir, size}] (port/web/devserver.py does). Whether it
+  // does is asked once, with the data folder itself: another server answers with a page or an error instead.
+  async canList() {
+    if (this.listable === undefined) {
+      try {
+        this.listable = (await this.list('')) !== null;
+        if (!this.listable) this.log('data: the data server does not list its folder (port/web/devserver.py does): added stages, songs and texture packs cannot be found');
+      } catch (e) {
+        this.listable = false;
+        this.log(`data: the data folder cannot be looked through: ${e.message}`);
+      }
+    }
+    return this.listable;
+  }
+
+  // A folder's entries, or null if there is no such folder (the server's 404). Throws when the answer is not a
+  // listing (a server that does not list folders) or the server failed.
+  async list(rel) {
+    if (this.listings.has(rel)) return this.listings.get(rel);
+    const what = `listing of ${rel || 'the data folder'}`;
+    let r;
+    try {
+      r = await fetch((rel ? this.url(rel) + '/' : this.base) + '?list', { cache: 'no-cache' });
+    } catch (e) {
+      this.stats.errors++;
+      throw new Error(`${what}: ${e.message}`);
+    }
+    this.stats.requests++;
+    let entries = null;
+    if (r.ok) {
+      if (!(r.headers.get('Content-Type') || '').startsWith('application/json')) throw new Error(`${what}: not a listing (the server does not list folders)`);
+      entries = await r.json();
+      if (!Array.isArray(entries)) throw new Error(`${what}: not a listing`);
+    } else if (r.status !== 404) {
+      this.stats.errors++;
+      throw new Error(`${what}: HTTP ${r.status}`);
+    }
+    this.listings.set(rel, entries);
+    return entries;
+  }
+
+  // What is at `rel`, from its folder's listing: a file's size; -1 nothing; -3 a folder; -2 the server failed.
+  async statOf(rel) {
+    if (rel === '') return -3;
+    const at = rel.lastIndexOf('/');
+    try {
+      const entries = await this.list(at < 0 ? '' : rel.slice(0, at));
+      const e = entries && entries.find((x) => x.name === rel.slice(at + 1));
+      return !e ? -1 : e.dir ? -3 : e.size;
+    } catch (e) {
+      this.log(`data: ${e.message}`);
+      return -2;
+    }
   }
 
   // A file's size in bytes; -1 if the server has no such file; -2 if the server failed.

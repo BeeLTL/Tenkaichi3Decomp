@@ -397,23 +397,25 @@ class Bt3Settings {
   // Content added from outside the disc (the engine's web_extras.c): what was found, or why nothing can be.
   buildAdded() {
     const box = el('div', { class: 'row' });
-    const status = el('p', { class: 'help' });
-    box.append(el('h3', {}, 'Added stages, songs and texture packs'), status);
+    const kinds = [
+      { label: 'Stages', key: 'added_stage_count', one: 'added stage', many: 'added stages', folder: 'stages', listed: true },
+      { label: 'Songs', key: 'added_song_count', one: 'added song', many: 'added songs', folder: 'songs', listed: true },
+      { label: 'Texture packs', key: 'texture_pack_count', one: 'replacement texture', many: 'replacement textures', listed: false },
+    ];
+    const lines = kinds.map(() => el('p', { class: 'help' }));
+    box.append(el('h3', {}, 'Added stages, songs and texture packs'), ...lines);
+    const noListing = 'not available: the data server does not list its folders, so files added to the data folder cannot be found ' +
+      '(port/web/devserver.py lists them).';
     this.refreshers.push(() => {
-      const kinds = [[this.get('added_stage_count'), 'added stage', 'added stages', 'Stages'],
-                     [this.get('added_song_count'), 'added song', 'added songs', 'Songs'],
-                     [this.get('texture_pack_count'), 'replacement texture', 'replacement textures', 'Texture packs']];
-      const found = kinds.filter(([n]) => n > 0), missing = kinds.filter(([n]) => n === 0);
-      const why = 'The native version finds them in folders next to the game (stages, songs, textures); here the game’s data ' +
-        'folder is read over the network one file at a time and cannot be looked through, so files added there are not found.';
-      if (this.get('added_checked') !== ADDED_ALL_CHECKED) {
-        status.textContent = 'Not looked for yet: the game looks for them while it starts.';
-      } else if (found.length === 0) {
-        status.textContent = `Not available in the browser version. ${why}`;
-      } else {
-        status.textContent = `Found: ${found.map(([n, one, many]) => `${n} ${n === 1 ? one : many}`).join(', ')}. ` +
-          `${missing.map(([, , , label], i) => (i ? label.toLowerCase() : label)).join(' and ')}: not available in the browser version. ${why}`;
-      }
+      const looked = this.get('added_checked') === ADDED_ALL_CHECKED, listable = this.get('data_listable') === 1;
+      kinds.forEach((k, i) => {
+        const n = this.get(k.key);
+        lines[i].textContent = `${k.label}: ` + (!looked ? 'not looked for yet (the game looks while it starts).'
+          : n > 0 ? `${n} ${n === 1 ? k.one : k.many}.`
+          : !k.listed ? 'not available in the browser version yet.'
+          : !listable ? noListing
+          : `none (the data folder has no ${k.folder} folder with any).`);
+      });
     });
     return box;
   }
