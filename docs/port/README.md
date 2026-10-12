@@ -2083,7 +2083,7 @@ If the number is higher than this program's:
   `https://github.com/<repo>/releases/latest` in the browser (`SDL_OpenURL`).
 Nothing is downloaded or installed by the game. Updating is copying the new files over the old ones.
 
-F1, UI: "Check for updates" (setting `update_check`, on by default) turns the request off. It is not made under the
+F1, Misc (a tab of its own, the seventh): "Check for updates" (setting `update_check`, on by default) turns the request off. It is not made under the
 offscreen or dummy video drivers (test runs). `BT3_UPDATE_CHECK=1` / `0` overrides both; `BT3_UPDATE_LATEST=<n>`
 is taken as the answer without asking. `PORT_UPDATE_REPO` (port_release.h) names the repository: a fork that
 publishes its own releases changes it, or its players are told of this repository's.

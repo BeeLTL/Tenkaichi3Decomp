@@ -1089,6 +1089,19 @@ static int update_latest(void) {
     return sUpdCheck != 0 || SDL_getenv("BT3_UPDATE_CHECK") != NULL ? Match_UpdateLatest() : 0;
 }
 
+static void misc_tab(void) {
+    {
+        bool chk = sUpdCheck != 0;
+        if (ImGui::Checkbox("Check for updates", &chk)) {
+            sUpdCheck = chk;
+            Port_SettingSave("update_check", sUpdCheck);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("Once per start, ask GitHub for the number of the newest release and say so if it is newer\n"
+                              "than this one. Nothing is downloaded: the settings window then has a button to the page.");
+    }
+}
+
 static void ui_tab(PortVideo &v) {
     static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
     ImGui::Combo("HUD Style", &v.hudLayout, kHud, 3);
@@ -1117,16 +1130,6 @@ static void ui_tab(PortVideo &v) {
                               "a 4:3 picture, or the menus with \"Menus in 4:3\", in a wide window.\n"
                               "Your own: a folder \"bars\" next to the game with trim.png (the strip along the\n"
                               "picture, kept in proportion) and fill.png (stretched over the rest). Read at start.");
-    }
-    {
-        bool chk = sUpdCheck != 0;
-        if (ImGui::Checkbox("Check for updates", &chk)) {
-            sUpdCheck = chk;
-            Port_SettingSave("update_check", sUpdCheck);
-            Port_SettingsWrite();
-        }
-        ImGui::SetItemTooltip("Once per start, ask GitHub for the number of the newest release and say so if it is newer\n"
-                              "than this one. Nothing is downloaded: the settings window then has a button to the page.");
     }
     // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
     static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
@@ -1342,7 +1345,7 @@ static void build(void) {
         open = false;
     }
     if (sForceTab < 0 && (pad_pressed(ImGuiKey_GamepadL1) || pad_pressed(ImGuiKey_GamepadR1))) {
-        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 5 : 1)) % 6;
+        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 6 : 1)) % 7;
         sPadTab = true;
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -1401,6 +1404,7 @@ static void build(void) {
                 ImGui::EndTabItem();
             }
             if (tab("Cheats", 5)) { cheats_tab(); ImGui::EndTabItem(); }
+            if (tab("Misc", 6)) { misc_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         ImGui::EndChild();
