@@ -2029,3 +2029,9 @@ above and below.
 
 Checked offscreen from the window's own picture at 16:9 and 21:9 with "Menus in 4:3" on (Vulkan). The OpenGL
 renderer ran with it without fault but its window picture was not captured.
+
+**The option is "Border", and the pictures can be replaced.** The choice reads Black / Border. A folder `bars` next
+to the game (where `textures` goes) with a `trim.png` and / or a `fill.png` takes the place of the built-in gold
+set; either file alone replaces only its piece. Any size: the border is drawn as high as the picture and at its own
+width-to-height proportion, the panel is stretched. They are read once, when bars are first drawn, and the log says
+`bt3: side bars: bars/trim.png, W x H`. Checked offscreen at 16:9 with a made-up pair.

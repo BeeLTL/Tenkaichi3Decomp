@@ -202,17 +202,25 @@ static SDL_GPUTexture *load_strip(const char *env, const char *rel, uint32_t *w,
 
 // ---- the side bars ----
 // Where the picture is narrower than the window (a 4:3 picture, or "Menus in 4:3", in a wide window) the sides are
-// black, or with "Side bars: Orange" a gold panel with a key-pattern border along the picture. Two pictures
-// (port/assets/bars, art by the project's owner; in the program as bytes): the border, 34 x 720, kept in proportion
-// at the picture's edge, and the plain panel, 126 x 720, stretched over the rest, so a bar of any width looks right.
-// Both are drawn as they are on the left and mirrored on the right.
+// black, or with "Side bars: Border" a panel with a border along the picture. Two pictures: the border (trim.png),
+// kept in proportion at the picture's edge and as high as the picture, and the plain panel (fill.png), stretched
+// over the rest, so a bar of any width looks right. Both are drawn as they are on the left and mirrored on the right.
+// The program carries a gold set (port/assets/bars, art by the project's owner: 34 x 720 and 126 x 720). A player
+// replaces it by putting a trim.png and / or a fill.png of any size into a folder "bars" next to the game.
 #include "bars_png.h"
 static SDL_GPUTexture *sBarTrim, *sBarFill;
-static int sBars = -1; // 0 black, 1 orange; -1 not read yet
+static int sBars = -1; // 0 black, 1 the border; -1 not read yet
 static int sBarsTried;
 
-static SDL_GPUTexture *bar_texture(const unsigned char *png, size_t size) {
-    SDL_Surface *s = SDL_LoadPNG_IO(SDL_IOFromConstMem(png, size), true), *rgba;
+static float sBarTrimShape = 34.0f / 720.0f; // the border's width over its height
+
+static SDL_GPUTexture *bar_texture(const char *file, const unsigned char *png, size_t size, float *shape) {
+    SDL_Surface *s = SDL_LoadPNG(file), *rgba; // the player's own picture, if there is one
+    if (s != NULL) {
+        fprintf(stderr, "bt3: side bars: %s, %d x %d\n", file, s->w, s->h);
+    } else {
+        s = SDL_LoadPNG_IO(SDL_IOFromConstMem(png, size), true);
+    }
     uint8_t *pix;
     size_t bytes;
     if (s == NULL) {
@@ -222,6 +230,9 @@ static SDL_GPUTexture *bar_texture(const unsigned char *png, size_t size) {
     SDL_DestroySurface(s);
     if (rgba == NULL) {
         return NULL;
+    }
+    if (shape != NULL && rgba->h > 0) {
+        *shape = (float)rgba->w / (float)rgba->h;
     }
     bytes = (size_t)rgba->w * rgba->h * 4;
     pix = (uint8_t *)malloc(bytes);
@@ -243,8 +254,8 @@ static bool bars_on(void) {
 static void bars_draw(void) {
     if (!sBarsTried) {
         sBarsTried = 1;
-        sBarTrim = bar_texture(kBarsTrimPng, sizeof(kBarsTrimPng));
-        sBarFill = bar_texture(kBarsFillPng, sizeof(kBarsFillPng));
+        sBarTrim = bar_texture("bars/trim.png", kBarsTrimPng, sizeof(kBarsTrimPng), &sBarTrimShape);
+        sBarFill = bar_texture("bars/fill.png", kBarsFillPng, sizeof(kBarsFillPng), NULL);
     }
     if (sBarTrim == NULL || sBarFill == NULL) {
         return;
@@ -252,7 +263,7 @@ static void bars_draw(void) {
     ImDrawList *dl = ImGui::GetBackgroundDrawList();
     float y0 = (float)gUiPresentY, y1 = y0 + (float)gUiPresentH;
     float bar = (float)gUiPresentX; // the width of each side
-    float trim = (float)gUiPresentH * 34.0f / 720.0f;
+    float trim = (float)gUiPresentH * sBarTrimShape;
     float u0 = 0.0f;
     if (trim > bar) { // a bar narrower than the border: the border's inner part
         u0 = 1.0f - bar / trim;
@@ -1064,7 +1075,7 @@ static void ui_tab(PortVideo &v) {
                               "instead of stretched to the width. Fights keep the wide picture.");
     }
     {
-        static const char *const kBars[] = {"Black", "Orange"};
+        static const char *const kBars[] = {"Black", "Border"};
         int b = sBars > 0;
         if (ImGui::Combo("Side bars", &b, kBars, 2)) {
             sBars = b;
@@ -1072,7 +1083,9 @@ static void ui_tab(PortVideo &v) {
             Port_SettingsWrite();
         }
         ImGui::SetItemTooltip("What fills the sides where the picture is narrower than the window:\n"
-                              "a 4:3 picture, or the menus with \"Menus in 4:3\", in a wide window.");
+                              "a 4:3 picture, or the menus with \"Menus in 4:3\", in a wide window.\n"
+                              "Your own: a folder \"bars\" next to the game with trim.png (the strip along the\n"
+                              "picture, kept in proportion) and fill.png (stretched over the rest). Read at start.");
     }
     // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
     static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
