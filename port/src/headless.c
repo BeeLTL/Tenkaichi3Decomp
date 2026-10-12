@@ -37,6 +37,17 @@ static int sFromMenu;
    set up without menus (below); otherwise the real menus run (the overlay's Progress_Main, src/menu/menu_a_b.c). */
 extern int __real_Progress_Main(int arg);
 int gPortMenuMode;
+/* A menu screen that is a 3D scene (the character reference's model viewer) asks, every frame, to be shown as a
+   fight is while it runs: the wide projection, 2D kept in proportion. Only between the two lines of Progress_Main
+   below that set and clear the menu mode. */
+static int sMenuScene3D;
+void Port_MenuScene3D(int on) {
+    on = on != 0;
+    if (on != sMenuScene3D) {
+        sMenuScene3D = on;
+        gPortMenuMode = !on;
+    }
+}
 
 volatile int gPortUnlockAll, gPortUnlockDone;
 extern struct SaveData GAME_PTR gSaveData;

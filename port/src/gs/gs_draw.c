@@ -376,7 +376,24 @@ static int pipeline_get(int ctx, GsTopology topology, GsVertexSource vertices, i
         nz = getenv("BT3_NZ") != NULL ? atoi(getenv("BT3_NZ")) : 1;
     }
     s.noFragDepth = nz && GsPipeState_FragDepthRedundant(&s);
-    return sBackend->pipeGet(GsPipeKey_Encode(&s));
+    {
+        /* (upstream 0.1.33) The back end finds a pipeline by going through all it has made (some hundreds) and is asked
+           once for every primitive: 6% of a fight frame's processor time in a profile. The answer is remembered here by
+           key. A pipeline keeps its number for the whole run (they are only ever added: gs_gl.c pipe_get, gs_gpu.c,
+           web/gs_wgpu.c wg_pipe_get), so nothing goes stale. */
+        static struct { uint32_t key; int idx; } cache[4096]; /* idx + 1; 0 = empty */
+        uint32_t key = GsPipeKey_Encode(&s), h = (key * 2654435761u) >> 20;
+        int i;
+        if (cache[h].idx != 0 && cache[h].key == key) {
+            return cache[h].idx - 1;
+        }
+        i = sBackend->pipeGet(key);
+        if (i >= 0) {
+            cache[h].key = key;
+            cache[h].idx = i + 1;
+        }
+        return i;
+    }
 }
 
 /* The shared target table's entry for a frame-buffer address. The attachments are the back end's: a new
@@ -734,6 +751,69 @@ static void date_snapshot(const GsDraw *d) {
     if (gsDrawCount + 1 < MAX_DRAWS) {
         gsDraws[gsDrawCount++] = c;
     }
+}
+
+/* The part of the buffer the draws after snapshot `k` (a native 5) read the copied alpha in: the box around the run
+   of alpha-testing draws that follows it, in the buffer's own pixels, a little wider. A back end copies only that.
+   (The whole buffer was copied each time: nine times a frame for a fight's HUD, whose pieces are small. On an
+   integrated graphics chip at 3x those copies were a quarter of the frame's time: 45 pictures a second with them,
+   62 without. Measured 2026-10-12.) A run with a draw whose place is worked out by a vertex program is not known
+   here: then the whole buffer, as before. Returns 0 when there is nothing to copy. */
+int GsDraw_DateRegion(uint32_t k, int *rx, int *ry, int *rw, int *rh) {
+    const GsDraw *c = &gsDraws[k];
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    int W = GS_W * SCALE, H = GS_H * SCALE, ix0, iy0, ix1, iy1, whole = 0, any = 0;
+    uint32_t i, j;
+
+    for (i = k + 1; i < gsDrawCount; i++) {
+        const GsDraw *d = &gsDraws[i];
+        if (d->native || d->misc[1] == 0.0f || d->target != c->target) {
+            break;
+        }
+        any = 1;
+        if (d->vu || d->wall) {
+            whole = 1;
+            break;
+        }
+        for (j = 0; j < d->count; j++) {
+            const Vtx *v = &gsVerts[d->first + j];
+            if (!(v->x == v->x) || !(v->y == v->y)) { /* not a number: do not trust the box */
+                whole = 1;
+                break;
+            }
+            if (v->x < x0) { x0 = v->x; }
+            if (v->x > x1) { x1 = v->x; }
+            if (v->y < y0) { y0 = v->y; }
+            if (v->y > y1) { y1 = v->y; }
+        }
+    }
+    if (!any) {
+        return 0;
+    }
+    {
+        static int all = -1; /* BT3_DATE_WHOLE=1: the whole buffer every time, as it was (to compare pictures) */
+        if (all < 0) {
+            all = getenv("BT3_DATE_WHOLE") != NULL;
+        }
+        whole = whole || all;
+    }
+    if (whole || x1 < x0 || y1 < y0) {
+        *rx = 0, *ry = 0, *rw = W, *rh = H;
+        return 1;
+    }
+    x0 = (x0 - 2.0f) * (float)SCALE, y0 = (y0 - 2.0f) * (float)SCALE;
+    x1 = (x1 + 2.0f) * (float)SCALE, y1 = (y1 + 2.0f) * (float)SCALE;
+    ix0 = x0 < 0.0f ? 0 : x0 > (float)W ? W : (int)x0;
+    iy0 = y0 < 0.0f ? 0 : y0 > (float)H ? H : (int)y0;
+    ix1 = x1 < 0.0f ? 0 : x1 > (float)W ? W : (int)x1 + 1;
+    iy1 = y1 < 0.0f ? 0 : y1 > (float)H ? H : (int)y1 + 1;
+    if (ix1 > W) { ix1 = W; }
+    if (iy1 > H) { iy1 = H; }
+    if (ix1 <= ix0 || iy1 <= iy0) {
+        return 0; /* the run is off the buffer: nothing reads the copy */
+    }
+    *rx = ix0, *ry = iy0, *rw = ix1 - ix0, *rh = iy1 - iy0;
+    return 1;
 }
 
 /* Gs_StateBack (gs_core.c) moved every page's upload generation on by `delta`, so that nothing decoded from the

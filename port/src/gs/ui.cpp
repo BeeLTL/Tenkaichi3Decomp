@@ -12,6 +12,7 @@
 #include "imgui_impl_opengl3.h"
 #include "ui.h"
 #include "namefont.h"
+#include "../port_release.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -26,6 +27,8 @@ int Port_NetSpeedStandard(void);                   // what a quick match runs at
 void Port_NetNameSet(const char *name);         // gs/net.c: this player's name for the match
 int Port_IsWide(void);                         // plat_stub.c: the picture is wider than 4:3
 int Port_AspectMilli(void);
+void Match_UpdateAsk(void);                    // net_match.c: asks GitHub for the newest release, once
+int Match_UpdateLatest(void);                  // ... its number (0.1.33 is 133), 0 while unknown
 int Port_Menus43(void);                       // plat_stub.c: the menus are shown at 4:3 in a wider picture
 void Port_Menus43Set(int on);
 int Port_HudLayout(void);                      // gs_draw.c: 2 = the HUD is about the middle of the screen
@@ -1058,6 +1061,74 @@ static void effects_tab(PortVideo &v) {
     ImGui::SetItemTooltip("100%% is what the PlayStation 2 draws; the default here is 60%%.");
 }
 
+// ---- "an update is available" ----
+// Once per run the newest published release's number is asked of GitHub (net_match.c), unless "Check for updates" is
+// off. If it is newer than this program: a line over the picture for ten seconds, and a line with a button to the
+// release page at the top of this window for the rest of the run. Nothing is downloaded by the game.
+// Not when nobody is looking (the offscreen and dummy video drivers); BT3_UPDATE_CHECK=1 / 0 says otherwise, and
+// BT3_UPDATE_LATEST=<number> is taken as the answer without asking (testing).
+static int sUpdCheck = -1; // the setting; -1 not read yet
+static bool sUpdAsked, sUpdTold;
+
+static int update_latest(void) {
+    const char *fake = SDL_getenv("BT3_UPDATE_LATEST");
+    if (sUpdCheck < 0) {
+        sUpdCheck = Port_Setting("update_check", 1) != 0;
+    }
+    if (fake != NULL) {
+        return SDL_atoi(fake);
+    }
+    if (!sUpdAsked) {
+        const char *drv = SDL_GetCurrentVideoDriver(), *env = SDL_getenv("BT3_UPDATE_CHECK");
+        bool seen = drv == NULL || (SDL_strcmp(drv, "offscreen") != 0 && SDL_strcmp(drv, "dummy") != 0);
+        sUpdAsked = true;
+        if (env != NULL ? SDL_atoi(env) != 0 : (sUpdCheck != 0 && seen)) {
+            Match_UpdateAsk();
+        }
+    }
+    return sUpdCheck != 0 || SDL_getenv("BT3_UPDATE_CHECK") != NULL ? Match_UpdateLatest() : 0;
+}
+
+static void misc_tab(void) {
+    {
+        bool chk = sUpdCheck != 0;
+        if (ImGui::Checkbox("Check for updates", &chk)) {
+            sUpdCheck = chk;
+            Port_SettingSave("update_check", sUpdCheck);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("Once per start, ask GitHub for the number of the newest release and say so if it is newer\n"
+                              "than this one. Nothing is downloaded: the settings window then has a button to the page.");
+    }
+    // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
+    static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
+    if (sSkipLogos < 0) {
+        sSkipLogos = Port_Setting("skip_logos", 0) != 0;
+        sSkipIntro = Port_Setting("skip_intro", 0) != 0;
+        sSkipCopy = Port_Setting("skip_copyright", 0) != 0;
+    }
+    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0, copy = sSkipCopy != 0;
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Skip logos", &logos)) {
+        sSkipLogos = logos;
+        Port_SettingSave("skip_logos", sSkipLogos);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the publisher and developer logos. From the next start of the game.");
+    if (ImGui::Checkbox("Skip intro video", &intro)) {
+        sSkipIntro = intro;
+        Port_SettingSave("skip_intro", sSkipIntro);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the opening movie. From the next start of the game.");
+    if (ImGui::Checkbox("Skip copyright page", &copy)) {
+        sSkipCopy = copy;
+        Port_SettingSave("skip_copyright", sSkipCopy);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("The page of legal text shown for five seconds before the title screen, every time.");
+}
+
 static void ui_tab(PortVideo &v) {
     static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
     ImGui::Combo("HUD Style", &v.hudLayout, kHud, 3);
@@ -1087,33 +1158,6 @@ static void ui_tab(PortVideo &v) {
                               "Your own: a folder \"bars\" next to the game with trim.png (the strip along the\n"
                               "picture, kept in proportion) and fill.png (stretched over the rest). Read at start.");
     }
-    // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
-    static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
-    if (sSkipLogos < 0) {
-        sSkipLogos = Port_Setting("skip_logos", 0) != 0;
-        sSkipIntro = Port_Setting("skip_intro", 0) != 0;
-        sSkipCopy = Port_Setting("skip_copyright", 0) != 0;
-    }
-    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0, copy = sSkipCopy != 0;
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Skip logos", &logos)) {
-        sSkipLogos = logos;
-        Port_SettingSave("skip_logos", sSkipLogos);
-        Port_SettingsWrite();
-    }
-    ImGui::SetItemTooltip("Start without the publisher and developer logos. From the next start of the game.");
-    if (ImGui::Checkbox("Skip intro video", &intro)) {
-        sSkipIntro = intro;
-        Port_SettingSave("skip_intro", sSkipIntro);
-        Port_SettingsWrite();
-    }
-    ImGui::SetItemTooltip("Start without the opening movie. From the next start of the game.");
-    if (ImGui::Checkbox("Skip copyright page", &copy)) {
-        sSkipCopy = copy;
-        Port_SettingSave("skip_copyright", sSkipCopy);
-        Port_SettingsWrite();
-    }
-    ImGui::SetItemTooltip("The page of legal text shown for five seconds before the title screen, every time.");
 }
 
 extern "C" int gPortMusicFollows; // snd_adx.c: 1 = looping music is sped up or slowed down with the game
@@ -1301,12 +1345,26 @@ static void build(void) {
         open = false;
     }
     if (sForceTab < 0 && (pad_pressed(ImGuiKey_GamepadL1) || pad_pressed(ImGuiKey_GamepadR1))) {
-        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 5 : 1)) % 6;
+        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 6 : 1)) % 7;
         sPadTab = true;
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(640.0f, 600.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Settings", &open, ImGuiWindowFlags_NoCollapse)) {
+        {
+            int latest = update_latest();
+            if (latest > PORT_RELEASE) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: 0.%d.%d (this is 0.%d.%d).", latest / 100, latest % 100,
+                                   PORT_RELEASE / 100, PORT_RELEASE % 100);
+                ImGui::SameLine();
+                if (ImGui::Button("Download page")) {
+                    SDL_OpenURL("https://github.com/" PORT_UPDATE_REPO "/releases/latest");
+                }
+                ImGui::SetItemTooltip("Opens the release page in your browser. To update, copy the new files over the old ones.");
+                ImGui::Separator();
+            }
+        }
         // the tabs in a region of their own, above a last line that is always there
         ImGui::BeginChild("body", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y), ImGuiChildFlags_NavFlattened);
         if (ImGui::BeginTabBar("tabs")) {
@@ -1346,6 +1404,7 @@ static void build(void) {
                 ImGui::EndTabItem();
             }
             if (tab("Cheats", 5)) { cheats_tab(); ImGui::EndTabItem(); }
+            if (tab("Misc", 6)) { misc_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         ImGui::EndChild();
@@ -1534,6 +1593,12 @@ static bool frame_build(void) {
     } else if (sReady && gPortNetMenuRequest) { // Dragon Net Battle was chosen in the game's main menu
         gPortNetMenuRequest = 0;
         net_open();
+    }
+    if (sReady && !sUpdTold && update_latest() > PORT_RELEASE && SDL_GetTicks() >= sNoticeUntil) {
+        int latest = update_latest(); // (told once, and not over another notice)
+        sUpdTold = true;
+        SDL_snprintf(sNotice, sizeof(sNotice), "Update available: 0.%d.%d. F1 for the download page.", latest / 100, latest % 100);
+        sNoticeUntil = SDL_GetTicks() + 10000;
     }
     bool notice = sNotice[0] != '\0' && SDL_GetTicks() < sNoticeUntil;
     if (sNoticeNew) { // (set from the game's side: the time starts when it is first drawn)

@@ -80,6 +80,7 @@ static void set_state(int state, const char *error) {
 }
 
 /* ---- the Worker, through curl ---- */
+/* (http_post_native: `json` NULL makes it a GET of `url`, for the update check further down.) */
 
 #ifdef _WIN32
 /* Windows: its own HTTPS (WinHTTP), so nothing has to be installed and no other program is started. */
@@ -110,9 +111,11 @@ static int http_post_native(const char *url, const char *json, char *out, size_t
         con = WinHttpConnect(ses, host, uc.nPort, 0);
     }
     if (con != NULL) {
-        req = WinHttpOpenRequest(con, L"POST", path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
+        req = WinHttpOpenRequest(con, json != NULL ? L"POST" : L"GET", path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
     }
-    if (req != NULL && WinHttpSendRequest(req, L"Content-Type: application/json\r\n", (DWORD)-1, (LPVOID)json, (DWORD)strlen(json), (DWORD)strlen(json), 0) &&
+    if (req != NULL &&
+        (json != NULL ? WinHttpSendRequest(req, L"Content-Type: application/json\r\n", (DWORD)-1, (LPVOID)json, (DWORD)strlen(json), (DWORD)strlen(json), 0)
+                      : WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) &&
         WinHttpReceiveResponse(req, NULL)) {
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &len, WINHTTP_NO_HEADER_INDEX);
         while (used + 1 < size && WinHttpReadData(req, out + used, (DWORD)(size - 1 - used), &got) && got != 0) {
@@ -169,7 +172,12 @@ static int http_post_native(const char *url, const char *json, char *out, size_t
         return 0;
     }
     setopt(h, 10002 /* CURLOPT_URL */, url);
-    setopt(h, 10015 /* CURLOPT_POSTFIELDS */, json);
+    if (json != NULL) {
+        setopt(h, 10015 /* CURLOPT_POSTFIELDS */, json);
+    } else { /* a GET (the update check): GitHub answers nothing without a name, and sends on to another address */
+        setopt(h, 10018 /* CURLOPT_USERAGENT */, "Tenkaichi3Decomp");
+        setopt(h, 52 /* CURLOPT_FOLLOWLOCATION */, 1L);
+    }
     setopt(h, 10001 /* CURLOPT_WRITEDATA */, fp);
     setopt(h, 13 /* CURLOPT_TIMEOUT */, 12L);
     setopt(h, 99 /* CURLOPT_NOSIGNAL */, 1L);
@@ -689,6 +697,70 @@ static int SDLCALL queues_thread(void *arg) {
     }
     SDL_SetAtomicInt(&sQueueBusy, 0);
     return 0;
+}
+
+/* ---- is there a newer release? asked of GitHub, once per run, when the window is there ("Check for updates") ----
+   One GET of the repository's newest published release (drafts and pre-releases are not it); nothing is sent but
+   the request itself. The answer is long; the tag's name is near its start, and only the start is kept. */
+static SDL_AtomicInt sUpdLatest, sUpdBusy;
+
+static int SDLCALL update_thread(void *arg) {
+    static char answer[4096];
+    const char *url = "https://api.github.com/repos/" PORT_UPDATE_REPO "/releases/latest", *p;
+    int ok;
+
+    (void)arg;
+    ok = SDL_getenv("BT3_MATCH_CURL") == NULL && http_post_native(url, NULL, answer, sizeof(answer));
+    if (!ok) { /* the `curl` program, as for the service */
+#ifdef _WIN32
+        const char *args[] = {"curl.exe", "-s", "-L", "-m", "12", "-A", "Tenkaichi3Decomp", url, NULL};
+#else
+        const char *args[] = {"curl", "-s", "-L", "-m", "12", "-A", "Tenkaichi3Decomp", url, NULL};
+#endif
+        SDL_Process *pr = SDL_CreateProcess(args, true);
+        size_t got = 0;
+        int code = 0;
+        void *data = pr != NULL ? SDL_ReadProcess(pr, &got, &code) : NULL;
+        if (pr != NULL) {
+            SDL_DestroyProcess(pr);
+        }
+        if (data != NULL) {
+            SDL_strlcpy(answer, (const char *)data, sizeof(answer));
+            SDL_free(data);
+            ok = got > 0;
+        }
+    }
+    if (ok && (p = SDL_strstr(answer, "\"tag_name\"")) != NULL && (p = SDL_strchr(p + 10, 'v')) != NULL) {
+        int a = 0, b = 0, c = 0;
+        if (SDL_sscanf(p, "v%d.%d.%d", &a, &b, &c) == 3 && a == 0 && b >= 0 && c >= 0 && c < 100) {
+            SDL_SetAtomicInt(&sUpdLatest, b * 100 + c); /* as PORT_RELEASE counts: 0.1.33 is 133 */
+            fprintf(stderr, "bt3: update check: the newest release is 0.%d.%d, this is 0.%d.%d\n", b, c, PORT_RELEASE / 100, PORT_RELEASE % 100);
+        }
+    }
+    if (SDL_GetAtomicInt(&sUpdLatest) == 0) {
+        fprintf(stderr, "bt3: update check: no answer\n");
+    }
+    SDL_SetAtomicInt(&sUpdBusy, 0);
+    return 0;
+}
+
+void Match_UpdateAsk(void) {
+    SDL_Thread *t;
+    if (SDL_GetAtomicInt(&sUpdBusy)) {
+        return;
+    }
+    SDL_SetAtomicInt(&sUpdBusy, 1);
+    t = SDL_CreateThread(update_thread, "bt3-update", NULL);
+    if (t == NULL) {
+        SDL_SetAtomicInt(&sUpdBusy, 0);
+    } else {
+        SDL_DetachThread(t);
+    }
+}
+
+/* The newest published release's number (0: not asked, no answer yet, or none). */
+int Match_UpdateLatest(void) {
+    return SDL_GetAtomicInt(&sUpdLatest);
 }
 
 /* ---- is this release new enough? asked when the online screen opens ---- */

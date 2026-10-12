@@ -1051,7 +1051,10 @@ static void frame_end(void) {
         if (d->native == GS_NATIVE_COPY_DATE || d->native == GS_NATIVE_COPY_IDS) {
             GLuint dst = d->native == GS_NATIVE_COPY_DATE ? sDateCopy : sAuxCopy;
             GLenum one[1] = {GL_COLOR_ATTACHMENT0};
+            int rx = 0, ry = 0, rw = GS_W * SCALE, rh = GS_H * SCALE;
             if (!gsTargets[d->target].cleared) { continue; }
+            /* the DATE copy: only what the draws that follow read (gs_draw.c); rows as in the Vulkan back end */
+            if (d->native == 5 && !GsDraw_DateRegion(n, &rx, &ry, &rw, &rh)) { continue; }
             /* The copy of the frame's alpha ids (the outline and the DATE passes read it). glBlitFramebuffer is
                clipped by the scissor test, so with a partial scissor in force (the split screen's halves) only
                part of the alpha would be copied and the outline would draw a stale silhouette; turn it off for
@@ -1063,7 +1066,7 @@ static void frame_end(void) {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sScratchDraw);
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
             glDrawBuffers(1, one);
-            glBlitFramebuffer(0, 0, GS_W * SCALE, GS_H * SCALE, 0, 0, GS_W * SCALE, GS_H * SCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBlitFramebuffer(rx, ry, rx + rw, ry + rh, rx, ry, rx + rw, ry + rh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glEnable(GL_SCISSOR_TEST);

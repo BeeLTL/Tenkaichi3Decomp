@@ -269,6 +269,7 @@ extern GsBackend sWebGpuBackend; /* gs_wgpu.c (the browser build only) */
 /* gs_draw.c: the shared target table's entry for a frame-buffer address (create: one is made if absent,
    with the back end's attachments through GsBackend.targetEnsure). */
 int GsDraw_TargetGet(uint32_t fbp, int create);
+int GsDraw_DateRegion(uint32_t k, int *x, int *y, int *w, int *h); /* what the snapshot at draw k has to cover (0: nothing) */
 
 void GsGpu_TitlePoll(void); /* gs_draw.c */
 void GsDraw_FrameReset(void); /* gs_draw.c: the frame was replayed: an empty list for the next one */

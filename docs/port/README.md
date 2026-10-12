@@ -2035,3 +2035,127 @@ to the game (where `textures` goes) with a `trim.png` and / or a `fill.png` take
 set; either file alone replaces only its piece. Any size: the border is drawn as high as the picture and at its own
 width-to-height proportion, the panel is stretched. They are read once, when bars are first drawn, and the log says
 `bt3: side bars: bars/trim.png, W x H`. Checked offscreen at 16:9 with a made-up pair.
+
+## The model viewer is shown wide (2026-10-12)
+
+The character reference's model viewer (`ChrView`, battle code run from the menu screen `CharRef_Run` while its
+state is `CHARREF_ST_VIEW`) is a 3D scene, but it ran in menu mode, where the projection is the 4:3 one and the
+page is stretched to the width: the model and the arena came out a third too wide at 16:9 (seen by the user).
+`CharRef_Run` now calls `Port_MenuScene3D(state == VIEW)` every frame (headless.c): while it is on, the menu mode
+is off, so `Port_WideFactor` gives the wide projection (the view's matrices follow it within the frame, see
+`View_UpdateMatrices`) and the renderer treats 2D as in a fight. With "Menus in 4:3" the viewer fills the window
+like a fight does. Checked offscreen at 16:9 by jumping into the viewer with a temporary hook (not in the code):
+the model and the arena's columns have their proportions. Not seen: entering and leaving it by hand, and the
+viewer's own 2D (button hints), which is now narrowed about the middle like a fight's messages.
+
+## "Random" draws added stages and songs (2026-10-12)
+
+Asked by the user. In the duel's select (`CharSel_Run`, which Ultimate Training uses too: progress mode 0x2D) and the
+team select (`TeamSel_Run`), a chosen "random" was the game's own draw:
+- the stage: `stageIds[Rand_Range(stageCount - 1)]`, drawn again while the id is 0x23 ("random") or more. Added
+  stages are numbered from 0x24, and are listed after "random", so none could come out;
+- the song: `Rand_Range(9) + 8`, one of nine battle songs by number, whatever the list holds.
+
+With stages added (or replaced) the whole list is drawn from, and only "random" and the locked / empty markers
+(0x3E, 0x3F in the PC build) are drawn again. With songs added the song is any entry of the list before "random"
+(`CHARSEL_RANDOM_BGM` / `TS_RANDOM_BGM`), the disc's and the added alike. With nothing added, and in an online
+session (where nothing is added to the lists), both draws are the game's, call for call: recordings and online
+agreement are as before. The other modes' random stages (`Rand_Range(0x23)`) are left alone; added stages are not
+listed there. Not checked in the game: reaching the select needs a hand on the controller. The regression run and
+the matching build pass.
+
+## "An update is available" (2026-10-12)
+
+Asked by the user: players were only told of a newer release by the matchmaking service, and only once theirs was
+too old to be let online.
+
+Once per run, when the window is there, the game asks GitHub for the repository's newest published release:
+one GET of `https://api.github.com/repos/<PORT_UPDATE_REPO>/releases/latest` (net_match.c, `update_thread`; drafts
+and pre-releases are not "latest"). It goes out the way the matchmaking requests do: WinHTTP on Windows, the curl
+library on Linux, the `curl` program failing those (`http_post_native` with no body is a GET, with a user agent,
+which GitHub requires). Nothing is sent but the request. The tag `v0.a.b` becomes a number as `PORT_RELEASE`
+counts (0.1.33 is 133). The log says `bt3: update check: the newest release is 0.1.32, this is 0.1.32`, or
+`no answer`.
+
+If the number is higher than this program's:
+- a line over the picture for ten seconds, once: "Update available: 0.1.33. F1 for the download page.";
+- at the top of the settings window, for the rest of the run, the same with a "Download page" button, which opens
+  `https://github.com/<repo>/releases/latest` in the browser (`SDL_OpenURL`).
+Nothing is downloaded or installed by the game. Updating is copying the new files over the old ones.
+
+F1, Misc (a tab of its own, the seventh): "Check for updates" (setting `update_check`, on by default) turns the request off. It is not made under the
+offscreen or dummy video drivers (test runs). `BT3_UPDATE_CHECK=1` / `0` overrides both; `BT3_UPDATE_LATEST=<n>`
+is taken as the answer without asking. `PORT_UPDATE_REPO` (port_release.h) names the repository: a fork that
+publishes its own releases changes it, or its players are told of this repository's.
+
+GitHub allows 60 such requests an hour from one address without an account; one per start is far inside it, and a
+refused request is only "no answer".
+
+Checked on Linux: the real request by the library and by the program (both give 0.1.32); no request in an
+offscreen run without the override; with a pretended 0.1.40, the line over the picture and the settings window's
+row, from the window's own picture. Not checked: the WinHTTP path (written, not run), and the button's opening of
+a browser.
+
+**Where the options are (same day).** The settings window has a seventh tab, Misc: "Check for updates" and the
+three skip options (logos, intro video, copyright page), which were on the UI tab. The UI tab keeps HUD Style,
+"Menus in 4:3" and "Side bars". Earlier sections that say "F1, UI" for the skips mean this tab now.
+
+## Where the time goes on a weak graphics chip: the HUD's alpha copies (2026-10-12)
+
+Players with weak machines report low speed, and the user's own machine hides it. Measured on this machine's
+integrated graphics chip (Radeon, in a Ryzen 7 9800X3D), a recorded fight, 16:9, uncapped, all effects on:
+
+| resolution | pictures a second |
+|---|---|
+| 1x | 278 |
+| 2x (the default) | 96 |
+| 3x | 45 |
+| 4x | 25 |
+
+- The resolution multiplier decides nearly everything; the six effects together cost a tenth (96 with, 108 without).
+- On the fast graphics card the same fight gives about 243 at every resolution: that is the processor's limit, one
+  core (pinning the game to one core changes nothing). About 4 ms a frame on the fastest desktop processor there is.
+- Where the graphics chip's time went at 3x, found by drawing only the first n draws of every frame: the first
+  1,700 of 1,890 draws (the whole 3D scene) take 9 ms; the last 190 (the post effects and the HUD) take 13 ms.
+
+The cause of most of that tail: **every render target is 1024 x 1024 GS pixels times the multiplier** (gs_draw.h;
+the picture is 512 x 448 of it, a fifth), and the HUD's destination-alpha draws (TEST.DATE: a bar's fill cut to
+length, a word through a band) each had the whole target's alpha bytes copied for them, nine times a frame in a
+fight: 9.4 megapixels a copy at 3x. A copy of 8 x 8 pixels in its place gave the same speed as no copy at all, so
+the cost is the copy's size, not the break in drawing.
+
+**Fix:** `GsDraw_DateRegion` (gs_draw.c) gives the box around the run of draws that read the copy, and both back
+ends copy only that. A run with a draw placed by a vertex program still copies the whole target.
+`BT3_DATE_WHOLE=1` copies the whole target as before (to compare).
+
+| resolution | before | after |
+|---|---|---|
+| 2x | 96 | 117 |
+| 3x | 45 | 56 |
+
+Pictures compared old against new, identical in every pixel: five frames of the bubble fight and two of the
+waterfall fight (Vulkan), two of the bubble fight (OpenGL).
+
+**Still there, not done:**
+- The targets themselves: a fight uses 7 to 16 of them, 36 MB each at 2x and 81 MB at 3x, although the game draws
+  into at most 640 x 448 of each, and into 64 x 64 of the two smallest. Sizing them by need would cut the video
+  memory to a third or less; on a chip that shares a small machine's memory that may matter more than speed. It
+  touches about fifty places in the two back ends (sizes, the viewport, the coordinates of a target read as a
+  texture).
+- The processor's side (profile of the same fight): reading the game's picture transfers `Gs_Gif` 16%, the PS2's
+  float arithmetic done in software 18%, looking a pipeline up `pipe_get` 6%, hashing texture pages `Gs_PageHash`
+  6%, the graphics driver 13%.
+
+**Pipeline lookups remembered (same day).** `pipeline_get` asked the back end for a pipeline once per primitive,
+and the back end went through every pipeline it had made: 6% of the processor's time in the profile. The answer
+is now kept by key in gs_draw.c (pipelines are only ever added, so a number never goes stale). Where the processor
+is the limit, the integrated chip at 1x: 278 pictures a second before, 296 with this alone, 299 with the smaller
+copies too. No change on the fast card, whose limit is elsewhere. Three fight frames compared against the build
+without it: identical.
+
+**Looked at and left** (after the copy fix, at 3x, 17.9 ms a frame): the 3D scene 9.3 ms; the two table passes
+(depth tint, see-through tint) 1.7 ms; the draws that read a buffer as a texture (glare, blurs) 2.5 ms; the
+outline's copy of the ids 0.3 ms; the shadow buffer 1.1 ms. These are the effects themselves, which the Effects
+tab already turns off. The driver's buffer compression is not the cost (`RADV_DEBUG=nodcc,nohiz` changes nothing
+or is slower). Two measurements were thrown away: skipping "every buffer but the first" and "buffer 070" doubled
+the speed only because the game shows buffers 000 and 070 in turn, so every other frame was not drawn at all.
