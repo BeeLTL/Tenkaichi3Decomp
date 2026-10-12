@@ -1079,8 +1079,6 @@ static void qol_tab(void) {
         Port_SettingsWrite();
     }
     ImGui::SetItemTooltip("Automatically skip intro video without user input.");
-    ImGui::Text("SkipIntro: %d", qol.skipintro);
-    ImGui::Text("SkipLogos: %d", qol.skiplogos);
 }
 
 static void build(void) {
