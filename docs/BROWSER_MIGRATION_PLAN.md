@@ -60,6 +60,23 @@ RUN_WINDOWS=1 bash port/tests/native/compare.sh <rev A> <rev B> <gamedata folder
 
 It needs Docker. M9 requires it after each file it moves.
 
+### M9: progress (one shared file per commit)
+
+Each step is committed on a temporary local branch first, checked, and only then added to `browser-port`.
+
+**Checks per step.**
+- **Browser build:** `wasm_build.py port` + `link`, and `bt3.wasm` / `bt3.js` compared with the build before M9.
+- **Unit and build tests:** `wasm_sf`, `pipekey`, `web_data`, `wasm_mem`, `wgsl/check.js`.
+- **Demo and boot** on WebGL 2 and WebGPU: trace and 12 screenshots each, against `audit_base_*` / `audit_boot_*`.
+- **Page tests:** `dashboard` on both renderers, `controllers`, `verify`, `extras`, and `saves` where relevant.
+- **Native:** `REUSE=1 RUN_WINDOWS=1 port/tests/native/compare.sh fff151e <step>`.
+
+**Never covered** (see M0): the 32-bit GCC and Clang builds, rendering on a real GPU, opening the ImGui settings window, audio, online play, and the PS2 matching build.
+
+| Step | Shared file | What moved where | Commit (tested as) | Browser | Native vs `fff151e` |
+|---|---|---|---|---|---|
+| 1 | `port/tools/toolchain.py` | The unused `BT3_CC=wasm` entry removed; the file is identical to upstream | `a3b4c94` | `bt3.wasm` / `bt3.js` **byte-identical**; every check PASS | headless 70, OpenGL 13 + 4 screenshots, Vulkan 70 + 15 screenshots, win64 70: **all identical** |
+
 ## Principles
 
 1. The game code (`src/`, `include/`) stays as the PC port has it. The browser needs every `PORT` block (audit §2).

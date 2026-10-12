@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The WebAssembly build (BT3_CC=wasm): the game's sources and the port's code compiled with Emscripten.
+"""The WebAssembly build: the game's sources and the port's code compiled with Emscripten.
 
 The game's sources take the native build's route as far as it applies (portsrc.prepare, eeconst.transform), then:
   - ptr32.r2l: call arguments evaluated right to left, as the game's compiler does (clang evaluates left to right;

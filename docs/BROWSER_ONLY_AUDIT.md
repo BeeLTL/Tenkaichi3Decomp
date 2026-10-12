@@ -79,7 +79,7 @@ Classified into 9 categories. "Browser" means the file is compiled, run or read 
 - `portsrc.py`: the source list and `prepare()`, which turns the decompilation's `#if 0` C attempts on.
 - `eeconst.py`: the PS2 compiler's float constants.
 - `ptr32.py`: only `r2l`, the right-to-left argument order the game depends on. It needs Python `libclang` 18.1.1.
-- `toolchain.py`: the `BT3_CC=wasm` variant.
+- (`toolchain.py` is **not** used: the audit first listed it here; `wasm_build.py` does not import it. M9 reverted its `wasm` entry.)
 
 The browser does not use `ptr32`'s pointer narrowing.
 
