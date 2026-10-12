@@ -11,7 +11,7 @@ wasm32 already aligns long long / double to 8 bytes (what -malign-double gives t
 Usage (emcc on PATH):
   python port/tools/wasm_build.py one <source.c>...   compile those game sources only (objects in port/build/obj_wasm)
   python port/tools/wasm_build.py game                compile every game source (portsrc.sources())
-  python port/tools/wasm_build.py port [file...]      compile the port's code (port/src, gs/, web/, newlib maths, ImGui)
+  python port/tools/wasm_build.py port [file...]      compile the port's code (port/src, gs/, web/, newlib maths)
   python port/tools/wasm_build.py data                the data tables (wasm_data.py) and their disc-run list
   python port/tools/wasm_build.py link                stubs for what nobody defines, wasm_sig.py, link -> port/build/web
 """
@@ -134,7 +134,8 @@ def shaders_header():
     (GEN / "shaders.h").write_text("/* generated from port/src/gs/shaders by port/tools/wasm_build.py */\n" + "".join(arrays))
 
 # The names port_jobs gives the port's objects start with these (the game's own objects are named after their folders
-# under src/: battle_, menu_, sys_, main).
+# under src/: battle_, menu_, sys_, main). "cxx" is no longer made (the C++ settings window is not built for the
+# browser): it stays so that such an object left from an older build is removed before the link.
 PORT_OBJ_PREFIXES = {"nl", "pc", "gs", "web", "cxx"}
 
 def port_jobs():

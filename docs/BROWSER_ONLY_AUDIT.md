@@ -162,9 +162,11 @@ The following are already excluded from the browser build, with nothing left to 
 
 ### 5.3 Inconsistencies (fact)
 
-- `port/web/bt3_data.js` names `port/web/make_manifest.py`, **which does not exist**. Sizes therefore always come from one HEAD request per file. That fallback is stated in the code, not silent.
-- `wasm_build.py`'s usage text says the port mode compiles "ImGui", and `PORT_OBJ_PREFIXES` lists `cxx`. Neither is true since the page-side settings panel.
+- `port/web/bt3_data.js` named `port/web/make_manifest.py`, **which does not exist**. Sizes therefore always come from one HEAD request per file. That fallback is stated in the code, not silent. The comment now says that no tool makes the manifest yet (M4).
+- `wasm_build.py`'s usage text said the port mode compiles "ImGui". Corrected (M4).
+  - `PORT_OBJ_PREFIXES` lists `cxx`. This is **not** stale: it removes C++ objects left over from older builds before the link. A comment now says so (M4).
 - `plat_stub.c`'s header says "Headless stand-ins", and `headless.c` is named after its history. Both now hold real runtime code (pacing, pads, menus).
+  - These are **upstream files**, so they are left as they are: changing a comment there would only add merge conflicts.
 - **Build reproducibility.** `shaders.h` embeds the shader text with its line endings. With `core.autocrlf=true`, a fresh clone has CRLF in the 4 shaders whose working copies here are LF (`alphakey`, `blit`, `dclut`, `outline` `.frag`). The result is a different `bt3.wasm` with identical output. Plan task M5.
 - The `port/tests/wasm_mem/build.py` verdict reads FAIL because it scores the rejected layout A as well (224 MB). Layout B passes 17/17 (1,472 MB). This is a test-design flaw, not a regression. Plan task M6.
 

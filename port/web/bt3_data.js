@@ -3,8 +3,8 @@
 // The data folder (gamedata/, made from the user's own disc image) stays on a server the user runs for
 // themselves (port/web/devserver.py, 127.0.0.1); nothing of it is part of the build. Files are read in blocks with
 // HTTP Range requests and kept in an in-memory block cache (least recently used block dropped first). Sizes come
-// from <base>manifest.json (names and sizes only; made by port/web/make_manifest.py) when it exists, else from a
-// HEAD request per file.
+// from <base>manifest.json (names and sizes only) when it exists, else from a HEAD request per file. No tool in the
+// repository makes that manifest yet: today the sizes come from HEAD requests.
 'use strict';
 
 class Bt3Data {
