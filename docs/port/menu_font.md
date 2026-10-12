@@ -1,6 +1,7 @@
 # Menu fonts
 
-Font choices come from the `.ttf` files found recursively in `port/third_party/fonts/`,
+Font choices come from the `.ttf` files found recursively in `port/third_party/fonts/menu/`
+and `port/third_party/fonts/dialogue/`,
 using their font family/style names. The choice is saved independently of the list order.
 
 Selected and unselected labels, including added song and stage names, use the chosen font.
@@ -28,7 +29,9 @@ existing text edits are kept, while catalog layout corrections are refreshed. Re
 
 ## Add a font
 
-Put a `.ttf` anywhere under `port/third_party/fonts/`. Regenerate and restart:
+Put a `.ttf` under `port/third_party/fonts/menu/` for Menu font, or
+`port/third_party/fonts/dialogue/` for Dialogue / UI font. Subfolders work.
+To offer a font in both lists, put a copy in each folder. Regenerate and restart:
 
 ```sh
 python3 port/tools/menu_font.py --apply

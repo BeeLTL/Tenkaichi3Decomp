@@ -680,6 +680,9 @@ def prepare_bundled_fonts(out):
         if not source.is_file() or source.suffix.lower() != '.ttf':
             continue
         relative=source.relative_to(root)
+        if relative.parts[0] not in ('menu','dialogue'):
+            continue
+        usage=1 if relative.parts[0]=='menu' else 2
         key=relative.as_posix()
         if len(key.encode('utf-8')) > 255 or any(ord(c)<32 for c in key):
             raise ValueError(f'{key}: font path is too long or contains control characters')
@@ -701,16 +704,16 @@ def prepare_bundled_fonts(out):
         license=source.parent/'LICENSE'
         if license.is_file():
             shutil.copy2(license,target.parent/'LICENSE')
-        entries.append((key,name))
+        entries.append((key,name,usage))
     if not entries:
-        raise ValueError('No compatible .ttf fonts found in port/third_party/fonts')
+        raise ValueError('No compatible .ttf fonts found in port/third_party/fonts/menu or dialogue')
     # Duplicate metadata names are distinguished by their relative source path.
-    counts=collections.Counter(name for key,name in entries)
-    lines=['# BT3 menu fonts v1: relative_path display_name']
-    for key,name in entries:
-        if counts[name]>1:
+    counts=collections.Counter((usage,name) for key,name,usage in entries)
+    lines=['# BT3 menu fonts v2: relative_path display_name usage (1=menu, 2=dialogue)']
+    for key,name,usage in entries:
+        if counts[usage,name]>1:
             name=f'{name} ({key})'
-        lines.append(key+'\t'+name)
+        lines.append(key+'\t'+name+'\t'+str(usage))
     (out/'fonts.tsv.tmp').write_text('\n'.join(lines)+'\n',encoding='utf-8')
     (out/'fonts.tsv.tmp').replace(out/'fonts.tsv')
     return out/'fonts'/entries[0][0]

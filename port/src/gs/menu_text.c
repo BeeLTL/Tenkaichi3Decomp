@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <pthread.h>
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../../third_party/imgui/imstb_truetype.h"
@@ -29,7 +30,7 @@ static stbtt_fontinfo sFont;
 
 typedef struct MenuFont {
     char file[256], name[768];
-    int id;
+    int id, usage;
 } MenuFont;
 static MenuFont *sFonts;
 static int sFontCount, sFontsLoaded;
@@ -54,11 +55,14 @@ static void menu_text_fonts(void) {
     if (fp == NULL) { return; }
     while (fgets(line, sizeof(line), fp) != NULL) {
         MenuFont font, *next;
-        char *name;
+        char *name, *usage;
         size_t n, i;
         unsigned id = 2166136261u;
         if (line[0] == '#' || (name = strchr(line, '\t')) == NULL) { continue; }
         *name++ = '\0';
+        font.usage = 3;
+        usage = strchr(name, '\t');
+        if (usage != NULL) { *usage++ = '\0'; font.usage = atoi(usage) & 3; }
         n = strlen(line);
         if (!n || n >= sizeof(font.file) || line[0] == '/' || strchr(line, '\\') || strchr(line, ':') ||
             strcmp(line, "..") == 0 || strncmp(line, "../", 3) == 0 || strstr(line, "/../")) { continue; }
@@ -76,6 +80,11 @@ static void menu_text_fonts(void) {
 }
 
 int MenuText_FontCount(void) { menu_text_fonts(); return sFontCount + 1; }
+
+int MenuText_FontAvailable(int choice, int shared) {
+    return choice == 0 || (choice > 0 && choice < MenuText_FontCount() &&
+                          (sFonts[choice - 1].usage & (shared ? 2 : 1)) != 0);
+}
 
 const char *MenuText_FontName(int choice) {
     return choice > 0 && choice < MenuText_FontCount() ? sFonts[choice - 1].name : "Original";
@@ -96,7 +105,7 @@ void MenuText_SetFontId(int id) {
 int MenuText_GetFont(void) { return sFontChoice; }
 
 void MenuText_SetFont(int choice) {
-    choice = choice < 0 || choice >= MenuText_FontCount() ? 0 : choice;
+    choice = MenuText_FontAvailable(choice, 0) ? choice : 0;
     if (choice == sFontChoice) { return; }
     sFontChoice = choice;
     free(sFontData);
@@ -468,4 +477,283 @@ uint8_t *MenuText_RenderSong(const char *text, int selected, int scale, int *out
 
 uint8_t *MenuText_RenderStage(const char *text, int scale, int *outWidth, int *outHeight) {
     return menu_text_render_name(text, 2, scale, outWidth, outHeight);
+}
+
+/* The game's font sheets pack four glyph planes into one indexed texture. Each CLUT selects one plane.
+   Only glyph cells are replaced; sprites, tags and the game's shadow/color/clip passes stay unchanged. */
+typedef struct SharedGlyph { uint16_t code, u, v; } SharedGlyph;
+typedef struct SharedSheet {
+    int tbp, cbp, count, cap, baseline, calibrated;
+    SharedGlyph *glyphs;
+} SharedSheet;
+typedef struct SharedRect { int x, y, w, h, top, bottom; } SharedRect;
+typedef struct SharedLayout {
+    int choice, cap, baseline, width, sourceHeight, height;
+    SharedRect *rects;
+} SharedLayout;
+static SharedSheet sSharedSheets[7];
+static SharedLayout sSharedLayouts[7][4];
+static int sSharedChoice, sSharedLoaded;
+static unsigned char *sSharedData;
+static stbtt_fontinfo sSharedFont;
+static int sSharedCap;
+static pthread_mutex_t sSharedLock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t sSharedGeneration;
+
+int MenuText_GetSharedFont(void) { return sSharedChoice; }
+
+uint32_t MenuText_SharedGeneration(void) {
+    uint32_t generation;
+    pthread_mutex_lock(&sSharedLock); generation = sSharedGeneration; pthread_mutex_unlock(&sSharedLock);
+    return generation;
+}
+
+void MenuText_SetSharedFont(int choice) {
+    if (!MenuText_FontAvailable(choice, 1)) { choice = 0; }
+    if (choice == sSharedChoice) { return; }
+    pthread_mutex_lock(&sSharedLock);
+    sSharedChoice = choice; sSharedLoaded = sSharedCap = 0;
+    free(sSharedData); sSharedData = NULL;
+    memset(&sSharedFont, 0, sizeof(sSharedFont));
+    pthread_mutex_unlock(&sSharedLock);
+}
+
+void MenuText_SetSharedFontId(int id) {
+    int i, choice = 0;
+    for (i = 1; i < MenuText_FontCount(); i++) {
+        if (MenuText_FontId(i) == id) { choice = i; break; }
+    }
+    MenuText_SetSharedFont(choice);
+}
+
+void MenuText_RegisterGlyphs(int tbp, int cbp, const void *glyphs, int count, int lineHeight) {
+    SharedSheet *sheet;
+    int slot = cbp >= 0x2A00 ? (cbp - 0x2A00) / 0x208 : -1, i;
+    if (slot < 0 || slot >= 7 || cbp != 0x2A00 + slot * 0x208 || tbp != cbp + 8 ||
+        glyphs == NULL || count < 1 || count > 65536 || lineHeight < 1 || lineHeight > 64) { return; }
+    pthread_mutex_lock(&sSharedLock);
+    sheet = &sSharedSheets[slot];
+    if (sheet->count == count && sheet->tbp == tbp && sheet->cbp == cbp &&
+        memcmp(sheet->glyphs, glyphs, (size_t)count * sizeof(*sheet->glyphs)) == 0) {
+        pthread_mutex_unlock(&sSharedLock); return;
+    }
+    if (sheet->count != count) {
+        SharedGlyph *copy = realloc(sheet->glyphs, (size_t)count * sizeof(*copy));
+        if (copy == NULL) { pthread_mutex_unlock(&sSharedLock); return; }
+        sheet->glyphs = copy;
+    }
+    memcpy(sheet->glyphs, glyphs, (size_t)count * sizeof(*sheet->glyphs));
+    sheet->tbp = tbp; sheet->cbp = cbp; sheet->count = count;
+    sheet->cap = lineHeight;
+    for (i = 0; i < count; i++) {
+        if (sheet->glyphs[i].code == 'H') {
+            int h = (sheet->glyphs[i].v >> 10) & 31;
+            if (h) { sheet->cap = h; }
+            break;
+        }
+    }
+    sheet->baseline = sheet->cap; sheet->calibrated = 0;
+    sSharedGeneration++;
+    for (i = 0; i < 4; i++) {
+        SharedLayout *layout = &sSharedLayouts[slot][i];
+        free(layout->rects); memset(layout, 0, sizeof(*layout));
+    }
+    pthread_mutex_unlock(&sSharedLock);
+}
+
+static int menu_text_shared_load(void) {
+    char root[1024], path[1400];
+    const char *dir;
+    FILE *fp;
+    long size;
+    int offset, x0, y0, x1, y1;
+    if (sSharedLoaded) { return sSharedCap > 0; }
+    sSharedLoaded = 1;
+    if (!sSharedChoice || sSharedChoice >= MenuText_FontCount()) { return 0; }
+    dir = menu_text_directory(root, sizeof(root));
+    if (!dir[0]) { return 0; }
+    snprintf(path, sizeof(path), "%s/fonts/%s", dir, sFonts[sSharedChoice - 1].file);
+    fp = fopen(path, "rb");
+    if (fp == NULL) { return 0; }
+    if (fseek(fp, 0, SEEK_END) || (size = ftell(fp)) < 256 || size > 4 * 1024 * 1024 || fseek(fp, 0, SEEK_SET)) {
+        fclose(fp); return 0;
+    }
+    sSharedData = malloc((size_t)size);
+    if (!sSharedData || fread(sSharedData, 1, (size_t)size, fp) != (size_t)size) {
+        fclose(fp); free(sSharedData); sSharedData = NULL; return 0;
+    }
+    fclose(fp);
+    offset = stbtt_GetFontOffsetForIndex(sSharedData, 0);
+    if (offset < 0 || !stbtt_InitFont(&sSharedFont, sSharedData, offset) ||
+        !stbtt_GetCodepointBox(&sSharedFont, 'H', &x0, &y0, &x1, &y1) || y1 <= y0) { return 0; }
+    sSharedCap = y1 - y0;
+    fprintf(stderr, "bt3: shared text font: %s\n", MenuText_FontName(sSharedChoice));
+    return 1;
+}
+
+/* Each plane gets its own packed atlas. Padding follows the selected font's actual bounds, so
+   descenders and accents fit without changing the cap height or borrowing pixels from the next glyph. */
+static SharedLayout *menu_text_shared_layout(SharedSheet *sheet, int plane, int width, int height) {
+    SharedLayout *layout = &sSharedLayouts[sheet - sSharedSheets][plane];
+    int i, x = 1, y = 1, rowHeight = 0, bottom = 1;
+    float sy = (float)sheet->cap / sSharedCap;
+    if (layout->rects && layout->choice == sSharedChoice && layout->cap == sheet->cap &&
+        layout->baseline == sheet->baseline && layout->width == width && layout->sourceHeight == height) { return layout; }
+    free(layout->rects); memset(layout, 0, sizeof(*layout));
+    layout->rects = calloc((size_t)sheet->count, sizeof(*layout->rects));
+    if (!layout->rects) { return NULL; }
+    for (i = 0; i < sheet->count; i++) {
+        SharedGlyph *g = &sheet->glyphs[i];
+        SharedRect *r = &layout->rects[i];
+        int gx = g->u & 1023, gy = g->v & 1023, w = (g->u >> 10) & 31, h = (g->v >> 10) & 31;
+        int x0, y0, x1, y1;
+        if (((g->u >> 15) | ((g->v >> 15) << 1)) != plane || !w || !h || gx+w > width || gy+h > height) { continue; }
+        if (stbtt_FindGlyphIndex(&sSharedFont, g->code) &&
+            stbtt_GetCodepointBox(&sSharedFont, g->code, &x0, &y0, &x1, &y1) && x1 > x0 && y1 > y0) {
+            int top = (int)floorf(sheet->baseline - y1 * sy);
+            int end = (int)ceilf(sheet->baseline - y0 * sy);
+            r->top = top < 0 ? -top : 0; r->bottom = end > h ? end-h : 0;
+        }
+        r->w = w; r->h = h + r->top + r->bottom;
+        if (x + w + 1 > width) { x = 1; y += rowHeight + 2; rowHeight = 0; }
+        r->x = x; r->y = y; x += w + 2;
+        if (r->h > rowHeight) { rowHeight = r->h; }
+        if (y + r->h + 1 > bottom) { bottom = y + r->h + 1; }
+    }
+    layout->height = 1;
+    while (layout->height < bottom) { layout->height *= 2; }
+    layout->choice = sSharedChoice; layout->cap = sheet->cap; layout->baseline = sheet->baseline;
+    layout->width = width; layout->sourceHeight = height;
+    return layout;
+}
+
+static uint8_t *menu_text_glyphs(const uint8_t *rgba, int width, int height, int tbp, int cbp,
+                               int scale, int *outWidth, int *outHeight) {
+    SharedSheet *sheet = NULL;
+    uint8_t *result = NULL;
+    SharedLayout *layout;
+    int i, plane, rw, rh, changed = 0;
+    if (!sSharedChoice || !rgba || width < 1 || width > 1024 || height < 1 || height > 1024 ||
+        scale < 1 || scale > 8 || !outWidth || !outHeight) { return NULL; }
+    for (i = 0; i < 7; i++) {
+        if (sSharedSheets[i].count && sSharedSheets[i].tbp == tbp && cbp >= sSharedSheets[i].cbp &&
+            cbp < sSharedSheets[i].cbp + 4) { sheet = &sSharedSheets[i]; break; }
+    }
+    if (!sheet || !menu_text_shared_load()) { return NULL; }
+    plane = cbp - sheet->cbp; rw = width * scale; rh = height * scale;
+    if (!sheet->calibrated) {
+        for (i = 0; i < sheet->count; i++) {
+            SharedGlyph *g = &sheet->glyphs[i];
+            int x, y, top = 64, bottom = -1;
+            int gx = g->u & 1023, gy = g->v & 1023, w = (g->u >> 10) & 31, h = (g->v >> 10) & 31;
+            if (g->code != 'H' || ((g->u >> 15) | ((g->v >> 15) << 1)) != plane ||
+                gx + w > width || gy + h > height) { continue; }
+            for (y = 0; y < h; y++) {
+                for (x = 0; x < w; x++) {
+                    if (rgba[((size_t)(gy+y) * width + gx+x)*4+3] >= 64) {
+                        if (y < top) { top = y; }
+                        if (y > bottom) { bottom = y; }
+                    }
+                }
+            }
+            if (bottom >= top) {
+                sheet->cap = bottom - top + 1; sheet->baseline = bottom + 1; sheet->calibrated = 1;
+                sSharedGeneration++;
+            }
+            break;
+        }
+    }
+    layout = menu_text_shared_layout(sheet, plane, width, height);
+    if (!layout) { return NULL; }
+    rw = width * scale; rh = layout->height * scale;
+    result = calloc((size_t)rw * rh, 4);
+    if (!result) { return NULL; }
+    for (i = 0; i < sheet->count; i++) {
+        SharedGlyph *g = &sheet->glyphs[i];
+        SharedRect *r = &layout->rects[i];
+        int gx = g->u & 1023, gy = g->v & 1023, w = (g->u >> 10) & 31, h = (g->v >> 10) & 31;
+        int bx0, by0, bx1, by1, bw, bh, ox, oy, x, y;
+        int left = w, maxAlpha = 0;
+        uint8_t ink[3] = {128,128,128};
+        float sy, sx;
+        unsigned char *bitmap;
+        if (!r->w) { continue; }
+        /* Keep the original pixels for missing glyphs, including spaces and symbols. */
+        for (y = 0; y < h * scale; y++) {
+            for (x = 0; x < w * scale; x++) {
+                memcpy(result + ((size_t)((r->y+r->top)*scale+y) * rw + r->x*scale+x)*4,
+                       rgba + ((size_t)(gy+y/scale) * width + gx+x/scale)*4, 4);
+            }
+        }
+        if (!stbtt_FindGlyphIndex(&sSharedFont, g->code) ||
+            !stbtt_GetCodepointBox(&sSharedFont, g->code, &bx0, &by0, &bx1, &by1) || bx1 <= bx0 || by1 <= by0) { continue; }
+        for (y = 0; y < h; y++) {
+            for (x = 0; x < w; x++) {
+                const uint8_t *src = rgba + ((size_t)(gy+y) * width + gx+x)*4;
+                if (src[3] >= 32 && x < left) { left = x; }
+                if (src[3] > maxAlpha) { maxAlpha = src[3]; memcpy(ink, src, 3); }
+            }
+        }
+        if (!maxAlpha || left == w) { continue; }
+        sy = (float)sheet->cap * scale / sSharedCap;
+        /* Keep the game's advance width. Only compress a glyph when its ink exceeds its original cell. */
+        sx = fminf(sy, (float)((w-left) * scale) / (bx1 - bx0));
+        bitmap = stbtt_GetCodepointBitmap(&sSharedFont, sx, sy, g->code, &bw, &bh, &ox, &oy);
+        if (!bitmap) { continue; }
+        for (y = 0; y < r->h * scale; y++) {
+            memset(result + ((size_t)(r->y * scale + y) * rw + r->x * scale) * 4, 0, (size_t)w * scale * 4);
+        }
+        for (y = 0; y < bh; y++) {
+            int py = (sheet->baseline + r->top) * scale + oy + y;
+            for (x = 0; x < bw; x++) {
+                int px = left * scale + x;
+                if (px < w * scale && py >= 0 && py < r->h * scale) {
+                    uint8_t *dst = result + ((size_t)(r->y * scale + py) * rw + r->x * scale + px) * 4;
+                    memcpy(dst, ink, 3); /* 0x80 is neutral under GS color modulation */
+                    dst[3] = (uint8_t)((bitmap[y*bw+x] * (unsigned)maxAlpha + 127) / 255);
+                }
+            }
+        }
+        stbtt_FreeBitmap(bitmap, NULL); changed = 1;
+    }
+    if (!changed) { free(result); return NULL; }
+    *outWidth = rw; *outHeight = rh;
+    return result;
+}
+
+uint8_t *MenuText_RenderGlyphs(const uint8_t *rgba, int width, int height, int tbp, int cbp,
+                             int scale, int *outWidth, int *outHeight) {
+    uint8_t *result;
+    if (!sSharedChoice) { return NULL; }
+    pthread_mutex_lock(&sSharedLock);
+    result = menu_text_glyphs(rgba, width, height, tbp, cbp, scale, outWidth, outHeight);
+    pthread_mutex_unlock(&sSharedLock);
+    return result;
+}
+
+
+int MenuText_MapGlyph(int tbp, int cbp, int width, int height,
+                     float u0, float v0, float u1, float v1, float *rect) {
+    int slot, i, found = 0;
+    if (!sSharedChoice || !rect || width < 1 || width > 1024 || height < 1 || height > 1024) { return 0; }
+    pthread_mutex_lock(&sSharedLock);
+    for (slot = 0; slot < 7; slot++) {
+        SharedSheet *sheet = &sSharedSheets[slot];
+        SharedLayout *layout;
+        if (!sheet->count || sheet->tbp != tbp || cbp < sheet->cbp || cbp >= sheet->cbp+4 || !menu_text_shared_load()) { continue; }
+        layout = menu_text_shared_layout(sheet, cbp-sheet->cbp, width, height);
+        if (!layout) { break; }
+        for (i = 0; i < sheet->count; i++) {
+            SharedGlyph *g = &sheet->glyphs[i]; SharedRect *r = &layout->rects[i];
+            int gx = g->u & 1023, gy = g->v & 1023, w = (g->u >> 10) & 31, h = (g->v >> 10) & 31;
+            if (!r->w || fabsf(u0-(gx+0.5f)) > 0.01f || fabsf(v0-(gy+0.5f)) > 0.01f ||
+                fabsf(u1-u0-w) > 0.01f || fabsf(v1-v0-h) > 0.01f) { continue; }
+            rect[0]=r->x; rect[1]=r->y; rect[2]=r->w; rect[3]=r->h;
+            rect[4]=r->top; rect[5]=r->bottom; rect[6]=layout->width; rect[7]=layout->height;
+            found = 1; break;
+        }
+        break;
+    }
+    pthread_mutex_unlock(&sSharedLock);
+    return found;
 }

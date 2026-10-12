@@ -1134,6 +1134,7 @@ static void misc_tab(void) {
 static void ui_tab(PortVideo &v) {
     if (ImGui::BeginCombo("Menu font", MenuText_FontName(v.menuFont))) {
         for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, 0)) { continue; }
             ImGui::PushID(i);
             if (ImGui::Selectable(MenuText_FontName(i), v.menuFont == i)) { v.menuFont = i; }
             if (v.menuFont == i) { ImGui::SetItemDefaultFocus(); }
@@ -1142,6 +1143,18 @@ static void ui_tab(PortVideo &v) {
         ImGui::EndCombo();
     }
     ImGui::SetItemTooltip("Original uses the game's sprites. Other fonts replace matching menu labels immediately.\nDecorative lettering keeps its original artwork.");
+    if (ImGui::BeginCombo("Dialogue / UI font", MenuText_FontName(v.textFont))) {
+        for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, 1)) { continue; }
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), v.textFont == i)) { v.textFont = i; }
+            if (v.textFont == i) { ImGui::SetItemDefaultFocus(); }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Replace the shared font used by dialogue, subtitles and ordinary UI text.\n"
+                          "Original keeps the game's glyphs. Text placement, colors, shadows and icons are preserved.");
     static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
     ImGui::Combo("HUD Style", &v.hudLayout, kHud, 3);
     ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
