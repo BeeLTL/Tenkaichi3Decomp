@@ -3312,3 +3312,25 @@ Not tested: Windows at run time beyond the maker under wine (the Windows build l
 and the drawing were not run there); a release package made with `package.py` and its setup (the game was run
 with `BT3_DATA` pointing at a folder like a release's `gamedata`); the settings window during the hand-over (read
 in the code, not operated); the OpenGL renderer; macOS.
+
+## White dots on a shiny character (2026-10-14)
+
+Reported by the user: Perfect Cell's black, glossy parts had small white dots scattered over them. Replayed from
+a recording of the user's presses (New Game, Duel, Goku against Perfect Cell) without a window: the dots are in
+0.1.34's picture, not in the software reference's (`BT3_GS=1`), and not with `BT3_NZ=0`. So they came with the
+rule of 0.1.31 that draws without the shader's own depth where "it changes nothing" (gs_draw.c, key bit 23).
+
+Why it did change something: the full shader writes `floor(z * steps) / steps`, worked out in floats, and that can
+come out one last bit of the float ABOVE the depth the chip interpolates for the very same triangle. A second
+layer over the same triangles that does not write depth (the gloss) is then tested with the interpolated depth
+against a stored value one bit larger, fails "greater or equal", and the pixel keeps the layer below: a dot.
+
+Fix: the pipelines of bit 23 get a depth bias of two such bits towards the viewer (gs_gpu.c
+`depth_bias_constant_factor`, gs_gl.c `glPolygonOffset`). A depth step is thousands of those bits, so nothing
+else passes that should not. The speed rule stays as it is.
+
+Checked: the same frame of the recording, fixed, is the same picture as with `BT3_NZ=0` (0 pixels differ by more
+than a tenth; 0.1.34 has 214), at four moments of the fight the dots are gone; the replay check is unchanged.
+Not checked: Windows (Direct3D 12), macOS (Metal) and the OpenGL back end, where the size of the bias is the
+driver's to define; at more than 1x picture size; other shiny characters.
+

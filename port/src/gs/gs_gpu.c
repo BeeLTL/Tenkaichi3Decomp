@@ -273,6 +273,15 @@ static int pipeline_create(uint32_t key, int remember) {
     ci.primitive_type = topo == 0 ? SDL_GPU_PRIMITIVETYPE_TRIANGLELIST : topo == 1 ? SDL_GPU_PRIMITIVETYPE_LINELIST : SDL_GPU_PRIMITIVETYPE_POINTLIST;
     ci.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
     ci.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    if ((key >> 23) & 1) {
+        /* A draw without the shader's own depth (bit 23) is tested with the depth the chip interpolates, against
+           what the full shader wrote: floor(z * steps) / steps, worked out in floats. On the same triangles those
+           two can differ by the last bit of the float, the wrong way round, and the pixel is then left out: white
+           dots on a second layer drawn over a body (the gloss of a shiny character, seen in 0.1.31 to 0.1.34). A
+           bias of two such bits towards the viewer; a depth step is thousands of them. */
+        ci.rasterizer_state.enable_depth_bias = true;
+        ci.rasterizer_state.depth_bias_constant_factor = 2.0f;
+    }
     ci.depth_stencil_state.enable_depth_test = true;
     ci.depth_stencil_state.enable_depth_write = zwrite;
     ci.depth_stencil_state.compare_op = ztst == 0 ? SDL_GPU_COMPAREOP_NEVER : ztst == 1 ? SDL_GPU_COMPAREOP_ALWAYS :
