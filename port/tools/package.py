@@ -34,10 +34,11 @@ In the game, F1 opens the settings: resolution, widescreen, controls and sound.
 Saves are kept in saves/. A file placed in gamedata/mods/<same path as the original> replaces the original.
 Texture packs (PCSX2 naming, .dds or .png) go into textures/, stages and music from outside the disc into
 stages/ and songs/: see the note in each folder.
-F1 > UI > "Dialogue / UI font" draws the game's text from a font in fonts/ instead of the game's own (the fonts
-and their licences are in that folder; fonts.tsv there is the list, to which a .ttf of your own can be added).
-The "Menu font" setting of the source version is not in this package: it needs a list of the menus' labels that
-is made from the disc by a tool of the source version (docs/port/menu_font.md there).
+F1 > UI has two font settings, both "Original" unless you choose: "Menu font" draws the menus' labels and
+"Dialogue / UI font" the game's text from a font in fonts/ instead of the game's own lettering (the fonts and their
+licences are in that folder; fonts.tsv there is the list, to which a .ttf of your own can be added). For the menus
+the game makes a list of their labels from your disc data the first time it starts (gamedata/game-text/, a moment
+in the background): the fonts appear under "Menu font" when it is done.
 
 Screen reader: with Prism's library (prism.dll, libprism.so; release 0.18.3) placed next to the program, the menus
 and the fight's gauges are spoken and shown in braille. a11y_es.txt is its Spanish; another language is a file
@@ -123,7 +124,8 @@ def take_lang(out):
 
 def take_fonts(out, lic):
     """The fonts the settings offer, and their licences next to them and in licenses/. Only what is in the
-    repository: the list of menu labels (gamedata/game-text) is made from the disc and never packaged."""
+    repository: the list of menu labels (gamedata/game-text) is made from the disc, by the game at its first start
+    on the player's machine (port/src/gs/menu_labels.c), and never packaged."""
     src = ROOT / "port/third_party/fonts"
     for p in sorted(src.rglob("*")):
         if p.is_file():
