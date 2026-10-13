@@ -2861,3 +2861,21 @@ Done on both copies at every battle start; a session ends with a fresh start of 
 Test: two copies as above. The picture of both players' screens shows the three entries left; with random presses
 through four battle ends (Fight Again, the character select) the two copies agree in the whole state.
 
+## Dragon History: "Fight Again" in the pause menu (2026-10-13)
+
+Asked for by a player: a way to start a story fight over without leaving it. The pause menu of battle mode 1
+(`gPauseMenuMode1`, 0x2C5970) has Continue Battle, View Skill List and Surrender. The pause menu of mode 6 has an
+entry that restarts the battle (id 0xC, with the yes / no box): `PauseMenu_Update` ends the battle with the reason
+0x8000 for it, `BtlSeq_Update` raises `BATTLE_FLAG_RESTART` at the sequence's end and `Battle_Loop` calls
+`Battle_Restart`. The port puts a copy of that entry into the menu of mode 1, in front of Surrender
+(`src/battle/hud_0.c` `PauseMenu_Init`; a table of five entries of the port's own, as the game's has no room). In
+mode 6 the entry reads "Reset standing position" (text 19); the copy takes text 3, "Fight Again" of the versus
+result menu, so it is the game's own text in every language. The box behind it is the game's ("EXIT ?", yes / no).
+
+Test (one copy without a window, pictures offscreen): a recording of presses from the start of the program into
+the first fight of Dragon History (Goku against Raditz), with more presses put behind it. Restart right at the
+start of the fight; and after a minute of fighting, with Goku's health almost gone and two of the fight's story
+lines already spoken: the fight starts over with its opening scene, both health bars full, the story lines come
+again at their places, and the fight goes on to its K.O. and the mode's result screen. Not tried: a fight in which
+a fighter is exchanged by the story before the restart, and the other modes that may run as battle mode 1.
+

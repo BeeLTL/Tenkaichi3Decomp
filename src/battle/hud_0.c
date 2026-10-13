@@ -328,6 +328,23 @@ void PauseMenu_Init(void) {
             PauseMenu_PortRemove(&gPauseMenuResultVersus, 0x17);
         }
     }
+    {
+        /* The pause menu of the story mode (battle mode 1: Continue, Skill List, quit) gets the restart entry that
+           the pause menu of mode 6 has (id 0xC, with its yes / no box: PauseMenu_Update ends the battle with the
+           restart reason, and Battle_Loop starts it again), in front of the quit entry. */
+        static BtlMenuItem sItems[5];
+
+        if (gPauseMenuMode1.count == 4 && gPauseMenuMode6.count > 4 && gPauseMenuMode6.items[4].id == 0xC) {
+            sItems[0] = gPauseMenuMode1.items[0];
+            sItems[1] = gPauseMenuMode1.items[1];
+            sItems[2] = gPauseMenuMode1.items[2];
+            sItems[3] = gPauseMenuMode6.items[4];
+            sItems[3].text[0] = sItems[3].text[1] = 3; /* "Fight Again", the versus result menu (in mode 6 the entry reads "Reset standing position") */
+            sItems[4] = gPauseMenuMode1.items[3];
+            gPauseMenuMode1.items = sItems;
+            gPauseMenuMode1.count = 5;
+        }
+    }
 #endif
     BtlMenu_Init();
 }
