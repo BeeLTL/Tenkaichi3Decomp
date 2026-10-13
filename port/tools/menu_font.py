@@ -135,14 +135,6 @@ def sheets(pack, part, width=512):
     return result
 
 
-def image(rgba, width=512):
-    from PIL import Image
-    im = Image.frombytes('RGBA', (width, len(rgba)//(width*4)), rgba)
-    im.putalpha(im.getchannel('A').point(lambda a: min(255, a*2)))
-    return im
-
-
-
 def catalog(data):
     """Named texture groups, with the archive/section addresses used by the menu source."""
     @functools.lru_cache(maxsize=None)
@@ -284,27 +276,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data', type=pathlib.Path, default=ROOT/'gamedata')
     parser.add_argument('--out', type=pathlib.Path, default=ROOT/'gamedata/game-text')
-    parser.add_argument('--font', type=pathlib.Path, help='Select a static TTF/OTF for offline export and preview')
-    parser.add_argument('--extract-only', action='store_true')
+    parser.add_argument('--extract-only', action='store_true', help='Inspect the texture catalog without exporting labels')
     parser.add_argument('--apply', action='store_true', help='Compile edited labels.json for the game; no font extraction')
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    default_font=prepare_bundled_fonts(args.out)
-    if args.font and (args.out/'labels.json').exists():
-        install_font(args.font, args.out)
-        apply_labels(args.out)
-        font_preview(args.out)
-        return
+    prepare_bundled_fonts(args.out)
     if args.apply:
         apply_labels(args.out)
         return
     groups = catalog(args.data)
     for group in groups:
-        for i, rgba in enumerate(group['rgba']):
-            image(rgba,group.get('width',512)).save(args.out / f"{group['id']}-{i}.png")
         print(group['id'], len(group['rgba']), 'sheets')
     if not args.extract_only:
-        export(args, groups, default_font)
+        export(args, groups)
 
 
 
@@ -488,10 +472,13 @@ def row_style(rgba, height, centered, width=512, outline=None):
 def apply_labels(out):
     """Turn user-editable JSON into the bounded TSV read by the native renderer."""
     config=json.loads((out/'labels.json').read_text())
-    supported={ord(c) for c in json.loads((out/'coverage.json').read_text())['characters']}
+    supported=set()
     from fontTools.ttLib import TTFont
     for line in (out/'fonts.tsv').read_text(encoding='utf-8').splitlines():
         if line and not line.startswith('#'):
+            fields=line.split('\t')
+            if len(fields)>2 and not int(fields[2]) & 1:
+                continue
             with TTFont(out/'fonts'/line.split('\t',1)[0]) as font:
                 supported.update(font.getBestCmap() or {})
     lines=['# BT3 menu text v4: hash width height y row_height cap_height baseline center margin width_milli x row_width art_width top bottom outline text']
@@ -560,7 +547,7 @@ def apply_labels(out):
     print(f'{count} labels ready. Restart the game to load {out}/labels.tsv')
 
 
-def export(args,groups,default_font):
+def export(args,groups):
     # The legacy strips benefit from the spacing solver; standalone submenu sheets
     # use row_style's direct cap/baseline measurements (including single-color labels).
     glyphs_from([g for g in groups if 'centered' not in g],args.out)
@@ -642,9 +629,10 @@ def export(args,groups,default_font):
                 row.update(cap_height=cap,baseline=baseline)
     path=args.out/'labels.json'
     if not path.exists():
-        path.write_text(json.dumps(dict(font='BT3MenuReconstructed.ttf',labels=rows),indent=2)+'\n')
+        path.write_text(json.dumps(dict(labels=rows),indent=2)+'\n')
     else:
         config=json.loads(path.read_text())
+        config.pop('font',None)
         config['labels']=[r for r in config['labels'] if not r['id'].startswith('submenu-')]
         known={row['id'] for row in config['labels']}
         fresh={row['id']:row for row in rows}
@@ -662,13 +650,7 @@ def export(args,groups,default_font):
         config['labels'].extend(additions)
         path.write_text(json.dumps(config,indent=2,ensure_ascii=False)+'\n')
         print(f'Keeping existing labels.json edits; adding {len(additions)} new rows')
-    selected = args.font
-    if selected is None:
-        name = json.loads(path.read_text()).get('font', '')
-        selected = args.out/name if name and name != 'BT3MenuReconstructed.ttf' and (args.out/name).is_file() else default_font
-    install_font(selected, args.out)
     apply_labels(args.out)
-    font_preview(args.out)
 
 
 def prepare_bundled_fonts(out):
@@ -716,52 +698,7 @@ def prepare_bundled_fonts(out):
         lines.append(key+'\t'+name+'\t'+str(usage))
     (out/'fonts.tsv.tmp').write_text('\n'.join(lines)+'\n',encoding='utf-8')
     (out/'fonts.tsv.tmp').replace(out/'fonts.tsv')
-    return out/'fonts'/entries[0][0]
 
-
-def install_font(source, out):
-    """Keep a real typeface's curves and names. Never relabel a substitute as the original game font."""
-    from fontTools.ttLib import TTFont
-    source = source.resolve()
-    if not source.is_file() or source.suffix.lower() not in ('.ttf', '.otf'):
-        raise ValueError('Choose a static .ttf or .otf font')
-    if any(ord(c) < 32 for c in source.name):
-        raise ValueError('Font filename contains a control character')
-    font = TTFont(source)
-    if 'fvar' in font:
-        raise ValueError('Use a static font instance, not a variable font')
-    cmap = font.getBestCmap()
-    if ord('H') not in cmap:
-        raise ValueError('The font must contain H for cap-height calibration')
-    target = out/source.name
-    if source != target.resolve():
-        shutil.copy2(source, target)
-    license = source.parent/'LICENSE'
-    if license.is_file() and source.parent != out.resolve():
-        shutil.copy2(license, out/'FONT-LICENSE.txt')
-    config_path = out/'labels.json'
-    config = json.loads(config_path.read_text())
-    config['font'] = source.name
-    config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False)+'\n')
-    # Filename only: the game resolves it relative to this font directory.
-    (out/'font.txt').write_text(source.name+'\n')
-    coverage = dict(characters=''.join(chr(c) for c in sorted(cmap) if c>=32 and not 0xD800<=c<=0xDFFF),
-                    missing_ascii=''.join(chr(c) for c in range(32,127) if c not in cmap),
-                    family=font['name'].getDebugName(1), style=font['name'].getDebugName(2),
-                    note='Clean vector typeface used as a visual alternative; not verified as the original BT3 font.')
-    (out/'coverage.json').write_text(json.dumps(coverage, indent=2, ensure_ascii=False)+'\n')
-    print('Vector font:',target)
-
-
-def font_preview(out):
-    from PIL import Image, ImageDraw, ImageFont
-    config=json.loads((out/'labels.json').read_text())
-    preview=Image.new('RGB',(1200,440),(27,30,38));d=ImageDraw.Draw(preview)
-    font=ImageFont.truetype(str(out/config['font']),48)
-    for y,text in zip(range(20,440,65),['Dragon History','The Meteor','Wasteland - Noon','Custom Menu Name',
-                                     'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz 0123456789']):
-        d.text((20,y),text,font=font,fill=(255,213,123))
-    preview.save(out/'font-preview.png')
 
 
 if __name__ == '__main__':

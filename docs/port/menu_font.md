@@ -78,11 +78,11 @@ Complex-script shaping and bidirectional text are not supported.
 
 ## Files and rendering
 
-- `gamedata/game-text/`: generated labels, runtime styles, font files and previews; ignored by Git.
+- `gamedata/game-text/`: generated labels, runtime styles and font files; ignored by Git.
 - `port/third_party/fonts/`: bundled typefaces and their licenses. The generated TTF files can also be
   installed in an operating system; colors, outlines and shadows are applied by the game.
 - `port/tools/menu_font.py`: generation and label editing. `--data` and `--out` change the input/output
-  folders. `--font` selects an offline export/preview font.
+  folders. PNG previews and separate offline font exports are not generated.
 - `port/src/gs/menu_text.c`: vector rendering, at least 4× texture resolution, for Vulkan and OpenGL.
 - `port/src/gs/ui.cpp`: F1 selection and added song/stage name overlays.
 
