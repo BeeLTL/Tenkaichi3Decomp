@@ -50,7 +50,6 @@ typedef void GLvoid; typedef ptrdiff_t GLsizeiptr; typedef ptrdiff_t GLintptr; t
     X(glColorMaski, void, (GLuint, GLboolean, GLboolean, GLboolean, GLboolean), (GLuint, GLboolean, GLboolean, GLboolean, GLboolean)) \
     X(glColorMask, void, (GLboolean, GLboolean, GLboolean, GLboolean), (GLboolean, GLboolean, GLboolean, GLboolean)) \
     X(glDepthFunc, void, (GLenum), (GLenum)) \
-    X(glPolygonOffset, void, (GLfloat, GLfloat), (GLfloat, GLfloat)) \
     X(glDepthMask, void, (GLboolean), (GLboolean)) \
     X(glCreateShader, GLuint, (GLenum), (GLenum)) \
     X(glShaderSource, void, (GLuint, GLsizei, const GLchar *const *, const GLint *), (GLuint, GLsizei, const GLchar *const *, const GLint *)) \
@@ -160,7 +159,6 @@ GL_FUNCS(GL_DECL)
 #define GL_PACK_ALIGNMENT 0x0D05
 #define GL_BLEND 0x0BE2
 #define GL_DEPTH_TEST 0x0B71
-#define GL_POLYGON_OFFSET_FILL 0x8037
 #define GL_SCISSOR_TEST 0x0C11
 #define GL_CULL_FACE 0x0B44
 #define GL_DEPTH_CLAMP 0x864F
@@ -552,12 +550,6 @@ static void set_pipe(int pipe) {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(p->zwrite ? GL_TRUE : GL_FALSE);
         glDepthFunc(p->ztst == 0 ? GL_NEVER : p->ztst == 1 ? GL_ALWAYS : p->ztst == 2 ? GL_GEQUAL : GL_GREATER);
-    }
-    if (!p->fx && p->nz) { /* (the same two bits of depth as in gs_gpu.c pipeline_get: see there) */
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(0.0f, 2.0f);
-    } else {
-        glDisable(GL_POLYGON_OFFSET_FILL);
     }
 }
 

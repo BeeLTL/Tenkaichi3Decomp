@@ -3325,12 +3325,18 @@ come out one last bit of the float ABOVE the depth the chip interpolates for the
 layer over the same triangles that does not write depth (the gloss) is then tested with the interpolated depth
 against a stored value one bit larger, fails "greater or equal", and the pixel keeps the layer below: a dot.
 
-Fix: the pipelines of bit 23 get a depth bias of two such bits towards the viewer (gs_gpu.c
-`depth_bias_constant_factor`, gs_gl.c `glPolygonOffset`). A depth step is thousands of those bits, so nothing
-else passes that should not. The speed rule stays as it is.
+Fix, first try (2080bfe, tagged v0.1.34.1 but never published): a depth bias of two float bits on the pipelines
+of bit 23. Wrong: with 16 million depth steps a step is about one such bit near the far end, so the bias was a
+step or two, and the user saw layers that should lose by one step win (shadow layers over clothes).
 
-Checked: the same frame of the recording, fixed, is the same picture as with `BT3_NZ=0` (0 pixels differ by more
-than a tenth; 0.1.34 has 214), at four moments of the fight the dots are gone; the replay check is unchanged.
-Not checked: Windows (Direct3D 12), macOS (Metal) and the OpenGL back end, where the size of the bias is the
-driver's to define; at more than 1x picture size; other shiny characters.
+Fix as it is now, in the shader that writes depth (gs.frag): where the division came out above z, the step below
+is written, so what is stored is never above the z it came from. Then "z >= stored" and "step of z >= stored" are
+the same thing, which is what the rule of bit 23 assumed, and nothing is biased.
+
+Checked with the recording, 60 pictures of the fight, every pixel: the default and `BT3_NZ=0` give the same
+picture in all 60 (0.1.34: 45 of 60 differ, by up to 328 pixels; the bias: 12 of 60, by 1 or 2 pixels). Against
+0.1.34's own full-shader picture, 8 of the 60 differ in one pixel each (the step below, where 0.1.34 wrote the
+step above). The replay check is unchanged.
+Not checked: Windows (Direct3D 12), macOS (Metal) and the OpenGL back end; other shiny characters; the scene in
+which the user saw the shadow layers (not in the recording).
 
