@@ -23,6 +23,13 @@ int MenuText_FontAvailable(int choice, int shared);
 const char *MenuText_FontName(int choice);
 int MenuText_FontId(int choice);
 void MenuText_SetFontId(int id);
+/* The Menu font to write into the settings file: the one in use, or the one the settings asked for at start while
+   the list of labels it needs is still being made from the disc. */
+int MenuText_FontIdToSave(void);
+/* The list of labels is made in a thread when it is not there (menu_labels.c). Called by the renderer between two
+   frames: when the list has been made, the fonts for the menus are offered and the one asked for is taken into use.
+   Costs one read of a variable otherwise. */
+void MenuText_Poll(void);
 /* Shared Font_Print glyphs have a separate choice; atlas replacements retain game metrics and styling. */
 int MenuText_GetSharedFont(void);
 void MenuText_SetSharedFont(int choice);

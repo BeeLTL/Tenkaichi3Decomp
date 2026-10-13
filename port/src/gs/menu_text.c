@@ -2,8 +2,13 @@
  *
  * "Menu font": a label keeps the row of the menu texture it has on the disc, so the menus' animation, tint,
  * clipping and layout go on working; the row is drawn again from the font, several times the size. Which texture
- * has which label is in labels.tsv, which port/tools/menu_font.py writes from the user's own disc into
- * gamedata/game-text (nothing of it is in the repository or in a release).
+ * has which label is in labels.tsv in gamedata/game-text, made from the user's own disc (nothing of it is in the
+ * repository or in a release). When it is not there, or is of an older format, it is made at start
+ * (menu_labels.c), in a thread of its own so that the program does not wait: until it is there the setting
+ * offers only "Original", and a font the settings ask for is taken into use when it is (MenuText_Poll, which the
+ * renderer calls between two frames). In a run whose buttons are recorded or played back, or that is re-run
+ * blank by blank (BT3_PAD_REC, BT3_PAD_PLAY, BT3_PAD_TABLE, BT3_SYNCTEST), it is made at start before anything is
+ * drawn, as song_mp3.c converts its songs then: the pictures of such a run do not depend on how fast it was.
  * "Dialogue / UI font": the glyph cells of the game's own font sheets (Font_Print) are drawn again from the font.
  *
  * The fonts are files next to the program: fonts/ in a release, port/third_party/fonts in a source checkout, with
@@ -15,11 +20,14 @@
  * this file keeps is on the renderer's side (not saved by a rollback, not in the desync checksum). Texture-pack
  * replacements take precedence. */
 #include "menu_text.h"
+#include "menu_labels.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <pthread.h>
+#include <time.h>
+#include <unistd.h>
 #define STBTT_assert(x) ((void)0) /* never stops the game over a font; face_open has checked what it relies on */
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -357,7 +365,14 @@ typedef struct MenuFont {
 } MenuFont;
 static MenuFont *sFonts;
 static int sFontCount, sFontsLoaded, sLabelsThere;
-static char sFontDir[1024], sLabelDir[1024];
+static char sFontDir[1024], sLabelDir[1024], sDataDir[1024];
+
+/* The list of labels being made from the disc (see the top): */
+static volatile int sMake; /* 1: its thread is at it; 2: the thread is done and what it left waits to be taken (MenuText_Poll) */
+static int sMakeResult;    /* what MenuLabels_Make returned */
+static int sLabelsOld;     /* a list of an older format is there: used should a new one not come about */
+static int sWantedId;      /* the Menu font the settings ask for, kept while the list is awaited */
+static void labels_take(void);
 
 static int file_there(const char *path) {
     FILE *fp = fopen(path, "rb");
@@ -365,11 +380,24 @@ static int file_there(const char *path) {
     return fp != NULL;
 }
 
+/* What labels.tsv the folder has: 0 none, 1 one of the format written now, 2 an older one. */
+static int labels_state(void) {
+    char path[1200], line[256];
+    FILE *fp;
+    int state = 2;
+    snprintf(path, sizeof(path), "%s/labels.tsv", sLabelDir);
+    fp = fopen(path, "rb");
+    if (fp == NULL) { return 0; }
+    if (fgets(line, sizeof(line), fp) != NULL && strstr(line, MENU_LABELS_VERSION) != NULL) { state = 1; }
+    fclose(fp);
+    return state;
+}
+
 /* Where the fonts are ($BT3_FONTS, fonts/ next to the program, the source checkout's folder) and where the
    labels made from the disc are ($BT3_MENU_FONT, gamedata/game-text). An empty name switches the thing off. */
 static void menu_text_dirs(void) {
     const char *fonts = getenv("BT3_FONTS"), *labels = getenv("BT3_MENU_FONT"), *data = getenv("BT3_DATA");
-    char path[1200];
+    int state;
     if (fonts != NULL) {
         snprintf(sFontDir, sizeof(sFontDir), "%s", fonts);
     } else {
@@ -380,16 +408,89 @@ static void menu_text_dirs(void) {
     } else {
         snprintf(sLabelDir, sizeof(sLabelDir), "%s/game-text", data != NULL ? data : "gamedata");
     }
-    snprintf(path, sizeof(path), "%s/labels.tsv", sLabelDir);
-    sLabelsThere = sLabelDir[0] != '\0' && file_there(path);
+    snprintf(sDataDir, sizeof(sDataDir), "%s", data != NULL ? data : "gamedata");
+    state = sLabelDir[0] != '\0' ? labels_state() : 0;
+    sLabelsThere = state == 1;
+    sLabelsOld = state == 2;
 }
 
+/* Makes the list of labels from the disc and says in the log, in one line, what came of it. In the thread, or at
+   start in a run that has to be the same every time. Reads and writes files only. */
+static void labels_make(void) {
+    /* BT3_TEST_LABELS_SLOW=<ms>: waits that long first, and in a thread whatever the run (testing: a slow disk) */
+    int slow = getenv("BT3_TEST_LABELS_SLOW") != NULL ? atoi(getenv("BT3_TEST_LABELS_SLOW")) : 0;
+    char why[240];
+    struct timespec a, b;
+
+    if (slow > 0) { usleep((useconds_t)slow * 1000); }
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    /* BT3_MENU_FONT_ANY_DISC=1: the archives are not checked to be the USA disc's (a changed archive: where its
+       textures are numbered differently, labels are missing or wrong) */
+    sMakeResult = MenuLabels_Make(sDataDir, sLabelDir, getenv("BT3_MENU_FONT_ANY_DISC") != NULL, why, sizeof(why));
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    if (sMakeResult == MENU_LABELS_MADE) {
+        fprintf(stderr, "bt3: menu text: the list of labels was made from the disc (%s, %ld ms) in %s\n", why,
+                (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000), sLabelDir);
+    } else {
+        fprintf(stderr, "bt3: menu text: no list of labels was made: %s. %s\n", why,
+                sLabelsOld ? "The older list is used." : "The Menu font setting offers only \"Original\".");
+    }
+}
+
+static void *labels_thread(void *arg) {
+    (void)arg;
+    labels_make();
+    __sync_synchronize();
+    sMake = 2;
+    return NULL;
+}
+
+/* Starts making the list, once. Returns at once, the work goes on in a thread of its own; in a recorded or re-run
+   session (see the top) it returns when the list is made and taken. */
+static void labels_start(void) {
+    pthread_t th;
+    pthread_attr_t attr;
+    int started;
+
+    if (getenv("BT3_TEST_LABELS_SLOW") == NULL &&
+        (getenv("BT3_PAD_PLAY") != NULL || getenv("BT3_PAD_REC") != NULL || getenv("BT3_PAD_TABLE") != NULL || getenv("BT3_SYNCTEST") != NULL)) {
+        labels_make();
+        labels_take();
+        return;
+    }
+    sMake = 1;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    started = pthread_create(&th, &attr, labels_thread, NULL) == 0;
+    pthread_attr_destroy(&attr);
+    if (!started) { /* (no thread to be had) */
+        labels_make();
+        labels_take();
+    }
+}
+
+static void fonts_read(void);
+
 static void menu_text_fonts(void) {
-    char path[1200], line[1200];
-    FILE *fp;
+    int i, menu = 0;
     if (sFontsLoaded) { return; }
     sFontsLoaded = 1;
     menu_text_dirs();
+    fonts_read();
+    for (i = 0; i < sFontCount; i++) { menu |= sFonts[i].usage & 1; }
+    if (!sLabelsThere && sLabelDir[0] != '\0') {
+        if (menu) {
+            labels_start(); /* (without a font for the menus there is nothing to make it for) */
+        } else {
+            sLabelsThere = sLabelsOld;
+        }
+    }
+}
+
+/* fonts.tsv: every font with what it is for. A font for the menus is offered once the list of labels is there. */
+static void fonts_read(void) {
+    char path[1200], line[1200];
+    FILE *fp;
     if (!sFontDir[0]) { return; }
     snprintf(path, sizeof(path), "%s/fonts.tsv", sFontDir);
     fp = fopen(path, "rb");
@@ -404,7 +505,6 @@ static void menu_text_fonts(void) {
         font.usage = 3;
         usage = strchr(name, '\t');
         if (usage != NULL) { *usage++ = '\0'; font.usage = atoi(usage) & 3; }
-        if (!sLabelsThere) { font.usage &= 2; } /* no labels made from the disc: a font has no menu text to draw */
         n = strlen(line);
         if (!n || n >= sizeof(font.file) || line[0] == '/' || strchr(line, '\\') || strchr(line, ':') ||
             strcmp(line, "..") == 0 || strncmp(line, "../", 3) == 0 || strstr(line, "/../")) { continue; }
@@ -423,7 +523,8 @@ static void menu_text_fonts(void) {
 
 static int font_available(int choice, int shared) {
     menu_text_fonts();
-    return choice == 0 || (choice > 0 && choice <= sFontCount && (sFonts[choice - 1].usage & (shared ? 2 : 1)) != 0);
+    /* (no labels made from the disc, or not yet: a font has no menu text to draw) */
+    return choice == 0 || (choice > 0 && choice <= sFontCount && (sFonts[choice - 1].usage & (shared ? 2 : sLabelsThere ? 1 : 0)) != 0);
 }
 
 /* Opens the font of a choice. Says in the log, once per file, why one cannot be used. */
@@ -684,9 +785,39 @@ void MenuText_SetFont(int choice) {
     pthread_mutex_unlock(&sLock);
 }
 
+/* (The settings window sets "Original" while the list is awaited, having nothing else to offer: that does not
+   take back what the settings file asked for.) */
 void MenuText_SetFontId(int id) {
     pthread_mutex_lock(&sLock);
     set_font(font_by_id(id));
+    sWantedId = sMake != 0 && sFontChoice == 0 ? id : 0;
+    pthread_mutex_unlock(&sLock);
+}
+
+int MenuText_FontIdToSave(void) {
+    int r;
+    pthread_mutex_lock(&sLock);
+    r = sWantedId != 0 ? sWantedId : font_id(sFontChoice);
+    pthread_mutex_unlock(&sLock);
+    return r;
+}
+
+/* With the lock held: what the maker of the list left is taken. From here on the fonts for the menus are offered,
+   and the one the settings asked for is in use. */
+static void labels_take(void) {
+    int id = sWantedId;
+    sMake = 0;
+    sWantedId = 0;
+    sLabelsThere = sMakeResult == MENU_LABELS_MADE || sLabelsOld;
+    if (!sLabelsThere) { return; }
+    sLabelsLoaded = 0; /* (asked for before the list was there, it was found empty) */
+    if (id != 0 && sFontChoice == 0) { set_font(font_by_id(id)); }
+}
+
+void MenuText_Poll(void) {
+    if (sMake != 2) { return; }
+    pthread_mutex_lock(&sLock);
+    if (sMake == 2) { labels_take(); }
     pthread_mutex_unlock(&sLock);
 }
 
