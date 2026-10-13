@@ -1,7 +1,7 @@
 # Tenkaichi3Decomp in the browser: release web-0.1.33.3
 
 *Dragon Ball Z: Budokai Tenkaichi 3* (PlayStation 2, USA release, SLUS-21678) in your web browser: the decompiled game's code compiled to WebAssembly, running in a web page on your own computer.
-- Based on upstream Tenkaichi3Decomp **0.1.33**. Source: [BeeLTL/Tenkaichi3Decomp](https://github.com/BeeLTL/Tenkaichi3Decomp).
+- Based on upstream Tenkaichi3Decomp **0.1.33**. Source: [z3xox/Tenkaichi3Decomp](https://github.com/z3xox/Tenkaichi3Decomp).
 - Tested in Chrome on Windows 11, from the downloaded package: unpacking a disc, `play.py`, boot, a fight, the settings. Controllers and touch were tested with simulated devices only.
 - Since web-0.1.33.2: the server no longer prints error messages when the browser closes a connection (a reload or a closed tab).
 
@@ -61,11 +61,11 @@ In the game, **F1** (or START + SELECT on a controller) opens the settings. Keyb
 - **Saves** live in the browser's storage: clearing the site's data, or a private window, loses them. Export a copy.
 - **Not tested yet:** real controllers and real phones or tablets (simulated ones are tested), Firefox and Safari, playing an added song. The sound is checked to come out, not how it sounds.
 
-Full list of what was tested: [BROWSER_FEATURE_MATRIX.md](https://github.com/BeeLTL/Tenkaichi3Decomp/blob/main/docs/BROWSER_FEATURE_MATRIX.md).
+Full list of what was tested: [BROWSER_FEATURE_MATRIX.md](https://github.com/z3xox/Tenkaichi3Decomp/blob/main/docs/BROWSER_FEATURE_MATRIX.md).
 
 ## Building from source
 
-See [BROWSER_BUILD.md](https://github.com/BeeLTL/Tenkaichi3Decomp/blob/main/docs/BROWSER_BUILD.md): the toolchain (Emscripten 6.0.12), the four build steps and the tests.
+See [BROWSER_BUILD.md](https://github.com/z3xox/Tenkaichi3Decomp/blob/main/docs/BROWSER_BUILD.md): the toolchain (Emscripten 6.0.12), the four build steps and the tests.
 
 ## Licence
 
