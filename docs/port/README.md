@@ -3132,7 +3132,7 @@ Two settings in F1 > UI, both "Original" unless chosen:
   hands the renderer the game's glyph table; the renderer packs the new glyphs into an atlas of its own and moves
   the sprite's texture coordinates there. The game's placement, line breaks, colours and shadows are untouched.
 
-The fonts (DejaVu Sans Condensed and Condensed Bold, Liberation Sans Bold, with their licences) are in
+The bundled fonts (DejaVu Sans Condensed for Dialogue / UI and Condensed Bold for menus, with their licence) are in
 `port/third_party/fonts`, with the list `fonts.tsv`; a release has them as `fonts/`.
 
 What was changed on top of the pull request:
@@ -3194,7 +3194,8 @@ What was changed on top of the pull request:
    request's build: 112 of 113 the same bytes (the one, frame 1460, shows another hint line of the main menu in a
    fade: the game was at another moment there, the lettering is the same; two runs of one build differ in that
    frame too when several copies run at once).
-7. DejaVu Sans Condensed was in the repository twice (once per setting); it is there once and listed for both.
+7. DejaVu Sans Condensed was in the repository twice (once per setting); it is there once. It was listed for both
+   settings at the time of this change and is now listed only for Dialogue / UI.
    The dead font-building code in the tool is gone. The notes said the game's ordinary text is unaffected; the
    second setting replaces exactly that, and they say so now.
 

@@ -19,8 +19,7 @@ with its licence, and the list `fonts.tsv`:
 ```
 # file <tab> name in the list <tab> use: 1 = Menu font, 2 = Dialogue / UI font, 3 = both
 dejavu/DejaVuSansCondensed-Bold.ttf	DejaVu Sans Condensed Bold	1
-dejavu/DejaVuSansCondensed.ttf	DejaVu Sans Condensed	3
-liberation/LiberationSans-Bold.ttf	Liberation Sans Bold	1
+dejavu/DejaVuSansCondensed.ttf	DejaVu Sans Condensed	2
 ```
 
 To add a font, put the `.ttf` there and add a line; restart the game. A font has to be a static TrueType file
@@ -31,12 +30,12 @@ A font file is checked when it is chosen and at every start. One that is cut sho
 not used: the setting goes back to "Original", and the log has one line with the reason, for example
 
 ```
-bt3: font "Liberation Sans Bold" (fonts/liberation/LiberationSans-Bold.ttf) is not used: a table lies outside
+bt3: font "DejaVu Sans Condensed Bold" (fonts/dejavu/DejaVuSansCondensed-Bold.ttf) is not used: a table lies outside
 the file (the file is cut short or damaged). The setting is back on "Original".
 ```
 
-Bundled: DejaVu Sans Condensed and Condensed Bold (Bitstream Vera licence, `dejavu/LICENSE`) and Liberation Sans
-Bold (SIL Open Font License 1.1, `liberation/LICENSE`).
+Bundled: DejaVu Sans Condensed for Dialogue / UI and Condensed Bold for menus (Bitstream Vera licence,
+`dejavu/LICENSE`).
 
 ## The menu labels
 
@@ -96,8 +95,7 @@ python3 port/tools/menu_font.py --compare-styles
 
 The command writes `port/build/menu-font/style-comparison.png`, names the font used, and applies current
 `labels.json` edits before rendering. It uses DejaVu Sans Condensed Bold by default and needs the extracted disc
-data, Pillow, and a C compiler. Select another Menu font with `--font 'DejaVu Sans Condensed'`, or set the PNG path
-with `--output path/to/comparison.png`.
+data, Pillow, and a C compiler. Set the PNG path with `--output path/to/comparison.png`.
 
 | field | effect |
 |---|---|
