@@ -333,7 +333,7 @@ class Bt3Settings {
     const chosen = el('div', { class: 'gp-chosen', 'aria-live': 'polite' });
     all.appendChild(table);
     // (the test lights the picture: the controllers part's own test cells are not shown here)
-    box.append(top, this.controllers.warning, picture, chosen, quick, q.wizardBox, all);
+    box.append(q.status, top, this.controllers.warning, picture, chosen, quick, q.wizardBox, all);
     this.loadPicture(picture);
     this.refreshers.push(() => {
       const count = this.call('Bt3Ui_GamepadCount', 'number', []), current = this.call('Bt3Ui_PadSlot', 'number', [this.player]);

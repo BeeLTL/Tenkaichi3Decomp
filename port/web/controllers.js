@@ -23,6 +23,7 @@ const KEY_PRESETS = [
     Cross: 'Keypad 2', Circle: 'Keypad 3', Square: 'Keypad 1', Triangle: 'Keypad 0', L1: 'Keypad 7', R1: 'Keypad 9',
     L2: 'Keypad /', R2: 'Keypad *', START: 'Keypad Enter', SELECT: 'Keypad +' } },
 ];
+const CONNECT_SETTLE_MS = 300;     // the engine's list of controllers follows the browser's within this
 const STICK_DEAD = 0x30;          // how far from the centre (0x80) a stick counts as pushed in the test
 const PAD_BUTTON_BITS = 16;       // the game's pad bits shown in the test (include/sys/pad.h)
 // Chrome: "... (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)"; Firefox: "054c-0ce6-..."
@@ -35,13 +36,34 @@ class Bt3Controllers {
     this.testing = false;
     this.loop = 0;
     this.viewIndex = -1;  // the browser controller shown live
+    this.connected = new Map();  // browser index -> id, of the controllers the browser has said are there
+    this.toasts = new Bt3Toasts(document.getElementById('toasts'));
     this.root = this.build();
-    window.addEventListener('gamepadconnected', (e) => { this.refresh(); this.s.log(`controller connected: ${e.gamepad.id} (browser index ${e.gamepad.index})`); });
-    window.addEventListener('gamepaddisconnected', (e) => {
-      this.s.notice(`Controller disconnected: ${e.gamepad.id}`);
-      if (this.wizard && this.wizard.kind === CAPTURE.pad) this.wizardCancel('the controller was disconnected');
-      this.refresh();
+    // each controller on its own: one leaving says so for that one only; one coming back is announced again
+    window.addEventListener('gamepadconnected', (e) => {
+      const { index, id } = e.gamepad;
+      this.s.log(`controller connected: ${id} (browser index ${index})`);
+      if (this.connected.get(index) === id) return;  // (the same one told twice)
+      this.connected.set(index, id);
+      this.toasts.show('ok', 'Controller connected', gamepadDisplayName(id));
+      this.changed();
     });
+    window.addEventListener('gamepaddisconnected', (e) => {
+      const { index, id } = e.gamepad;
+      this.s.log(`controller disconnected: ${id} (browser index ${index})`);
+      this.connected.delete(index);
+      this.toasts.show('warn', 'Controller disconnected', gamepadDisplayName(id));
+      if (this.wizard && this.wizard.kind === CAPTURE.pad) this.wizardCancel('the controller was disconnected');
+      this.changed();
+    });
+  }
+
+  // the panel's lists follow at once, and again once the engine (SDL, at its next look at the browser) has the change
+  changed() {
+    const again = () => (this.s.engineReady ? this.s.refresh() : this.refresh());
+    again();
+    clearTimeout(this.changedTimer);
+    this.changedTimer = setTimeout(again, CONNECT_SETTLE_MS);
   }
 
   call(name, ret, args) { return this.s.call(name, ret, args); }
@@ -76,6 +98,7 @@ class Bt3Controllers {
   build() {
     const el = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); e.append(...kids); return e; };
     this.el = el;
+    this.status = el('p', { class: 'pad-status' });  // always there: which controllers are connected, or none
     this.warning = el('p', { class: 'warning', role: 'alert' });
     this.warning.hidden = true;
     this.list = el('ul', { class: 'pads', 'aria-live': 'polite' });
@@ -104,7 +127,7 @@ class Bt3Controllers {
     this.testCells = [];  // (made with the engine's names on the first refresh: the engine is not there yet)
     this.testSticks = el('span', { class: 'dim' });
     // the Controls tab's main part takes these (settings.js buildBindings): the guided set-ups and the test
-    this.quick = { padSetup, keySetup, wizardBox: this.wizardBox, testButton: this.testButton, testKeys: this.testKeys };
+    this.quick = { status: this.status, padSetup, keySetup, wizardBox: this.wizardBox, testButton: this.testButton, testKeys: this.testKeys };
     // the rest, folded away
     return el('details', { class: 'more controllers' },
       el('summary', {}, 'Connected controllers and keyboard presets'),
@@ -134,6 +157,10 @@ class Bt3Controllers {
       return this.el('li', {}, `${p.id} — browser index ${p.index}, layout ${p.mapping || 'none'}, ${p.buttons.length} buttons, ${p.axes.length} axes; ${usable}`);
     });
     this.list.replaceChildren(...(items.length ? items : [this.el('li', { class: 'dim' }, 'No controller visible: connect one and press any of its buttons.')]));
+    this.status.classList.toggle('none', !pads.length);
+    this.status.textContent = pads.length
+      ? `${pads.length === 1 ? 'Controller connected' : `${pads.length} controllers connected`}: ${pads.map((p) => gamepadDisplayName(p.id)).join(', ')}`
+      : 'No controller connected. Plug one in and press any button on it. The keyboard works meanwhile.';
     const slot = this.call('Bt3Ui_PadSlot', 'number', [this.player()]);
     // (only when a controller is connected but not the chosen one: someone on the keyboard needs no warning)
     this.warning.hidden = !(engine.length && slot >= 0 && slot >= engine.length);

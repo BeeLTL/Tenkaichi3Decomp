@@ -31,6 +31,19 @@
               max-width: none; max-height: none; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
               background: var(--panel); color: var(--text); display: none; flex-direction: column;
               box-shadow: 0 24px 64px #000a, 0 0 0 1px #ffffff08; z-index: 10; }
+  /* notifications (toasts.js): over everything, the game's full screen included (a fixed child of the stage); they let
+     clicks through to the game, only their close button takes one */
+  #toasts { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; flex-direction: column;
+            align-items: center; gap: 6px; pointer-events: none; width: max-content; max-width: calc(100vw - 24px); }
+  .toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border-radius: 10px;
+           background: #1b2029f2; color: var(--text); border: 1px solid var(--line); border-left: 4px solid var(--ok);
+           box-shadow: 0 8px 24px #0009; font-size: 14px; animation: toast-in .18s ease-out; transition: opacity .2s, transform .2s; }
+  .toast-warn { border-left-color: var(--warn); }
+  .toast.leaving { opacity: 0; transform: translateY(-6px); }
+  .toast-close { border: 0; background: none; color: var(--dim); font-size: 18px; line-height: 1; padding: 2px 6px; cursor: pointer; }
+  .toast-close:hover { color: var(--text); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } }
+  @media (prefers-reduced-motion: reduce) { .toast { animation: none; transition: none; } }
   #settings-backdrop { position: fixed; inset: 0; background: #05070bb8; backdrop-filter: blur(3px); z-index: 9; display: none; }
   #settings[open] ~ #settings-backdrop { display: block; }
   @media (max-width: 600px) { #settings { width: calc(100vw - 16px); height: calc(100dvh - 16px); border-radius: 10px; } }
@@ -65,6 +78,9 @@
   #settings .gp-chosen > strong { min-width: 9em; }
   #settings .gp-chosen > .help { grid-column: 1 / -1; }
   #settings tr.chosen > th { color: var(--accent); }
+  #settings .pad-status { margin: 0 0 10px; padding: 6px 10px; border-radius: 8px; background: var(--raised); font-size: 13px;
+                          border-left: 3px solid var(--ok); }
+  #settings .pad-status.none { border-left-color: var(--line); color: var(--dim); }
   #settings .who { align-items: center; margin-bottom: 10px; }
   #settings .who select { flex: 1; min-width: 12em; }
   #settings .segmented { position: relative; display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -155,6 +171,7 @@
   </header>
   <div id="stage">
     <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+    <div id="toasts" aria-live="polite"></div>
     <button id="start" disabled>Checking…</button>
   </div>
   <p id="notice" role="status" aria-live="polite" hidden></p>
@@ -178,6 +195,7 @@
 </dialog>
 <script src="bt3_data.js"></script>
 <script src="dashboard.js"></script>
+<script src="toasts.js"></script>
 <script src="controllers.js"></script>
 <script src="saves.js"></script>
 <script src="touch.js"></script>

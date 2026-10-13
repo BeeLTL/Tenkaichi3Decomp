@@ -67,7 +67,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
   check(await call('Bt3Ui_GamepadCount', 'number', [], []) === 3, 'the engine lists all three (SDL takes every controller in a browser)');
   await ev(`__pads.disconnect(0); 0`);
   await sleep(STEP_MS);
-  check((await text('#notice')).includes('Controller disconnected'), 'disconnect: a notice');
+  check((await text('#toasts')).includes('Controller disconnected'), 'disconnect: a notification');
   await ev(`__pads.connect({ id: ${JSON.stringify(PAD_A)} }); 0`);  // takes browser index 0 again
   await sleep(ENGINE_POLL_MS);
   await ev(`settings.refresh(); 0`);
