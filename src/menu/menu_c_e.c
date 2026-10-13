@@ -625,7 +625,9 @@ void CharSel_Init(s32 section) {
            entries are not looked up in the save: nothing is written to it. In an online session nothing is
            added: both players must have the same list. */
         extern int Port_NetSession(void); /* port/src/gs/net.c */
-        s32 added = Port_NetSession() ? 0 : gPortSongCount;
+        s32 added;
+        PortSongs_Refresh(); /* songs converted from MP3 since the start join the list here (port/src/plat_songs.c) */
+        added = Port_NetSession() ? 0 : gPortSongCount;
         sPortSongsAdded = 0;
         if (added > 0) {
             static s32 sBgmIds[72];
