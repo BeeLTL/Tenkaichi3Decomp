@@ -27,7 +27,7 @@ game's data from it, and it stays on your computer.
   count for 1, 1.5, 1.75 or 2 (1.75 unless set: the d-pad has four buttons to tap in turn, Square is one).
 - Texture packs made for PCSX2 (`.dds` or `.png`): copied into the `textures` folder next to the game, they are used as they are.
 - Stages and music from outside the disc: a stage model (`.unk`) dropped into the `stages` folder next to the
-  game, or a song (`.adx`) into `songs`, is added to the stage select, its name written in the game's own
+  game, or a song (`.mp3`, converted at start, or `.adx`) into `songs`, is added to the stage select, its name written in the game's own
   lettering (cut from the disc's name pictures while the game runs). They are not written to the save and are
   not offered in an online match. See [docs/port/adding_stages.md](docs/port/adding_stages.md) and
   [adding_songs.md](docs/port/adding_songs.md).

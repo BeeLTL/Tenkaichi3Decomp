@@ -21,6 +21,19 @@ menu is the file's name (`My_Song.adx` is shown as "My Song"). `$BT3_SONGS` name
   rest of this document describes, is still used when there is none next to the game. The script now writes to
   the folder next to the game (the repository root) unless `--data` names another place.
 - Code: `port/src/plat_extras.c` (the folder, the scan), `plat_stages.c`, `plat_songs.c`.
+- **An `.mp3` works too** (2026-10-12): at start-up every `name.mp3` with no `name.adx` beside it, or an older
+  one, is converted once and written as `name.adx` next to it; the next start finds the ADX and does nothing.
+  The MP3's own rate and channels are kept. A file that cannot be read or written (not an MP3, more than two
+  channels, a folder that cannot be written to) is left out: one line in the log and a notice over the picture
+  ("Song x.mp3 could not be converted and is left out."), and the game goes on. `songs.txt` may name the `.mp3`;
+  its `.adx` is used. Code: `port/src/gs/song_mp3.c` (dr_mp3 from `port/third_party/dr_libs`, public domain /
+  MIT-0, and an ADX encoder written against the decoder in `snd_adx.c`).
+  Checked with the macOS build (branch macos-port, where it was written): a 6 s and an 8 s MP3 converted (decoded
+  with the port's own rounding, 21 dB and 55 dB against the MP3's samples; ffmpeg's `adpcm_adx` files of the same
+  MP3s give 16.5 dB and 30 dB there, why was not looked into), not converted again at the next start; a file of
+  junk named `.mp3` left out with the log line; the demo fight ran to its end. The release container compiles it
+  for Linux (`clang64`, linked) and Windows (`win64`, the file compiled). Not checked: the notice on screen, the
+  songs played in a fight, the program run on Linux or Windows.
 
 ## The name in the game's own lettering (main line)
 
