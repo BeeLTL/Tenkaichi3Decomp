@@ -5,6 +5,7 @@
 
 Contents (an explicit list: anything else in port/build/web, such as test results, is left out):
   web/            the page and the program: index.html, bt3.js, bt3.wasm and the page's scripts
+  play.py         starts the game: checks the data folder, runs the local server, opens the page
   devserver.py    the local server (HTTP Range, folder listings, cross-origin isolation), 127.0.0.1 only
   extract_disc.py unpacks the user's own disc into a data folder
   README.md       docs/BROWSER_RELEASE.md
@@ -47,6 +48,7 @@ def main():
     for f in PAGE:
         shutil.copy2(WEB / f, folder / "web" / f)
     shutil.copy2(ROOT / "port/web/devserver.py", folder / "devserver.py")
+    shutil.copy2(ROOT / "port/web/play.py", folder / "play.py")
     shutil.copy2(ROOT / "port/tools/extract_disc.py", folder / "extract_disc.py")
     shutil.copy2(ROOT / "docs/BROWSER_RELEASE.md", folder / "README.md")
     for dst, src in LICENSES.items():

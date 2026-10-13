@@ -35,25 +35,40 @@ songs are found in the data folder, but a battle on an added stage has not been 
 tested with simulated devices; please report how real ones behave.
 Details: [docs/BROWSER_FEATURE_MATRIX.md](docs/BROWSER_FEATURE_MATRIX.md).
 
-## You need
+## Playing (the ready-made package)
 
-- A current **Chrome or Edge**. The page needs JavaScript Promise Integration (JSPI) and WebGL 2, and checks
-  for both when it starts.
-- **Python 3**, to unpack the disc and run the local server.
-- **7-Zip** (`7z`), to unpack the disc.
-- Your own disc image of the USA release (SLUS-21678), and about 4 GB of disc space.
-- To build the page yourself: **Emscripten 6.0.12** and the pinned tools in
-  [docs/BROWSER_BUILD.md](docs/BROWSER_BUILD.md).
+Download `web-<version>.zip` from the [releases](https://github.com/BeeLTL/Tenkaichi3Decomp/releases) and unzip
+it. You need a current **Chrome or Edge**, **[Python 3](https://www.python.org/downloads/)** (on Windows, tick
+"Add python.exe to PATH") and **[7-Zip](https://www.7-zip.org/)**, plus your own disc image of the USA release
+(SLUS-21678) and about 4 GB of free space. In the unzipped folder:
 
-## Setting up
-
-1. **Unpack your disc** once into a data folder:
+1. **Unpack your disc** once (a few minutes):
 
    ```
-   python port/tools/extract_disc.py <your disc image> gamedata
+   python extract_disc.py <your disc image> gamedata
    ```
 
-2. **Build the page:**
+2. **Play:**
+
+   ```
+   python play.py
+   ```
+
+   It starts a small local server (127.0.0.1 only) and opens the game in your browser. Keep the window open
+   while playing; Ctrl+C stops it. If another browser opens, copy the address it prints into Chrome or Edge.
+
+The package holds only program code: the page reads the game's data from your `gamedata` folder. More in
+[docs/BROWSER_RELEASE.md](docs/BROWSER_RELEASE.md).
+
+**Keep the extracted data to yourself:** never put it on a public server or share it.
+
+## Building from source
+
+You need **Emscripten 6.0.12** and the pinned tools in [docs/BROWSER_BUILD.md](docs/BROWSER_BUILD.md), Python 3
+and 7-Zip.
+
+1. Unpack your disc: `python port/tools/extract_disc.py <your disc image> gamedata`
+2. Build the page (into `port/build/web/`):
 
    ```
    python port/tools/wasm_build.py game
@@ -62,19 +77,8 @@ Details: [docs/BROWSER_FEATURE_MATRIX.md](docs/BROWSER_FEATURE_MATRIX.md).
    python port/tools/wasm_build.py link
    ```
 
-   The page lands in `port/build/web/`.
-
-3. **Start the local server** with your data folder:
-
-   ```
-   python port/web/devserver.py --port 8080 --mount gamedata=<path to gamedata>
-   ```
-
-4. **Play:** open `http://127.0.0.1:8080/index.html` in Chrome or Edge and press Start.
-
-To run a release package instead of building, see [docs/BROWSER_RELEASE.md](docs/BROWSER_RELEASE.md).
-
-**Keep the extracted data to yourself:** never put it on a public server or share it.
+3. Play: `python port/web/play.py <path to gamedata>`. To make a package like the release:
+   `python port/tools/browser_package.py <name>`.
 
 ## Controls
 
