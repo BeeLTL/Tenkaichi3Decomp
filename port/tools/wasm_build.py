@@ -291,7 +291,7 @@ def link():
             break
         need |= more
         write_stubs()
-    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "saves.js"):  # the page (port/web)
+    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "saves.js", "touch.js"):  # the page (port/web)
         (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
     mism = re.findall(r"signature mismatch: (\S+)", r.stderr)
     errs = [l for l in r.stderr.splitlines() if "error" in l]

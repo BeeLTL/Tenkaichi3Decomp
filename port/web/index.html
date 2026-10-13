@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tenkaichi3Decomp (browser)</title>
 <style>
   :root { --bg: #0d0f14; --panel: #161a22; --raised: #1e2330; --line: #2c3343; --text: #d8dce4; --dim: #8a93a5;
@@ -82,6 +82,43 @@
   #error pre, #log { font: 12px ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; margin: 0; }
   #log { max-height: 320px; overflow: auto; color: var(--dim); }
   #stats { font: 12px ui-monospace, monospace; color: var(--dim); }
+  /* the touch controls (touch.js): over the stage; only the controls themselves take input */
+  #touch { position: absolute; inset: 0; pointer-events: none; z-index: 2; --touch-opacity: .55; }
+  #touch[hidden], #touch [hidden] { display: none; }
+  #touch .touch-box { position: absolute; inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+                      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+  .touch-ctl { position: absolute; pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+               -webkit-touch-callout: none; opacity: var(--touch-opacity); display: flex; align-items: center;
+               justify-content: center; color: #fff; background: #141820a0; border: 2px solid #ffffff90; border-radius: 50%;
+               font: 600 clamp(11px, 2.4vmin, 24px) system-ui, sans-serif; transition: transform .05s, background .05s; }
+  .touch-ctl.pressed { opacity: 1; background: #f0b85ab0; border-color: #fff; transform: scale(.94); }
+  .touch-shoulder, .touch-pill { border-radius: 999px; }
+  .touch-pill, .touch-small { font-size: clamp(9px, 1.8vmin, 16px); }
+  .touch-ctl[data-tone=triangle] .touch-label { color: #6fd3b8; }
+  .touch-ctl[data-tone=circle] .touch-label { color: #ff7a8a; }
+  .touch-ctl[data-tone=cross] .touch-label { color: #8ab4ff; }
+  .touch-ctl[data-tone=square] .touch-label { color: #e39bd8; }
+  .touch-button .touch-label { font-size: 1.4em; }
+  .touch-stick .touch-knob { width: 46%; height: 46%; border-radius: 50%; background: #ffffff55; border: 2px solid #ffffffb0; }
+  .touch-dpad { background: none; border: 0; border-radius: 0; } /* (square: its corners, the diagonals, can be touched) */
+  .touch-arm { position: absolute; background: #141820c0; border: 2px solid #ffffff90; border-radius: 6px; }
+  .touch-arm.on { background: #f0b85ad0; border-color: #fff; }
+  .touch-up, .touch-down { left: 34%; width: 32%; height: 38%; }
+  .touch-left, .touch-right { top: 34%; height: 32%; width: 38%; }
+  .touch-up { top: 0; } .touch-down { bottom: 0; } .touch-left { left: 0; } .touch-right { right: 0; }
+  .touch-portrait { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); margin: 0; padding: 6px 12px;
+                    background: #000c; color: #fff; border-radius: 6px; font-size: 13px; pointer-events: none; z-index: 1; }
+  #touch.editing .touch-ctl { outline: 2px dashed #ffffffa0; outline-offset: 2px; opacity: max(var(--touch-opacity), .6); }
+  #touch.editing .touch-ctl.selected { outline: 3px solid var(--accent); }
+  .touch-toolbar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); pointer-events: auto; display: flex;
+                   flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: var(--panel);
+                   border: 1px solid var(--line); border-radius: 8px; z-index: 3; max-width: calc(100% - 16px); }
+  .touch-toolbar button.primary { border-color: var(--accent); }
+  .touch-selname { color: var(--dim); font-size: 12.5px; }
+  /* the play layout: on a touch screen with the controls shown, the stage fills the window (picture letterboxed) */
+  body.touch-play #stage { position: fixed; inset: 0; width: 100vw; height: 100dvh; aspect-ratio: auto; border-radius: 0;
+                           z-index: 5; }
+  body.touch-play #canvas { object-fit: contain; }
 </style>
 </head>
 <body>
@@ -118,6 +155,7 @@
 <script src="dashboard.js"></script>
 <script src="controllers.js"></script>
 <script src="saves.js"></script>
+<script src="touch.js"></script>
 <script src="settings.js"></script>
 <script>
 'use strict';

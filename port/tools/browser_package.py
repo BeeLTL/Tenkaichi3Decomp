@@ -17,7 +17,7 @@ import os, pathlib, shutil, sys, zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WEB = ROOT / "port/build/web"
-PAGE = ["index.html", "bt3.js", "bt3.wasm", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "saves.js"]
+PAGE = ["index.html", "bt3.js", "bt3.wasm", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "saves.js", "touch.js"]
 EMSDK = pathlib.Path(os.environ.get("EMSDK", ROOT.parent / "tools/emsdk"))
 LICENSES = {
     "Tenkaichi3Decomp-LICENSE.txt": ROOT / "LICENSE",

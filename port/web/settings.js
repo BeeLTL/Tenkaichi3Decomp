@@ -84,6 +84,7 @@ const PANEL = [
     { controllers: true },
   ] },
   { tab: 'Saves', items: [{ saves: true }] },
+  { tab: 'Touch', items: [{ touch: true }] },
   { tab: 'Extras', items: [
     { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
       help: "How fast the game runs (the sound keeps its pitch). 100% is the game's own; 114% is what competitive play uses." },
@@ -106,6 +107,7 @@ class Bt3Settings {
     this.query = query;
     this.log = log;
     this.mod = null;
+    this.engineReady = false;  // the engine's runtime is up (its `ready`): only then may it be called
     this.player = 0;
     this.capturing = null;  // the button waiting for a key or controller button
     this.opener = null;     // what had the focus before the panel opened (it gets it back)
@@ -114,6 +116,7 @@ class Bt3Settings {
     this.saves = saves;  // the game's saves in the browser's storage (saves.js): the Saves tab
     this.captureListener = null;  // the guided set-up's, while it runs: the engine's captureDone goes there
     this.controllers = new Bt3Controllers(this);  // the Controls tab's controller part (controllers.js)
+    this.touch = new Bt3Touch({ stage, settings: this, log });  // the on-screen touch controls and the Touch tab (touch.js)
     // the Developer section's live numbers and the diagnostics export (dashboard.js)
     this.dashboard = new Bt3Dashboard({ root: document.getElementById('dev-dashboard'), renderer, data, log, getLog,
                                         getSettings: () => this.snapshot() });
@@ -138,7 +141,7 @@ class Bt3Settings {
   // The handlers the engine calls (web_ui.c page_call / page_notice / page_screenshot): Module.bt3Ui.
   handlers() {
     return {
-      ready: () => { this.openButton.disabled = false; this.refresh(); this.fitStage(); },
+      ready: () => { this.engineReady = true; this.openButton.disabled = false; this.refresh(); this.fitStage(); this.touch.apply(); },
       changed: () => { this.persist(); this.refresh(); this.fitStage(); },
       toggle: () => this.toggle(),
       captureDone: () => this.captureDone(),
@@ -200,7 +203,8 @@ class Bt3Settings {
       tabs.appendChild(tab);
       for (const item of t.items) {
         page.appendChild(item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root : item.saves ? this.saves.buildUi()
-                         : item.unlock ? this.buildUnlock() : item.added ? this.buildAdded() : this.buildControl(item));
+                         : item.unlock ? this.buildUnlock() : item.added ? this.buildAdded() : item.touch ? this.touch.buildSettings()
+                         : this.buildControl(item));
       }
       if (t.tab === 'Video') page.appendChild(this.buildRenderer());
       pages.appendChild(page);
@@ -460,6 +464,7 @@ class Bt3Settings {
   open() {
     if (!this.mod || this.dialog.open) return;
     this.opener = document.activeElement;
+    this.touch.releaseAll();  // (nothing held by a finger stays held while the panel is open)
     this.call('Bt3Ui_SetOpen', null, [1]);
     this.refresh();
     this.dialog.show();
