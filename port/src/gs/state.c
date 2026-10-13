@@ -74,10 +74,18 @@ static void regions_init(void) {
             int marks = 0;
             while (sRegions < MAX_REGIONS - 2 && fscanf(fp, "%llx %llx", &a, &size) == 2) {
                 if (a < 2) {
+#ifdef __APPLE__ /* (the list holds game addresses: offsets in the window, port_addr.h) */
                     marks += size == Port_Addr(a == 0 ? (const void *)&gPortResim : (const void *)&gPortVBlanks);
+#else
+                    marks += (uintptr_t)size == (a == 0 ? (uintptr_t)&gPortResim : (uintptr_t)&gPortVBlanks);
+#endif
                     continue;
                 }
-                sRegion[sRegions].p = (const uint8_t *)Port_Ptr(a);
+#ifdef __APPLE__
+                sRegion[sRegions].p = (const uint8_t *)Port_Ptr((uint32_t)a);
+#else
+                sRegion[sRegions].p = (const uint8_t *)(uintptr_t)a;
+#endif
                 sRegion[sRegions].n = (size_t)size;
                 sRegion[sRegions].what = "globals";
                 sRegions++;
@@ -439,9 +447,6 @@ static void on_write_fault(int sig, siginfo_t *si, void *uc) {
     /* not ours: to whoever handled it before, or to the default (the write is tried again and ends the program) */
 #ifdef __APPLE__
     struct sigaction *old = sig == SIGBUS ? &sOldBus : &sOldSegv;
-#else
-    struct sigaction *old = &sOldSegv;
-#endif
     if (old->sa_flags & SA_SIGINFO) {
         old->sa_sigaction(sig, si, uc);
     } else if (old->sa_handler != SIG_DFL && old->sa_handler != SIG_IGN) {
@@ -449,6 +454,15 @@ static void on_write_fault(int sig, siginfo_t *si, void *uc) {
     } else {
         sigaction(sig, old, NULL);
     }
+#else
+    if (sOldSegv.sa_flags & SA_SIGINFO) {
+        sOldSegv.sa_sigaction(sig, si, uc);
+    } else if (sOldSegv.sa_handler != SIG_DFL && sOldSegv.sa_handler != SIG_IGN) {
+        sOldSegv.sa_handler(sig);
+    } else {
+        sigaction(SIGSEGV, &sOldSegv, NULL);
+    }
+#endif
 }
 
 static void *shadow_alloc(size_t n) {
