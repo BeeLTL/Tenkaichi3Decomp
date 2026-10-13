@@ -669,7 +669,10 @@ static void set_font(int choice) {
     sFontChoice = 0;
     if (choice != 0) {
         menu_text_labels();
-        if (sCount != 0 && font_open(&sFont, choice)) { sFontChoice = choice; }
+        if (sCount != 0 && font_open(&sFont, choice)) {
+            sFontChoice = choice;
+            fprintf(stderr, "bt3: menu font: %s\n", sFonts[choice - 1].name);
+        }
     }
 }
 
@@ -1105,7 +1108,10 @@ static void set_shared_font(int choice) {
     if (choice == sSharedChoice) { return; }
     face_close(&sSharedFont);
     sSharedChoice = 0;
-    if (choice != 0 && font_open(&sSharedFont, choice)) { sSharedChoice = choice; }
+    if (choice != 0 && font_open(&sSharedFont, choice)) {
+        sSharedChoice = choice;
+        fprintf(stderr, "bt3: dialogue / UI font: %s\n", sFonts[choice - 1].name);
+    }
 }
 
 void MenuText_SetSharedFont(int choice) {
