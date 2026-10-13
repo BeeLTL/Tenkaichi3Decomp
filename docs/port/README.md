@@ -2879,3 +2879,113 @@ lines already spoken: the fight starts over with its opening scene, both health 
 again at their places, and the fight goes on to its K.O. and the mode's result screen. Not tried: a fight in which
 a fighter is exchanged by the story before the restart, and the other modes that may run as battle mode 1.
 
+## Screen reader: speech and braille through Prism (2026-10-13)
+
+Pull request #75, by a blind player (piapenia). The menus, the windows of the memory card, the pause and result
+menus and, on request, the fight's gauges are said by the player's screen reader, and shown on a braille display
+where it has one. Files: `port/src/a11y_game.c` (on the game's thread, once per blank from `Port_VBlank`: reads the
+game's screens and says what changed), `port/src/gs/a11y.c` (the speaker: a thread of its own, the library, the
+keys, the cues, the translations). Hooks: `Port_VBlank` (plat_stub.c), the two event loops (gs_gpu.c, gs_gl.c),
+`ADXT_StartAfs` and `apply_volume` (snd_adx.c), and one in the game's code, `Font_NewCmd` (`src/battle/col_c.c`,
+inside `#ifdef PORT`), which notes each string the game queues to draw.
+
+It speaks through Prism (https://github.com/ethindp/prism, MPL-2.0), loaded at run time from `prism.dll`
+(`libprism.so`) in the program's folder. The library is not in the repository nor in a release: the player puts it
+there. Without it, and without `BT3_A11Y_LOG`, everything is off: no thread, no file, no key.
+
+What is read: the title, the main menu, Dragon History (sagas, episodes), Ultimate Battle (missions, Sim Dragon,
+survival, Disc Fusion), the World Tour, the duel menu and its settings, the character, team, stage and music
+selects, training, the replay list, the character reference, the shop, the options, the memory card's windows, the
+pause menu and the menu after a fight, item by item. A screen without a reader of its own has the strings the game
+draws on it said together once they have stood still for 20 blanks; a line a voice speaks is left to the voice. In
+a fight nothing is said by itself: F3 / F4 (or a click on the left / right half of a controller's touchpad) say that
+player's health, ki, blast stock, powered-up mode and fighters left. Two short sounds, on the player's side of the
+stereo picture, tell that one more transformation or the Ultimate Blast has come within reach (the game's own
+checks, held for 15 blanks).
+
+Settings (`bt3_settings.txt`; none of them in the settings window):
+
+| key | meaning |
+|---|---|
+| `a11y=0` | off, even with the library there |
+| `a11y_key_repeat` | the key that says the last message again, an SDL scancode (default F2); the touchpad click too, outside a fight |
+| `a11y_key_gauges1`, `a11y_key_gauges2` | the keys for player 1's and player 2's gauges (default F3, F4) |
+| `a11y_cue_volume` | the two cues, percent (default 60; 0: none) |
+| `a11y_menu_voices`, `a11y_fight_voices` | the game's two voice channels, percent of their own volume, in the menus (default 50, so the reader is heard over the guides) and in a battle (default: the same) |
+| `a11y_lang="pt"` | the language, a code of two or three letters (default: the system's) |
+| `a11y_log=1` | what is said, into `a11y_log.txt` in the program's folder |
+| `a11y_missing=1` | out of English, each line said without a translation, once, into `a11y_untranslated.txt` |
+
+For tests, without a screen reader: `BT3_A11Y_LOG=<file>` turns it on with no library and writes what would be
+said, one line each with its blank ("+" in front: queued behind the line before), and notes marked "#" (mode
+changes, "fight", "gauges on screen", a cue). `BT3_A11Y_LANG=<code>`, `BT3_A11Y_MISSING=<file>`;
+`BT3_A11Y_ASK=<n>` asks for the gauges every n blanks, the two players' in turn (no key can be pressed without a
+window).
+
+**How it stays out of the game's state.** It reads: nothing in a11y_game.c writes the game's memory or draws from
+its random generators, and the game's functions it calls are getters (`BtlCharApi_GetHp` and the like,
+`BtlAct_CanTransform`, `BtlChar_TestFlag`, `BtlPause_GetMenuPad`). Its own variables are the port's, outside the
+ranges of the state list (`make_state.py`). A blank that is run again after a rollback says nothing and notes
+nothing (`gPortResim`, in `PortA11y_GameTick`, `PortA11y_FontText` and `PortA11y_StreamStart`). What it changes
+outside itself is sound only: the gain of the two voice streams and its own cue stream. Checked: the regression
+replay with the reader off and on (log only, gauges asked every 300 blanks) gives the same `BT3_HASH` log blank for
+blank; two connected copies (the pause-menu test above, `BT3_NET_SEED` fixed) give the same whole-state checksums
+with the reader on as with it off, on both sides, over 40,000 blanks with rollbacks.
+
+**Changed on top of the pull request:**
+
+- Its controller vibration (`Port_PadRumble`) is left out: `Port_PadVibrate` (gs_input.c) was there already and
+  does more (the strength setting, the online side, the window's focus). One difference in what the player feels:
+  the pull request averaged the small motor over two frames, because the game switches it on in every other frame
+  only (`BtlChar_UpdateVibration`, `src/battle/btl_char_get.c`: `small = toggle % 2 == 0`; `Pad_SendActuator`
+  passes it on as it is). Ours passes on / off on as it comes. Not changed.
+- A fight was told from `BattleWork.running` alone. A battle that a script sets up (Dragon History) has the whole
+  battle work zeroed by `BtlScriptCmd_SetRule` -> `Battle_ClearWork` six blanks after `Battle_Main` set it, while
+  the battle still loads: the reader said the result screen's name at once, and the gauges on request, the cues,
+  the "not said in a fight" rule and the fight's voice volume were dead for the whole fight. Now `battle_watch`
+  follows the battle: it starts with `running` (or the roster, `gBtlChars`), and is over when the roster has come
+  and gone and `running` is 0. The HUD (`gHud`, which the game never sets back to NULL) is read only while this
+  battle's roster and sequence (`gBtlSeq`) are there; before, the freed HUD of the last battle was read while the
+  next one loaded.
+- Online the pause menu belongs to the player who opened it and the fight goes on under it (above): the reader
+  takes the other player's pause menu for no menu, as `PauseMenu_Draw` does, so it is not read and does not stop
+  the cues and the touchpad's gauges.
+- Prism's `PrismConfig` is returned by value and was declared by hand "from release 0.18.3": the memory given for
+  it is 512 bytes now and no field of it is used but the first byte (its version, printed). Not guarded: the
+  parameters of the eleven functions used, the feature bits, the ids of NVDA and JAWS; none of those functions
+  tells the library's version, so there is no version check at load time. 0.18.3 is the release to use.
+- Languages: the code has English only. The Spanish that was in a11y_game.c is `port/lang/a11y_es.txt`, in the
+  same form as any other language's file: a line per label, the FNV-1a hash (64 bits) of the English, a tab, the
+  line to say; the English is in a note above each line, so the file is also the list to translate from.
+  `package.py` puts `port/lang/a11y_*.txt` beside the program; a program run from `port/build` finds them in
+  `../lang`. A label that a language says two ways has a second key, "label|sense" (`trc`: "Random|song"); a file
+  without it gets the plain key's line. `a11y_<code>_own.txt` holds a player's own lines, wins, and is not
+  replaced by a release. A table of one player's renames and of a fan translation's abbreviations is out of the
+  code: lines "~word<tab>words" in either file do that (in the game's own lines, whole words). None of the files
+  holds text of the game: labels of the reader, and hashes.
+- Small: an entry beyond a text file's table is not read; a mission's opponent index is bounded; `gSaveData` is
+  checked before the options' volume is read; `a11y_log.txt` and `a11y_untranslated.txt` open by their UTF-8 path
+  on Windows.
+- Three faults of the port the author met: the question before the game closes (Esc) was a window the reader
+  could not see, and is said now with its focused button and its keys (`build_quit`, gs/ui.cpp); the setup window
+  had no keyboard navigation (`ImGuiConfigFlags_NavEnableKeyboard`: Tab reached the text field only); the setup's
+  `--install <disc.iso>` and an image dropped on its icon failed on Windows for a path with letters outside ASCII
+  (main's arguments are in the system's code page there; they are made from the wide command line now).
+
+Tests (Linux, no window, `BT3_A11Y_LOG`): the recording of presses from the start of the program into the first
+fight of Dragon History, with the gauges asked: before, "fight over" and the result screen's name six blanks into
+the loading and every request "outside a fight"; now the gauges of both players all through the fight, the HUD's
+technique names noted and not said, the result screen's name at the end. The regression replay (the versus path):
+gauges and the menu after the fight as before. Two connected copies, player 2 opening the pause menu: said on
+player 2's copy only, the gauges on both. Three seeded walks through the menus and the story fight in Spanish,
+before and after the languages' change: the same lines, but the renames, which come back with the player's own
+file. A stand-in library with a `PrismConfig` of 200 bytes: started, spoken through. The Windows builds link (the
+game and the setup). The setup's `--install` under wine, without a display, for an image in a folder named with
+accented and Japanese letters: before, "The disc image could not be opened" with the path in pieces; now the image
+is opened and read.
+
+Not tested: real speech and braille (no run with Prism and a screen reader was made here: the author's own, on
+Windows with NVDA); the keys and the touchpad (the requests were made by `BT3_A11Y_ASK`); the exit question's
+buttons (only its coming up was run); the setup's keyboard navigation (read in Dear ImGui's tabbing rule and built,
+the window was not opened); anything on Windows itself (wine only); the Spanish of the three new lines of the exit
+question (not the author's). Online only between two copies on one machine.
