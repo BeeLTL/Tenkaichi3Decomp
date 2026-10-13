@@ -41,6 +41,7 @@ static char sFiles[PORT_SONG_MAX][128];
 extern int PortExtras_Dir(const char *kind, const char *env, char *out, unsigned size);
 extern int PortExtras_Scan(const char *dir, const char *ext, char names[][128], int max);
 extern void PortExtras_NameFromFile(const char *file, char *name, unsigned size);
+extern void PortSongs_ConvertMp3(const char *dir); /* gs/song_mp3.c: the folder's MP3 files, written as ADX */
 
 void PortSongs_Init(void);
 
@@ -87,6 +88,7 @@ void PortSongs_Init(void) {
     if (!PortExtras_Dir("songs", "BT3_SONGS", sDir, sizeof(sDir))) {
         return;
     }
+    PortSongs_ConvertMp3(sDir);
     /* the list first (its names and its order), then whatever else is in the folder, by name */
     snprintf(path, sizeof(path), "%s/songs.txt", sDir);
     fp = fopen(path, "rb");
@@ -100,7 +102,22 @@ void PortSongs_Init(void) {
             continue;
         }
         *bar = '\0';
-        add_song(trim(line), trim(bar + 1));
+        {
+            /* a list line may name the MP3: its ADX is the file, and none means the MP3 could not be converted */
+            char *file = trim(line), adx[160];
+            size_t l = strlen(file);
+            if (l > 4 && l < sizeof(adx) && strcmp(file + l - 4, ".mp3") * strcmp(file + l - 4, ".MP3") == 0) {
+                FILE *f;
+                snprintf(adx, sizeof(adx), "%.*s.adx", (int)(l - 4), file);
+                snprintf(path, sizeof(path), "%s/%s", sDir, adx);
+                if ((f = fopen(path, "rb")) == NULL) {
+                    continue;
+                }
+                fclose(f);
+                file = adx;
+            }
+            add_song(file, trim(bar + 1));
+        }
     }
     if (fp != NULL) {
         fclose(fp);
