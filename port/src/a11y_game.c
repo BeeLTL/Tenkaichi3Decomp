@@ -467,15 +467,17 @@ static void say_item(const char *label, int index, int count, int flags) {
     PortA11y_Say(text, flags);
 }
 
-/* Line `n` of one of the game's text files, as UTF-8 into out: the file is a table of byte offsets (entry n + 1)
-   to UTF-16 strings that begin with U+FEFF (src/sys/dialog.c DIALOG_TEXT, src/battle/view_b.c
-   TextBox_AttachLine). Empty when it does not look like such a line. Returns the length. */
+/* Line `n` of one of the game's text files, as UTF-8 into out: the file is a table of byte offsets (entry n + 1;
+   entry 0 is the number of lines) to UTF-16 strings that begin with U+FEFF (src/sys/dialog.c DIALOG_TEXT,
+   src/battle/view_b.c TextBox_AttachLine). The strings come after the table, so the table ends where the first
+   one starts: an entry from there on is not read. Empty when it does not look like such a line. Returns the
+   length. */
 static int text_line(char *out, int cap, uint32_t GAME_PTR file, int n) {
     uint32_t ofs;
     uint16_t GAME_PTR str;
 
     out[0] = '\0';
-    if (file == NULL || n < 0 || n >= 0x1000) {
+    if (file == NULL || n < 0 || n >= 0x1000 || (uint32_t)n + 1 >= file[1] >> 2) {
         return 0;
     }
     ofs = file[n + 1] >> 2 << 2;
@@ -714,6 +716,8 @@ extern A11yMisSel GAME_PTR gMisSel;
 #define MISSEL_KIND_LINE 0x148
 #define MISSEL_RULE_LINE 0x156
 #define MISSION_COUNT 100
+#define MISSEL_OPPS_MAX 1024 /* the game does not check a mission's opponent indices and the section's size is not
+                                kept; one beyond this (the disc has 5 a mission at most) is not followed */
 
 static void mission_select(void) {
     static int level = -1, mission = -1, page = -1;
@@ -758,7 +762,7 @@ static void mission_select(void) {
         if (def->rule != 0 && text_line(line, sizeof(line), m->text, MISSEL_RULE_LINE + def->rule) > 0) {
             n += snprintf(text + n, sizeof(text) - n, "%s. ", line);
         }
-        for (i = 0; i < 5 && m->opps[def->opp[i]].chara != MISSEL_NONE; i++) {
+        for (i = 0; i < 5 && (unsigned)def->opp[i] < MISSEL_OPPS_MAX && m->opps[def->opp[i]].chara != MISSEL_NONE; i++) {
             opps++;
         }
         snprintf(text + n, sizeof(text) - n, "%d %s", opps,
@@ -2785,7 +2789,7 @@ static void option_open(char *text, int cap, A11yOption GAME_PTR o) {
         }
         break;
     case OPT_ITEM_VOLUME:
-        if (two) {
+        if (two && gSaveData != NULL) {
             /* 0..9, and the game wraps from 9 to 0 (Option_Input, src/menu/menu_x_c.c:646): the top is said */
             snprintf(text, cap, tr(sEs ? "%s, %d de 9" : "%s, %d of 9"),
                      v ? (tr(sEs ? "Efectos" : "Effects")) : (tr(sEs ? "Música" : "Music")),
@@ -2887,8 +2891,10 @@ static void options(void) {
                 kept[1] = o->seVolume;
                 PortA11y_Say(tr(sEs ? "Guardado" : "Kept"), A11Y_INTERRUPT);
             }
-            shown[0] = gSaveData->bgmVolume;
-            shown[1] = gSaveData->seVolume;
+            if (gSaveData != NULL) {
+                shown[0] = gSaveData->bgmVolume;
+                shown[1] = gSaveData->seVolume;
+            }
         }
         option_open(text, sizeof(text), o);
         if (text[0] == '\0') {
@@ -3380,8 +3386,8 @@ void PortA11y_FontText(int kind, int arg, int flags) {
 
 /* The strings that showed up on a screen no reader has, in the order they were first drawn, once they have
    stayed TEXT_STABLE blanks: together as one message. Not the message window's line (msg_window) nor a line a
-   voice says. In a fight with no menu over it (the HUD's technique names), only noted in the log: the owner asked
-   for the gauges on request instead (fight_gauges). */
+   voice says. In a fight with no menu over it (the HUD's technique names), only noted in the log: the gauges
+   are said on request instead (fight_gauges). */
 static void shown_text(void) {
     A11yMsgWin GAME_PTR w = gMsgWin;
     uint32_t skip = w != NULL ? (uint32_t)(uintptr_t)w->str : 0;

@@ -42,8 +42,28 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 extern int Port_Setting(const char *name, int def); /* plat_settings.c */
 extern void Port_SettingText(const char *name, const char *def, char *out, int size);
+
+/* fopen for a path in UTF-8 (SDL's: the program's folder), which the C library of Windows would take for one in the
+   system's code page: a folder with letters outside it would not open. */
+static FILE *open_utf8(const char *path, const char *mode) {
+#ifdef _WIN32
+    wchar_t wpath[1024], wmode[8];
+
+    if (MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, 1024) == 0 || MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, 8) == 0) {
+        return NULL;
+    }
+    return _wfopen(wpath, wmode);
+#else
+    return fopen(path, mode);
+#endif
+}
 
 #define A11Y_INTERRUPT 1 /* (the same in a11y_game.c) */
 #define A11Y_TEXT 1024
@@ -402,7 +422,7 @@ static FILE *open_missing(const char *base) {
     FILE *fp;
 
     snprintf(path, sizeof(path), "%sa11y_untranslated.txt", base);
-    if ((fp = fopen(path, "r")) != NULL) {
+    if ((fp = open_utf8(path, "r")) != NULL) {
         while (fgets(line, sizeof(line), fp) != NULL && sMissedCount < (int)(sizeof(sMissed) / sizeof(sMissed[0]))) {
             if (start && strlen(line) > 16 && line[16] == '\t') {
                 sMissed[sMissedCount++] = strtoull(line, NULL, 16);
@@ -411,7 +431,7 @@ static FILE *open_missing(const char *base) {
         }
         fclose(fp);
     }
-    return fopen(path, "a");
+    return open_utf8(path, "a");
 }
 
 /* In Spanish, the names the player's mod spells otherwise (the owner's choice) and the mod's abbreviations written
@@ -498,7 +518,7 @@ static void start(void) {
         sLog = fopen(getenv("BT3_A11Y_LOG"), "w");
     } else if (Port_Setting("a11y_log", 0) && (base = SDL_GetBasePath()) != NULL) {
         snprintf(path, sizeof(path), "%sa11y_log.txt", base);
-        sLog = fopen(path, "w");
+        sLog = open_utf8(path, "w");
     }
     if (!load_prism() && sLog == NULL) {
         return;
