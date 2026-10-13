@@ -24,10 +24,25 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null && apt-get install -y -qq xvfb libgl1-mesa-dri mesa-vulkan-drivers libvulkan1 >/dev/null
 Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
 sleep 2
+# Each rendered run stops at a frame, not after a time: when its last screenshot is written (OpenGL on llvmpipe is
+# slow, and how far it got in a fixed time varied between runs: 11 to 13 trace lines). <seconds rendered> is only the
+# limit for a run that does not get there; compare.sh then says which frame was not reached.
 for API in gl vulkan; do
+    case $API in gl) LAST=450 ;; vulkan) LAST=2100 ;; esac
     rm -rf port/build/shots && mkdir -p port/build/shots
     DISPLAY=:99 SDL_AUDIODRIVER=dummy LIBGL_ALWAYS_SOFTWARE=1 BT3_DATA=/data BT3_GS=gpu BT3_GPU_API=$API BT3_DEMO=1 \
-        BT3_SHOT=150 BT3_TRACE=60 timeout "$SECONDS_RENDERED" ./port/build/bt3_64 > /out/${LABEL}_$API.log 2>&1 || true
+        BT3_SHOT=150 BT3_SHOT_TO=$LAST BT3_TRACE=60 ./port/build/bt3_64 > /out/${LABEL}_$API.log 2>&1 &
+    PID=$!
+    WAITED=0
+    LAST_SHOT=$(printf 'port/build/shots/gpu_%05d.ppm' "$LAST")
+    while [ ! -f "$LAST_SHOT" ] && [ "$WAITED" -lt "$SECONDS_RENDERED" ] && kill -0 "$PID" 2>/dev/null; do
+        sleep 2
+        WAITED=$((WAITED + 2))
+    done
+    sleep 2 # (the last screenshot written whole)
+    kill "$PID" 2>/dev/null || true
+    wait "$PID" 2>/dev/null || true
+    echo "$LABEL $API: $( [ -f "$LAST_SHOT" ] && echo "reached frame $LAST" || echo "did NOT reach frame $LAST") after ${WAITED} s"
     rm -rf /out/${LABEL}_$API.shots && mkdir -p /out/${LABEL}_$API.shots
     cp port/build/shots/*.ppm /out/${LABEL}_$API.shots/ 2>/dev/null || true
     trace /out/${LABEL}_$API.log /out/${LABEL}_$API.trace.txt
