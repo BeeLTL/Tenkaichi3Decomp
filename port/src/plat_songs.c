@@ -41,7 +41,8 @@ static char sFiles[PORT_SONG_MAX][128];
 extern int PortExtras_Dir(const char *kind, const char *env, char *out, unsigned size);
 extern int PortExtras_Scan(const char *dir, const char *ext, char names[][128], int max);
 extern void PortExtras_NameFromFile(const char *file, char *name, unsigned size);
-extern void PortSongs_ConvertMp3(const char *dir); /* gs/song_mp3.c: the folder's MP3 files, written as ADX */
+extern void PortSongs_Mp3Start(const char *dir); /* gs/song_mp3.c: the folder's MP3 files, written as ADX in the background */
+extern int PortSongs_Mp3Made(void);              /* how many it has written so far */
 
 void PortSongs_Init(void);
 
@@ -80,20 +81,13 @@ static void add_song(const char *file, const char *name) {
     gPortSongCount++;
 }
 
-void PortSongs_Init(void) {
+/* Reads the folder and adds the songs that are not in the list yet, at its end: a song keeps its place (the game
+   holds the place's number while a fight with that music is set up and runs). */
+static void collect(void) {
     char path[512];
     char line[256];
     FILE *fp;
-    int i;
 
-    if (sDone) {
-        return;
-    }
-    sDone = 1;
-    if (!PortExtras_Dir("songs", "BT3_SONGS", sDir, sizeof(sDir))) {
-        return;
-    }
-    PortSongs_ConvertMp3(sDir);
     /* the list first (its names and its order), then whatever else is in the folder, by name */
     snprintf(path, sizeof(path), "%s/songs.txt", sDir);
     fp = fopen(path, "rb");
@@ -137,8 +131,45 @@ void PortSongs_Init(void) {
             add_song(found[k], name);
         }
     }
+}
+
+static int sMadeSeen; /* PortSongs_Mp3Made() when the folder was last read */
+
+void PortSongs_Init(void) {
+    if (sDone) {
+        return;
+    }
+    sDone = 1;
+    if (!PortExtras_Dir("songs", "BT3_SONGS", sDir, sizeof(sDir))) {
+        return;
+    }
+    PortSongs_Mp3Start(sDir);
+    sMadeSeen = PortSongs_Mp3Made(); /* (taken before the folder is read: a song finished meanwhile is looked for again) */
+    collect();
     if (gPortSongCount > 0) {
         fprintf(stderr, "bt3: songs: %d added from %s\n", gPortSongCount, sDir);
+    }
+}
+
+/* The songs whose conversion from MP3 has finished since the list was last made join it (song_mp3.c). Called by
+   the game when it sets up a select screen's music list (src/menu/menu_c_e.c, menu_e_b.c), on the game's thread:
+   the list does not change at any other time, and not in an online session, where added songs are not offered and
+   nothing the two copies might not share is to change. */
+void PortSongs_Refresh(void) {
+    extern int Port_NetSession(void); /* gs/net.c */
+    int made, had = gPortSongCount;
+
+    if (!sDone || sDir[0] == '\0' || Port_NetSession()) {
+        return;
+    }
+    made = PortSongs_Mp3Made();
+    if (made == sMadeSeen) {
+        return;
+    }
+    sMadeSeen = made;
+    collect();
+    if (gPortSongCount > had) {
+        fprintf(stderr, "bt3: songs: %d more converted from MP3, %d added now\n", gPortSongCount - had, gPortSongCount);
     }
 }
 

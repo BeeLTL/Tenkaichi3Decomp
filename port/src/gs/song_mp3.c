@@ -1,6 +1,17 @@
 /*
  * MP3 files dropped in the songs folder, converted to the ADX the game plays when the program starts.
  *
+ * In the background (PortSongs_Mp3Start): the program does not wait for it. (It did, before its window showed
+ * anything: a third of a second for a song of four minutes, for every new MP3.) The thread here only reads MP3
+ * files and writes ADX files and mp3-failed.txt in the songs folder, and counts the ADX files it has finished
+ * (PortSongs_Mp3Made); it touches nothing of the game's. The song list is the game thread's (plat_songs.c): it is
+ * made at start from the ADX files there are, and a song converted later joins its end the next time a character
+ * select is set up (PortSongs_Refresh), so on the first start after an MP3 was put in the folder the song may not
+ * be offered in the very first select screen. Never in an online session, where added songs are not offered at
+ * all. In a run whose buttons are recorded or played back, or that is re-run blank by blank (BT3_PAD_REC,
+ * BT3_PAD_PLAY, BT3_PAD_TABLE, BT3_SYNCTEST), the conversion is done at start, before the list is made, as the pull
+ * request did it: the list of such a run depends on the folder and not on how fast the conversion was.
+ *
  * A song added from outside the disc is an ADX file (plat_songs.c). Here a `name.mp3` is decoded (dr_mp3,
  * port/third_party/dr_libs) and written as `name.adx` next to it, once. The song list then picks the ADX up as if it
  * had been put there by hand (or by port/tools/add_song.py).
@@ -41,11 +52,13 @@
 #include <dirent.h>
 #include <inttypes.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -60,6 +73,9 @@ extern void Port_UiNotice(const char *text); /* ui.cpp: a line over the picture 
 #define HIGHPASS 500    /* the high-pass frequency of the disc's music and of ffmpeg's encoder */
 #define NAME_MAX_ 128   /* a file name's bytes with its end, as in plat_extras.c and plat_songs.c */
 #define MP3_MAX 256     /* MP3 files looked at (the song list holds 40) */
+
+static volatile int sMade; /* ADX files written by this run of the program */
+static volatile int sBusy; /* the thread is still at it */
 
 static const char kMark[8] = {'B', 'T', '3', ':', 'M', 'P', '3', 1};
 
@@ -438,20 +454,42 @@ static int same_target(const char *a, const char *b) {
 #endif
 }
 
-/* Converts every MP3 of `dir` that needs it (see the top). Called by plat_songs.c before it lists the folder. */
-void PortSongs_ConvertMp3(const char *dir) {
+/* A `name.adx.<number>.part` that is a day old: left by a copy of the game that was closed while it converted. */
+static void remove_stale_part(const char *dir, const char *name) {
+    const char *at = strstr(name, ".adx."), *q;
+    char path[600];
+    struct stat st;
+
+    if (at == NULL || strlen(name) >= 300) {
+        return;
+    }
+    for (q = at + 5; *q >= '0' && *q <= '9'; q++) {
+    }
+    if (q == at + 5 || strcmp(q, ".part") != 0) {
+        return;
+    }
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    if (stat(path, &st) == 0 && time(NULL) - st.st_mtime > 24 * 60 * 60) {
+        remove(path);
+    }
+}
+
+/* Converts every MP3 of `dir` that needs it (see the top). */
+static void convert_folder(const char *dir) {
     static char names[MP3_MAX][NAME_MAX_];
     static unsigned char taken[MP3_MAX]; /* this MP3 is the one its ADX name belongs to */
     DIR *d = opendir(dir);
     struct dirent *de;
     char first[NAME_MAX_] = "";
-    int n = 0, k, j, bad = 0, dirty = 0;
+    /* BT3_TEST_SONGS_SLOW=<ms>: every conversion waits that long first (testing: a slow disk, a long song) */
+    int n = 0, k, j, bad = 0, dirty = 0, slow = getenv("BT3_TEST_SONGS_SLOW") != NULL ? atoi(getenv("BT3_TEST_SONGS_SLOW")) : 0;
 
     if (d == NULL) {
         return;
     }
     while ((de = readdir(d)) != NULL) {
         if (!ends_with(de->d_name, ".mp3")) {
+            remove_stale_part(dir, de->d_name);
             continue;
         }
         if (strlen(de->d_name) >= NAME_MAX_) {
@@ -511,8 +549,12 @@ void PortSongs_ConvertMp3(const char *dir) {
         if (f != NULL) {
             dirty = 1; /* (the file changed: its line goes, or is written anew below) */
         }
+        if (slow > 0) {
+            usleep((useconds_t)slow * 1000);
+        }
         if (convert(mp3, adx, size, mtime, &why, &source) == 0) {
             fprintf(stderr, "bt3: songs: %s converted to ADX\n", name);
+            __sync_fetch_and_add(&sMade, 1);
             continue;
         }
         fprintf(stderr, "bt3: songs: %s left out: %s%s\n", name, why, source ? " (not tried again until the file changes: mp3-failed.txt)" : "");
@@ -548,4 +590,53 @@ void PortSongs_ConvertMp3(const char *dir) {
         snprintf(text, sizeof(text), "%d songs could not be converted and are left out (%s and others).", bad, first);
         Port_UiNotice(text);
     }
+}
+
+/* ------------------------------------------------------------------------------- the thread */
+
+static char sWorkDir[256];
+
+static void *work(void *arg) {
+    (void)arg;
+    convert_folder(sWorkDir);
+    __sync_lock_release(&sBusy);
+    return NULL;
+}
+
+/* Starts the conversion of the MP3 files of `dir`, once. Returns at once, the work goes on in a thread of its own;
+   in a recorded or re-run session (see the top) it returns when the work is done. Called by plat_songs.c. */
+void PortSongs_Mp3Start(const char *dir) {
+    static int once;
+    pthread_t th;
+    pthread_attr_t attr;
+    int started;
+
+    if (once) {
+        return;
+    }
+    once = 1;
+    snprintf(sWorkDir, sizeof(sWorkDir), "%s", dir);
+    if (getenv("BT3_PAD_PLAY") != NULL || getenv("BT3_PAD_REC") != NULL || getenv("BT3_PAD_TABLE") != NULL || getenv("BT3_SYNCTEST") != NULL) {
+        convert_folder(sWorkDir);
+        return;
+    }
+    sBusy = 1;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    started = pthread_create(&th, &attr, work, NULL) == 0;
+    pthread_attr_destroy(&attr);
+    if (!started) {
+        sBusy = 0;
+        convert_folder(sWorkDir); /* (no thread to be had: as before) */
+    }
+}
+
+/* How many ADX files have been written since the program started: the song list is read again when it has grown. */
+int PortSongs_Mp3Made(void) {
+    return __sync_fetch_and_add(&sMade, 0);
+}
+
+/* Whether the conversion is still running (for tests). */
+int PortSongs_Mp3Busy(void) {
+    return __sync_fetch_and_add(&sBusy, 0);
 }
