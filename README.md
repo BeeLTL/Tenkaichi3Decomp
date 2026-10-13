@@ -1,116 +1,59 @@
-# Tenkaichi3Decomp
+# Tenkaichi3Decomp — Web
 
-A native PC port of **Dragon Ball Z: Budokai Tenkaichi 3** (PlayStation 2, USA release, SLUS-21678), built on
-the matching decompilation in **BT3-Decompiled**. It is the game's own code compiled for PC, with a new
-renderer, sound and input layer underneath; it is not an emulator.
+**Dragon Ball Z: Budokai Tenkaichi 3** (PlayStation 2, USA release, SLUS-21678) running in your web browser.
 
-This repository contains **no game data**. You need your own disc image of that release: the setup reads the
-game's data from it, and it stays on your computer.
+This is the game's own code, from the matching decompilation in **BT3-Decompiled**, compiled to WebAssembly, with
+a renderer, sound and input layer for the web underneath. It is not an emulator. It is a fork of
+[z3xox/Tenkaichi3Decomp](https://github.com/z3xox/Tenkaichi3Decomp), the native PC port it is built on.
+
+This repository contains **no game data**. You need your own disc image of that release. The page reads the
+game's data from a folder on your own computer, through a small server that listens on 127.0.0.1 only: nothing
+is uploaded anywhere.
 
 ## What works
 
-- The whole game loop: boot, opening movie, menus, saving, fights, split screen.
-- A GPU renderer (Vulkan) with the PS2's effects (outline, glow, depth tint, distance blur), each switchable.
-  An OpenGL 3.3 renderer draws the same picture for machines without a working Vulkan (F1, Video, Renderer; it
-  is also tried by itself when Vulkan cannot start). It is slower than Vulkan.
-- Internal resolution from 1x to 8x; 4:3, 16:9, 21:9 and wider without stretching the fight.
-- Smooth motion (experimental, off by default; F1, Video, or F9): the game computes a fight 30 times a second, as
-  on the console; with this the renderer draws pictures in between, for 60, 120 or 240 a second. The fight itself,
-  replays and online play are unchanged, and the two players of an online match need not agree on it. The newest
-  picture reaches the screen 17 to 29 ms later than without. Known limits: pictures are left out at camera cuts
-  and where the camera would pass through scenery; 240 is uneven; little tested with OpenGL. Works in both halves
-  of a split screen.
-- Music, voices and sound effects; keyboard and controllers, fully rebindable; two players.
-- Clashes: Square counts as a direction (off by default; F1, Controls): in a clash of two beams or two rushes the
-  game counts newly pressed directions, which is why the stick is turned; with this each press of Square counts as
-  one, as a tap of the d-pad does. It changes only your own pad, so it can be used online. A press can be made to
-  count for 1, 1.5, 1.75 or 2 (1.75 unless set: the d-pad has four buttons to tap in turn, Square is one).
-- Texture packs made for PCSX2 (`.dds` or `.png`): copied into the `textures` folder next to the game, they are used as they are.
-- Stages and music from outside the disc: a stage model (`.unk`) dropped into the `stages` folder next to the
-  game, or a song (`.adx`) into `songs`, is added to the stage select, its name written in the game's own
-  lettering (cut from the disc's name pictures while the game runs). They are not written to the save and are
-  not offered in an online match. See [docs/port/adding_stages.md](docs/port/adding_stages.md) and
-  [adding_songs.md](docs/port/adding_songs.md).
-- In the game, **F1** opens the settings, or **START + SELECT** on a controller (which also works the window: d-pad and
-  Cross, Circle to leave, L1 / R1 for the tabs). Controls has a row to choose another key or button. **Esc** asks
-  before it closes the game, and the window has an "Exit game" button. Its Cheats tab has "Unlock everything" (a debug function the game's
-  developers left in: all characters, stages, music, items and Zenni).
+- The whole game: boot, opening movie, menus, fights, two players, saving.
+- Two renderers that draw the same picture: **WebGL 2** (the default) and **WebGPU** (`?gpu=webgpu`).
+- Widescreen, the internal resolution, and the PS2's effects (outline, glow, depth tint, distance blur), each
+  switchable.
+- Music, voices and sound effects.
+- **Keyboard and controllers**, fully rebindable. The settings show a picture of a controller: click any button
+  on it to change its key or controller button. Guided set-up, keyboard presets, and a test that lights the
+  buttons on the picture.
+- A notification when a controller connects or disconnects, also while playing.
+- **Touch controls** for phones and tablets: d-pad, analog stick, face and shoulder buttons, START and SELECT,
+  with size, opacity, left or right hand, and a layout editor.
+- **Saves** kept in the browser, with a backup, and export and import as a file.
+- Texture packs made for PCSX2, in the data folder's `textures` folder.
+- "Unlock everything" (a debug function the game's developers left in).
+- A performance view and a diagnostics export (Settings, Developer).
 
-- **Online play, experimental** (from release 0.1.8): the main menu's hidden "Dragon Net Battle"
-  entry is back and opens a small window. One player hosts and gets a six-character room code, the other joins
-  with the code: no port forwarding (from 0.1.16; hosting on a port and joining by address is still there);
-  both get the same roster with everything unlocked, each sees their own fighter's view full screen, and leaving
-  the match puts each player back where they were with their own save. Linux and Windows play against each
-  other. With rollback (the host chooses how many frames, and the input delay) your own moves come out at once
-  and the game corrects itself when the other player's buttons arrive.
-  The host also chooses the battle (single, team, or DP battle with a limit of 10, 15 or 20) and the time limit.
-  Each player sees their own gauges on the left with the players' names under them, and hears the voice language
-  chosen in their own save.
+**Not in the browser version:** online play and the Vulkan renderer (both are in the PC version). Added stages and
+songs are found in the data folder, but a battle on an added stage has not been seen yet.
 
-Online play is new. It has been played over the internet between a Linux and a Windows machine. The input delay
-is chosen from the connection when a match starts (or set by the host), both players need the same release (the
-game says so when they differ; 0.1.10 does not play against 0.1.8 / 0.1.9, and 0.1.15 does not play against
-0.1.14 and earlier). F1, Video has a meter for the frame rate and, in a match, the ping, rollbacks and waits. The 32-bit
-Linux build has no rollback. [docs/netplay_notes.md](docs/netplay_notes.md) is the working log of how it is built
-and what was checked.
+**Tested with:** Chrome and Edge on Windows 11. Firefox and Safari are not tested yet. Controllers and touch were
+tested with simulated devices; please report how real ones behave.
+Details: [docs/BROWSER_FEATURE_MATRIX.md](docs/BROWSER_FEATURE_MATRIX.md).
 
-Room codes go through a small matchmaking service (a Cloudflare Worker; its whole source is in
-[port/matchmaking](port/matchmaking), and `BT3_MATCH_URL` points the game at another copy of it). The game tells it
-the name typed in the window and the addresses it can be reached at; the service keeps them with the room for at
-most ten minutes and hands them to the player who enters the code. The two games then send to each other
-directly. Where the routers do not allow that, the match goes through a relay (Cloudflare's TURN service), which
-passes the match's packets (the buttons pressed) on and keeps nothing. Without a room code none of this is used.
+## You need
 
-See [docs/port/README.md](docs/port/README.md) for the running log of what is done, what is verified and what is not.
+- A current **Chrome or Edge**. The page needs JavaScript Promise Integration (JSPI) and WebGL 2, and checks
+  for both when it starts.
+- **Python 3**, to unpack the disc and run the local server.
+- **7-Zip** (`7z`), to unpack the disc.
+- Your own disc image of the USA release (SLUS-21678), and about 4 GB of disc space.
+- To build the page yourself: **Emscripten 6.0.12** and the pinned tools in
+  [docs/BROWSER_BUILD.md](docs/BROWSER_BUILD.md).
 
-## Requirements
+## Setting up
 
-- A 64-bit x86 processor and a graphics card with Vulkan support. Most of the work is on the processor (the
-  game's arithmetic is reproduced exactly as on the PS2); a recent mid-range CPU is recommended.
-- Linux (glibc 2.35 or newer) or Windows 10 / 11.
-- About 4 GB of disc space, and your disc image as an `.iso` file.
-
-## Installing a release
-
-Unpack the release, start `Tenkaichi3Decomp-setup` (`Tenkaichi3Decomp-setup.exe` on Windows), choose your disc image, press Play. The
-setup checks that the image is the unmodified USA release and unpacks the game's data next to the program.
-
-On a machine without a working Vulkan the setup window and the game use OpenGL by themselves. To ask for OpenGL
-from the start (a Vulkan driver that starts but is incomplete, as on Intel Ivy Bridge), set `BT3_GPU_API=gl`:
-`BT3_GPU_API=gl ./Tenkaichi3Decomp-setup`, and the same for `./Tenkaichi3Decomp`. The setup also runs without a
-window: `./Tenkaichi3Decomp-setup --install <disc image>`.
-
-## Building from source
-
-```
-python3 install.py --iso <your disc image>
-```
-
-does everything on Linux: checks the tools, reads the disc, builds the 64-bit program and runs the game's demo
-fight as a test. `python3 install.py --check` lists what is missing. `port/setup/build.sh && ./Tenkaichi3Decomp-setup` is
-the same with a window.
-
-The release archives for Linux and Windows are built from the repository alone, with no disc involved:
-`port/release/build.sh` (needs only docker) or the GitHub workflow in `.github/workflows/release.yml`. The
-repository carries the shape of the game's built-in data tables without their values (`port/data`); the
-finished program fetches the values from your disc when it starts.
-
-## Playing in the browser (branch `browser-port`)
-
-The same game, compiled to WebAssembly, runs in a web page served from your own computer. The page holds no game
-data: it reads your extracted disc from a local folder, and nothing leaves the machine. The server listens on
-127.0.0.1 only.
-
-**You need:** a current Chrome or Edge (the page needs JavaScript Promise Integration and WebGL 2; Firefox and
-Safari are not tested yet), Python 3, `7z`, and your own disc image of the USA release (SLUS-21678).
-
-1. Unpack your disc once into a data folder (about 4 GB):
+1. **Unpack your disc** once into a data folder:
 
    ```
    python port/tools/extract_disc.py <your disc image> gamedata
    ```
 
-2. Build the page (Emscripten 6.0.12 and the pinned tools in [docs/BROWSER_BUILD.md](docs/BROWSER_BUILD.md)):
+2. **Build the page:**
 
    ```
    python port/tools/wasm_build.py game
@@ -119,36 +62,54 @@ Safari are not tested yet), Python 3, `7z`, and your own disc image of the USA r
    python port/tools/wasm_build.py link
    ```
 
-3. Serve it with your data folder:
+   The page lands in `port/build/web/`.
+
+3. **Start the local server** with your data folder:
 
    ```
    python port/web/devserver.py --port 8080 --mount gamedata=<path to gamedata>
    ```
 
-4. Open `http://127.0.0.1:8080/index.html` and press Start.
+4. **Play:** open `http://127.0.0.1:8080/index.html` in Chrome or Edge and press Start.
 
-In the game, **F1** (or START + SELECT on a controller) opens the settings: video, sound, controls with a picture
-of the controller to remap any button, saves, touch controls for phones and tablets, and extras. Saves are kept in
-the browser's storage and can be exported. Never put the extracted data on a public server or share it.
+To run a release package instead of building, see [docs/BROWSER_RELEASE.md](docs/BROWSER_RELEASE.md).
 
-More: [docs/BROWSER_RELEASE.md](docs/BROWSER_RELEASE.md) (running a release package),
-[docs/BROWSER_BUILD.md](docs/BROWSER_BUILD.md) (build and tests),
-[docs/BROWSER_FEATURE_MATRIX.md](docs/BROWSER_FEATURE_MATRIX.md) (what works, what is verified).
+**Keep the extracted data to yourself:** never put it on a public server or share it.
+
+## Controls
+
+- **F1**, or **START + SELECT** on a controller, opens the settings. **Esc** closes them.
+- Keyboard by default: arrows for the d-pad, **K L J I** for Cross, Circle, Square, Triangle, **W A S D** for
+  the left stick, **Enter** for START. Everything can be changed in Settings, Controls.
+- **Full screen** button at the top right of the page.
+- On a phone or tablet the touch controls appear by themselves (Settings, Touch).
+
+## Documents
+
+| Document | What it covers |
+|---|---|
+| [BROWSER_BUILD.md](docs/BROWSER_BUILD.md) | Toolchain, build steps, every test |
+| [BROWSER_RELEASE.md](docs/BROWSER_RELEASE.md) | Running a release package |
+| [BROWSER_FEATURE_MATRIX.md](docs/BROWSER_FEATURE_MATRIX.md) | What works, and how it was verified |
+| [BROWSER_ARCHITECTURE.md](docs/BROWSER_ARCHITECTURE.md) | How the browser build is put together |
+| [BROWSER_ONLY_AUDIT.md](docs/BROWSER_ONLY_AUDIT.md) | Dependencies and their licences |
 
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `src/`, `include/` | The game's code, from BT3-Decompiled; changes for PC are inside `#ifdef PORT` |
-| `port/src/` | The PC side: memory, files, memory card, movies; `gs/` renderer, sound, input, settings window |
-| `port/tools/` | The build: pointer rewriting for 64-bit, packaging, extraction |
-| `port/data/` | The game's built-in data tables as shape only (labels, sizes, pointer slots), no values |
-| `port/release/` | The container and scripts that build the release archives |
-| `port/setup/` | The setup window |
-| `port/web/`, `port/src/web/` | The browser version: the page (settings, controllers, touch, saves) and its engine side |
+| `port/web/` | The page: settings, controllers, controller picture, touch controls, saves, notifications |
+| `port/src/web/` | The engine's browser side: files over HTTP, settings, saves, touch input |
 | `port/tests/web/` | The browser tests (headless Chrome) |
-| `port/third_party/` | Dear ImGui (MIT), the maths library of newlib |
-| `docs/` | Notes on the game (from the decompilation) and `docs/port/` on the port |
+| `port/tools/` | The build (`wasm_build.py`), disc unpacking, packaging |
+| `port/src/` | Shared with the PC version: memory, files, memory card, movies; `gs/` renderer, sound, input |
+| `src/`, `include/` | The game's code, from BT3-Decompiled; changes for PC and web are inside `#ifdef PORT` |
+| `port/data/` | The game's built-in data tables as shape only (labels, sizes, pointer slots), no values |
+| `port/third_party/` | newlib's maths library, xxHash, Dear ImGui (PC only) |
+
+The PC version's code (Vulkan, the setup program, online play) is still in this repository and builds as before.
+For PC releases, see the original project:
+[z3xox/Tenkaichi3Decomp](https://github.com/z3xox/Tenkaichi3Decomp).
 
 This project was made with the help of AI.
 
@@ -156,39 +117,31 @@ This project was made with the help of AI.
 
 This port stands on other people's work:
 
-- **BT3-Decompiled** and everyone who worked on the matching decompilation the game's code comes from.
-- **[z3xox](https://github.com/z3xox)**, for Tenkaichi3Decomp, the native PC port this browser version is built on,
-  and **[RexxColder](https://github.com/RexxColder)** for the OpenGL renderer and the added-content work (see below).
+- **BT3-Decompiled**, and everyone who worked on the matching decompilation the game's code comes from.
+- **[z3xox](https://github.com/z3xox)**, for Tenkaichi3Decomp, the native PC port this web version is built on,
+  and **[RexxColder](https://github.com/RexxColder)** for the OpenGL renderer and the added-content work there.
 - **[Emscripten](https://emscripten.org/)** (MIT / UIUC), which compiles the game for the web.
 - **[SDL3](https://www.libsdl.org/)** (zlib): window, input, controllers and sound.
 - **[Dawn / emdawnwebgpu](https://dawn.googlesource.com/dawn)** (BSD-3-Clause), for the WebGPU renderer.
 - **[naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga)** (MIT / Apache-2.0), which turns the shaders into WGSL.
 - **[LLVM / Clang and libclang](https://llvm.org/)** (Apache-2.0 with LLVM exception).
-- **[Dear ImGui](https://github.com/ocornut/imgui)** (MIT): the native build's settings window.
-- **[newlib](https://sourceware.org/newlib/)**'s maths library (BSD-style) and **[xxHash](https://github.com/Cyan4973/xxHash)** (BSD-2-Clause).
-- **[Python](https://www.python.org/)**, **[Node.js](https://nodejs.org/)**, **[Chromium](https://www.chromium.org/)** and
-  **[7-Zip](https://www.7-zip.org/)**, for the tools, the tests and unpacking the disc.
+- **[newlib](https://sourceware.org/newlib/)**'s maths library (BSD-style) and
+  **[xxHash](https://github.com/Cyan4973/xxHash)** (BSD-2-Clause).
+- **[Dear ImGui](https://github.com/ocornut/imgui)** (MIT): the PC version's settings window.
+- **[Python](https://www.python.org/)**, **[Node.js](https://nodejs.org/)**, **[Chromium](https://www.chromium.org/)**
+  and **[7-Zip](https://www.7-zip.org/)**, for the tools, the tests and unpacking the disc.
 - The original game's developers, Spike, and its publishers. This project exists out of love for their game.
-
-## Contributors
-
-- [RexxColder](https://github.com/RexxColder): the OpenGL 3.3 renderer beside Vulkan (the split of the renderer
-  into a shared recorder and two back ends), and stages and songs from outside the disc (the manifest, the
-  install scripts, the menu changes and their documentation), in
-  [pull request #1](https://github.com/z3xox/Tenkaichi3Decomp/pull/1). Both were brought onto the main line
-  with changes; the documents under `docs/port/` say which.
 
 ## Licence
 
-The port's own code (everything under `port/` except `port/third_party/`, the setup, the build tools, and the
-PC changes inside `#ifdef PORT`) is under the [MIT licence](LICENSE). The libraries in `port/third_party/`
-keep their own licences (Dear ImGui: MIT; newlib's maths library: its BSD-style terms, in that folder;
-xxHash: BSD-2-Clause).
-The game's code in `src/` and `include/` comes from the decompilation and is not ours to license: it belongs
-to the game's rights holders.
+The port's own code (everything under `port/` except `port/third_party/`, the build tools, and the PC and web
+changes inside `#ifdef PORT`) is under the [MIT licence](LICENSE). The libraries in `port/third_party/` keep their
+own licences (newlib's maths library: its BSD-style terms, in that folder; xxHash: BSD-2-Clause; Dear ImGui: MIT).
+The game's code in `src/` and `include/` comes from the decompilation and is not ours to license: it belongs to
+the game's rights holders.
 
 ## Legal
 
-This project is not affiliated with or endorsed by the game's developers, publishers or rights holders. It
-exists for preservation, study and interoperability, and distributes none of the game's assets. All rights to
-the game belong to their owners. You need your own legally obtained copy of the game to use it.
+This project is not affiliated with or endorsed by the game's developers, publishers or rights holders. It exists
+for preservation, study and interoperability, and distributes none of the game's assets. All rights to the game
+belong to their owners. You need your own legally obtained copy of the game to use it.
