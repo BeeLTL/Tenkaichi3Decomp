@@ -40,6 +40,8 @@ extern void Port_AudioRefresh(void);                /* gs/snd_adx.c: the streams
 extern struct { int unk0[2]; int loadPack, loadRes, loadSprites; int flags; int mode; } GAME_PTR gProgress;
 #define MODE_TITLE 1
 #define MODE_MAIN_MENU 4
+#define MODE_HIST_SEL 6 /* the story mode's saga select */
+#define MODE_EPISODES 7 /* the saga's episode list */
 
 /* include/menu/menu_a.h: Title (src/menu/menu_a_c.c) */
 typedef struct {
@@ -195,6 +197,82 @@ extern A11yCharSel GAME_PTR gCharSel;
 #define CHARSEL_BGM_RANDOM 0x18
 #define CHARSEL_STAGE_RANDOM 0x23
 
+/* include/menu/menu_l.h LSelEntry = menu_j.h ESelEntry: the fighter being chosen in the one-fighter selects. */
+typedef struct {
+    int col;          /* 0x00: grid column */
+    int row;          /* 0x04 */
+    int form;         /* 0x08: index in the cell's forms */
+    int recCol, recRow;
+    int custom;       /* 0x14: item set, 0 none */
+    int costume;      /* 0x18 */
+    char unk1C[0x30 - 0x1C];
+} A11ySelEntry;
+_Static_assert(offsetof(A11ySelEntry, custom) == 0x14 && sizeof(A11ySelEntry) == 0x30, "LSelEntry");
+/* SOLOSEL_STEP_ = ESEL_STEP_ */
+#define PICK_STEP_CHARA 0
+#define PICK_STEP_FORM 1
+#define PICK_STEP_CUSTOM 2
+#define PICK_STEP_PANEL 3
+#define PICK_STEP_HELP 4
+#define PICK_STEP_COLOR 5
+
+/* include/menu/menu_l.h: SoloSel (src/menu/menu_l_b.c), one fighter for modes 15, 18, 21, 25 and 29. */
+typedef struct {
+    char unk0[0x14];
+    uint32_t GAME_PTR nameText;    /* 0x14: section 28 */
+    uint32_t GAME_PTR formText;    /* 0x18: section 29 */
+    char unk1C[0x18C - 0x1C];
+    int flags;                     /* 0x18C: SOLOSEL_ */
+    char unk190[0x1A4 - 0x190];
+    A11ySelEntry entry;            /* 0x1A4: state.entry */
+    char unk1D4[0x210 - 0x1D4];
+    int image;                     /* 0x210: state.image, the character whose name is shown */
+    int step;                      /* 0x214: state.step */
+    char unk218[0x220 - 0x218];
+    int gridCount;                 /* 0x220 */
+    A11yChrCell GAME_PTR grid;     /* 0x224 */
+    char unk228[0x1960 - 0x228];
+    int rows;                      /* 0x1960 */
+    int customCount;               /* 0x1964 */
+    int colorCount;                /* 0x1968 */
+} A11ySoloSel;
+_Static_assert(offsetof(A11ySoloSel, flags) == 0x18C && offsetof(A11ySoloSel, entry) == 0x1A4, "SoloSel");
+_Static_assert(offsetof(A11ySoloSel, step) == 0x214 && offsetof(A11ySoloSel, grid) == 0x224, "SoloSel");
+_Static_assert(offsetof(A11ySoloSel, colorCount) == 0x1968, "SoloSel");
+extern A11ySoloSel GAME_PTR gSoloSel; /* NULL outside the screen */
+#define SOLOSEL_STARTED 2
+#define SOLOSEL_LEAVING 0x10
+
+/* include/menu/menu_j.h: ESel (src/menu/menu_i_d.c), the tournament's entrants (mode 34). */
+typedef struct {
+    char unk0[0x14];
+    uint32_t GAME_PTR nameText;    /* 0x14: section 30 */
+    uint32_t GAME_PTR formText;    /* 0x18: section 31 */
+    char unk1C[0x1D8 - 0x1C];
+    int flags;                     /* 0x1D8: ESEL_ */
+    char unk1DC[0x1F8 - 0x1DC];
+    A11ySelEntry entry[8];         /* 0x1F8: state.entry, one per entrant */
+    char unk378[0x3B4 - 0x378];
+    int image;                     /* 0x3B4: state.image */
+    int cur;                       /* 0x3B8: state.cur, the entrant being chosen */
+    int step;                      /* 0x3BC: state.step */
+    char unk3C0[0x3C8 - 0x3C0];
+    int gridCount;                 /* 0x3C8 */
+    A11yChrCell GAME_PTR grid;     /* 0x3CC */
+    char unk3D0[0x1B08 - 0x3D0];
+    int rows;                      /* 0x1B08 */
+    int customCount;               /* 0x1B0C */
+    int colorCount;                /* 0x1B10 */
+} A11yEntrySel;
+_Static_assert(offsetof(A11yEntrySel, flags) == 0x1D8 && offsetof(A11yEntrySel, entry) == 0x1F8, "ESel");
+_Static_assert(offsetof(A11yEntrySel, image) == 0x3B4 && offsetof(A11yEntrySel, step) == 0x3BC, "ESel");
+_Static_assert(offsetof(A11yEntrySel, grid) == 0x3CC && offsetof(A11yEntrySel, colorCount) == 0x1B10, "ESel");
+extern A11yEntrySel GAME_PTR gEntrySel; /* NULL outside the screen */
+#define ESEL_LEAVING 2
+#define ESEL_STARTED 4
+#define ESEL_ENTRIES 8
+#define TOUR_ENTRY_NUM (0x8C / 4) /* gProgress, in ints: entrants the player chooses (menu_j.h TourSession) */
+
 /* include/menu/menu_g.h: DuelMenu (src/menu/menu_g_c.c). The line about the item is in the message window. */
 typedef struct {
     char unk0[0x10C];
@@ -225,7 +303,64 @@ extern A11yDuelMenu GAME_PTR gDuelMenu;
 
 /* include/sys/save.h: SaveData. rule[] holds the duel settings: time, CPU level, referee, CPU transformation for
    each side (two words) and stage destruction; each is the row of its value list. */
-extern struct { char unk0[0xC34]; int rule[6]; } GAME_PTR gSaveData;
+typedef struct {
+    unsigned char cleared;        /* 0x0 */
+    char unk1[0xC - 1];
+} A11yMissionRecord;               /* include/menu/menu_p.h: PSaveMission */
+
+typedef struct {
+    int defeated;                    /* opponents beaten */
+    int score;                       /* shown * 100 */
+    unsigned char rank, hours, minutes, seconds;
+} A11ySurvRecord;                    /* include/menu/menu_s.h: SSaveSurv */
+
+typedef struct {
+    int flags;  /* 0x0: MSLOT_ (include/menu/menu_c.h) */
+    int val[3]; /* 0x4: bit n is the sub menu's item n: [0] listed, [1] cleared, [2] new */
+} A11ySaveSlot;                    /* include/sys/save.h: SaveSlot */
+
+typedef struct {
+    int chara;
+    int score;                       /* shown * 100 */
+    unsigned char cleared;           /* the ladder was finished */
+    unsigned char unk9[3];
+} A11ySimRank;                       /* include/menu/menu_r.h: SimRankRec */
+
+typedef struct {
+    char unk0[0xC];
+    int histLevel;                /* 0x00C: the level chosen in the history menu, 0..2 */
+    A11ySaveSlot slot[9];         /* 0x010: one per history sub menu */
+    char unkA0[0x210 - 0xA0];
+    A11ySimRank simRank[10];      /* 0x210: the Sim Dragon ranking */
+    char unk288[0x28C - 0x288];
+    A11yMissionRecord mission[100]; /* 0x28C: Mission 100 */
+    A11ySurvRecord surv[5];       /* 0x73C: the best result of each survival course */
+    char unk778[0xA08 - 0x778];
+    int tourOpen;                /* 0xA08: bit n: tournament n is the open one (TOUR_SAVE_INVITE_MASK, menu_j.h) */
+    int tourHour;                 /* 0xA0C: the World Tour's clock, 0..23 */
+    int tourLevel;                /* 0xA10: the open tournament's level, 0..2 */
+    char unkA14[0xC34 - 0xA14];
+    int rule[6];                  /* 0xC34 */
+    char unkC4C[0xE0C - 0xC4C];
+    int trainClear[3];            /* 0xE0C: bit n: lesson n of the training class cleared (menu_i.h MSaveTrain) */
+    char unkE18[0x16A8 - 0xE18];
+    int bgmVolume;                /* 0x16A8: 0..9 */
+    int seVolume;                 /* 0x16AC: 0..9; the effects and the voices (sys/adx.c channels 2-5) */
+    char unk16B0[0x2EC8 - 0x16B0];
+    unsigned char item[350];      /* 0x2EC8: SAVE_ITEM_ bits per item, 0-based */
+    char unk3026[0x3028 - 0x3026];
+    int money;                    /* 0x3028 */
+} A11ySave;
+_Static_assert(sizeof(A11yMissionRecord) == 0xC && sizeof(A11ySaveSlot) == 0x10 && offsetof(A11ySave, slot) == 0x10 &&
+                   offsetof(A11ySave, mission) == 0x28C && sizeof(A11ySurvRecord) == 0xC &&
+                   offsetof(A11ySave, surv) == 0x73C && sizeof(A11ySimRank) == 0xC && offsetof(A11ySave, simRank) == 0x210 &&
+                   offsetof(A11ySave, tourLevel) == 0xA10 && offsetof(A11ySave, rule) == 0xC34 &&
+                   offsetof(A11ySave, trainClear) == 0xE0C &&
+                   offsetof(A11ySave, seVolume) == 0x16AC && offsetof(A11ySave, item) == 0x2EC8 &&
+                   offsetof(A11ySave, money) == 0x3028, "SaveData");
+#define SAVE_ITEM_OWNED 1
+#define SAVE_ITEMS 350
+extern A11ySave GAME_PTR gSaveData;
 
 /* Labels the game draws as pictures (the plates of pzs3us1/00449.bin and the title's), English then Spanish. */
 static const char *const kMainMenuItems[2][11] = { /* by item id: src/menu/menu_a.c, MainMenu_Init */
@@ -441,13 +576,756 @@ static void main_menu(void) {
     }
 }
 
-/* The name of character `chara` from the select's own text (line chara of sections 43 and 44, as CharSel_Draw
-   shows them), and its form after it when that says something else. */
-static void char_name(char *out, int cap, A11yCharSel GAME_PTR cs, int chara) {
+/* include/menu/menu_p.h: UbMenu (src/menu/menu_p_c.c), the menu of mode 13. Its four plates lead to modes 20, 14,
+   17 and 24 (Ub_Main, src/menu/menu_o_c.c); the third stays shut, and the cursor skips it, until 30 missions are
+   cleared (gUbMenuPlate3Open, UbMenu_Input). The guides say each plate's name; the plates are pictures. */
+typedef struct {
+    char unk0[0x84];
+    int flags; /* 0x84: UBMENU_ */
+    int cur;   /* 0x88: plate, 0..3 */
+} A11yUbMenu;
+_Static_assert(offsetof(A11yUbMenu, cur) == 0x88, "UbMenu");
+extern A11yUbMenu GAME_PTR gUbMenu;
+extern int gUbMenuPlate3Open; /* src/menu/menu_p_c.c: the third plate is open */
+#define UBMENU_CHOSEN 1
+#define UBMENU_LEAVING 2
+#define UBMENU_PLATES 4
+#define UBMENU_SHUT_PLATE 2
+
+/* As the mod's plates say them; its shut third plate shows "???", and its open name is not seen yet. */
+static const char *const kUbMenuItems[2][UBMENU_PLATES] = {
+    {"Sim Dragon", "Mission 100", "Survival", "Disc Fusion"},
+    {"Sim Dragón", "Misión 100", "Supervivencia", "Fusión de disco"},
+};
+
+static void ub_menu(void) {
+    static int item = -1;
+    A11yUbMenu GAME_PTR m = gUbMenu;
+    int count = UBMENU_PLATES, index;
+
+    if (m == NULL) {
+        item = -1;
+        return;
+    }
+    if (m->cur < 0 || m->cur >= UBMENU_PLATES || (m->flags & (UBMENU_CHOSEN | UBMENU_LEAVING))) {
+        return;
+    }
+    index = m->cur;
+    if (gUbMenuPlate3Open == 0) {
+        count--;
+        index -= index > UBMENU_SHUT_PLATE;
+    }
+    if (m->cur != item) {
+        say_item(kUbMenuItems[sEs][m->cur], index, count, follow());
+        item = m->cur;
+    }
+}
+
+/* include/menu/menu_o.h: DiscFusion (src/menu/menu_o_b.c), the Disc Fusion screen of mode 24: two plates, one per
+   earlier game's disc, with text line 0x15A + disc (0x15C + disc once that disc was read: DiscFusion_Init) of the
+   screen's own text. Its disc swap asks through the Dialog, read by dialog(). */
+typedef struct {
+    char unk0[0x10];
+    uint32_t GAME_PTR text; /* 0x010: section 12 */
+    char unk14[0x1E0 - 0x14];
+    int flags;              /* 0x1E0: UBRES_ */
+    int cursor;             /* 0x1E4: cursor[0], the plate */
+    char unk1E8[0x204 - 0x1E8];
+    int dlgStep;            /* 0x204: 0 no disc swap running */
+    char unk208[0x25C - 0x208];
+    int have[2];            /* 0x25C: that disc was read */
+} A11yDiscFusion;
+_Static_assert(offsetof(A11yDiscFusion, cursor) == 0x1E4 && offsetof(A11yDiscFusion, dlgStep) == 0x204 &&
+                   offsetof(A11yDiscFusion, have) == 0x25C, "DiscFusion");
+extern A11yDiscFusion GAME_PTR gDiscFusion;
+#define DISCFUSION_DONE 1    /* UBRES_DONE */
+#define DISCFUSION_LEAVING 2 /* UBRES_LEAVING */
+#define DISCFUSION_STARTED 4 /* UBRES_STARTED */
+#define DISCFUSION_DISCS 2
+#define DISCFUSION_LINE 0x15A
+#define DISCFUSION_READ_LINE 0x15C
+
+static void disc_fusion(void) {
+    static int item = -1;
+    A11yDiscFusion GAME_PTR d = gDiscFusion;
+    char line[256];
+    int cur;
+
+    if (d == NULL) {
+        item = -1;
+        return;
+    }
+    cur = d->cursor;
+    if (!(d->flags & DISCFUSION_STARTED) || (d->flags & (DISCFUSION_DONE | DISCFUSION_LEAVING)) || d->dlgStep != 0 ||
+        cur < 0 || cur >= DISCFUSION_DISCS || cur == item) {
+        return;
+    }
+    if (text_line(line, sizeof(line), d->text, (d->have[cur] ? DISCFUSION_READ_LINE : DISCFUSION_LINE) + cur) > 0) {
+        say_item(line, cur, DISCFUSION_DISCS, follow());
+    }
+    item = cur;
+}
+
+/* include/menu/menu_o.h: MisSel (src/menu/menu_o_d.c), the Mission 100 select of mode 14: pages of five missions
+   (left and right turn the page). Confirm opens the mission's window, which shows its team kind, its rule and the
+   opponents' faces; confirm again starts it. The names, the kinds and the rules are text lines 0xD8 + mission,
+   0x148 + kind and 0x156 + rule of the screen's own text (MisSel_Draw). */
+typedef struct {
+    char unk0[0x18];
+    int kind;   /* 0x18 */
+    int rule;   /* 0x1C: 0 none */
+    int opp[5]; /* 0x20: indices into the opponents */
+} A11yMisDef;
+_Static_assert(sizeof(A11yMisDef) == 0x34, "MisSelDef");
+
+typedef struct {
+    int chara; /* 0x00: MISSEL_NONE ends the team */
+    char unk4[0x2C - 4];
+} A11yMisOpp;
+_Static_assert(sizeof(A11yMisOpp) == 0x2C, "MisSelOpp");
+
+typedef struct {
+    char unk0[0xC];
+    uint32_t GAME_PTR text;       /* 0x0C: section 18 */
+    char unk10[0x3E8 - 0x10];
+    A11yMisDef GAME_PTR missions; /* 0x3E8: section 10 */
+    A11yMisOpp GAME_PTR opps;     /* 0x3EC: section 11 */
+    char unk3F0[0x4BC - 0x3F0];
+    int flags;                    /* 0x4BC: MISSEL_ */
+    int row;                      /* 0x4C0: cursor[0], the plate on the page */
+    char unk4C4[0x4DC - 0x4C4];
+    int level;                    /* 0x4DC: 0 choosing, 1 the mission's window is open */
+    char unk4E0[0x4FC - 0x4E0];
+    int pageCount;                /* 0x4FC */
+    int page;                     /* 0x500 */
+    int mission;                  /* 0x504: page * 5 + row, set when the window opens */
+} A11yMisSel;
+_Static_assert(offsetof(A11yMisSel, flags) == 0x4BC && offsetof(A11yMisSel, level) == 0x4DC &&
+                   offsetof(A11yMisSel, mission) == 0x504, "MisSel");
+extern A11yMisSel GAME_PTR gMisSel;
+#define MISSEL_CHOSEN 1
+#define MISSEL_LEAVING 2
+#define MISSEL_STARTED 4
+#define MISSEL_ROWS 5
+#define MISSEL_NONE 0x3E7
+#define MISSEL_NAME_LINE 0xD8
+#define MISSEL_KIND_LINE 0x148
+#define MISSEL_RULE_LINE 0x156
+#define MISSION_COUNT 100
+
+static void mission_select(void) {
+    static int level = -1, mission = -1, page = -1;
+    A11yMisSel GAME_PTR m = gMisSel;
+    A11yMisDef GAME_PTR def;
+    char text[512], line[256];
+    int cur, n, i, opps = 0;
+
+    if (m == NULL) {
+        level = mission = page = -1;
+        return;
+    }
+    if (!(m->flags & MISSEL_STARTED) || (m->flags & (MISSEL_CHOSEN | MISSEL_LEAVING)) || m->row < 0 ||
+        m->row >= MISSEL_ROWS || m->page < 0 || m->page >= m->pageCount) {
+        return;
+    }
+    cur = m->level == 0 ? m->page * MISSEL_ROWS + m->row : m->mission;
+    if ((m->level != 0 && m->level != 1) || cur < 0 || cur >= MISSION_COUNT || (m->level == level && cur == mission)) {
+        return;
+    }
+    n = 0;
+    if (m->level == 0) {
+        if (m->page != page && m->pageCount > 1) {
+            n = snprintf(text, sizeof(text), sEs ? "Página %d de %d: " : "Page %d of %d: ", m->page + 1, m->pageCount);
+        }
+        n += snprintf(text + n, sizeof(text) - n, sEs ? "Misión %d" : "Mission %d", cur + 1);
+        if (text_line(line, sizeof(line), m->text, MISSEL_NAME_LINE + cur) > 0) {
+            n += snprintf(text + n, sizeof(text) - n, ", %s", line);
+        }
+        if (gSaveData != NULL && gSaveData->mission[cur].cleared) {
+            snprintf(text + n, sizeof(text) - n, "%s", sEs ? ", superada" : ", cleared");
+        }
+    } else {
+        if (m->missions == NULL || m->opps == NULL) {
+            return;
+        }
+        def = &m->missions[cur];
+        if (text_line(line, sizeof(line), m->text, MISSEL_KIND_LINE + def->kind) > 0) {
+            n += snprintf(text + n, sizeof(text) - n, "%s. ", line);
+        }
+        if (def->rule != 0 && text_line(line, sizeof(line), m->text, MISSEL_RULE_LINE + def->rule) > 0) {
+            n += snprintf(text + n, sizeof(text) - n, "%s. ", line);
+        }
+        for (i = 0; i < 5 && m->opps[def->opp[i]].chara != MISSEL_NONE; i++) {
+            opps++;
+        }
+        snprintf(text + n, sizeof(text) - n, sEs ? "%d %s" : "%d %s", opps,
+                 sEs ? (opps == 1 ? "rival" : "rivales") : (opps == 1 ? "opponent" : "opponents"));
+    }
+    PortA11y_Say(text, follow());
+    level = m->level;
+    mission = cur;
+    page = m->page;
+}
+
+/* include/menu/menu_j.h: TourMenu (src/menu/menu_j_b.c), the World Tour's menu of mode 33. One cursor per level
+   (TOURMENU_LV_): the two top plates (0 the open tournament, for prizes, at the saved level and alone; 1 free play),
+   the five tournaments, the tournament's explanation (the guide speaks it), the level and the number of entrants.
+   TourMenu_Draw shows the two prizes of the tournament under the cursor and dims the shut ones in the top plate 0.
+   The plates and the levels are pictures. */
+typedef struct {
+    char unk0[0x10];
+    int prize[2][3]; /* 0x10: the two prize sums for each level */
+    char unk28[0x64 - 0x28];
+} A11yTourInfo;
+_Static_assert(sizeof(A11yTourInfo) == 0x64, "TourInfo");
+
+typedef struct {
+    char unk0[0x108];
+    int flags;                   /* 0x108: TOURMENU_ */
+    int cursor[5];               /* 0x10C: one per level */
+    char unk120[0x12C - 0x120];
+    int level;                   /* 0x12C: TOURMENU_LV_ */
+    char unk130[0x144 - 0x130];
+    A11yTourInfo GAME_PTR info;  /* 0x144: one per tournament */
+} A11yTourMenu;
+_Static_assert(offsetof(A11yTourMenu, level) == 0x12C && offsetof(A11yTourMenu, info) == 0x144, "TourMenu");
+extern A11yTourMenu GAME_PTR gTourMenu;
+#define TOURMENU_DONE 1
+#define TOURMENU_LEAVING 2
+#define TOURMENU_STARTED 4
+#define TOURMENU_LV_TOP 0
+#define TOURMENU_LV_TOUR 1
+#define TOURMENU_LV_INFO 2
+#define TOURMENU_LV_LEVEL 3
+#define TOURMENU_LV_NUM 4
+#define TOUR_COUNT 5
+#define TOUR_LEVELS 3
+#define TOUR_ENTRY_MAX 8
+
+static const char *const kTourTop[2][2] = {
+    {"Open tournament", "Free play"},
+    {"Torneo abierto", "Juego libre"},
+};
+static const char *const kTourNames[2][TOUR_COUNT] = {
+    {"World Tournament", "Cell Games", "Other World Tournament", "Yamcha Game", "Tenkaichi Budokai"},
+    {"Torneo de las Artes Marciales", "Juegos de Cell", "Torneo del Otro Mundo", "Juego de Yamcha",
+     "Tenkaichi Budokai"},
+};
+static const char *const kTourLevels[2][TOUR_LEVELS] = {
+    {"Novice", "Advanced", "Expert"},
+    {"Principiante", "Avanzado", "Experto"},
+};
+
+static void tour_menu(void) {
+    static int level = -1, item = -1;
+    A11yTourMenu GAME_PTR m = gTourMenu;
+    char text[256];
+    int cur, open, n;
+
+    if (m == NULL) {
+        level = item = -1;
+        return;
+    }
+    if (!(m->flags & TOURMENU_STARTED) || (m->flags & (TOURMENU_DONE | TOURMENU_LEAVING)) ||
+        m->level < TOURMENU_LV_TOP || m->level > TOURMENU_LV_NUM) {
+        return;
+    }
+    cur = m->cursor[m->level];
+    if (m->level == level && cur == item) {
+        return;
+    }
+    level = m->level;
+    item = cur;
+    open = m->cursor[TOURMENU_LV_TOP] == 0; /* the open tournament: the level and the entrants are fixed */
+    switch (m->level) {
+    case TOURMENU_LV_TOP:
+        if (cur >= 0 && cur < 2) {
+            say_item(kTourTop[sEs][cur], cur, 2, follow());
+        }
+        break;
+    case TOURMENU_LV_TOUR:
+        if (cur < 0 || cur >= TOUR_COUNT) {
+            break;
+        }
+        n = snprintf(text, sizeof(text), "%s", kTourNames[sEs][cur]);
+        if (open && gSaveData != NULL && !(gSaveData->tourOpen & (1 << cur))) {
+            snprintf(text + n, sizeof(text) - n, "%s", sEs ? ", cerrado" : ", closed");
+        } else if (open && gSaveData != NULL && m->info != NULL && gSaveData->tourLevel >= 0 &&
+                   gSaveData->tourLevel < TOUR_LEVELS) {
+            snprintf(text + n, sizeof(text) - n, sEs ? ", premios %d y %d" : ", prizes %d and %d",
+                     m->info[cur].prize[0][gSaveData->tourLevel], m->info[cur].prize[1][gSaveData->tourLevel]);
+        }
+        say_item(text, cur, TOUR_COUNT, follow());
+        break;
+    case TOURMENU_LV_LEVEL:
+        if (cur >= 0 && cur < TOUR_LEVELS) {
+            snprintf(text, sizeof(text), sEs ? "Dificultad: %s" : "Level: %s", kTourLevels[sEs][cur]);
+            say_item(text, open ? -1 : cur, TOUR_LEVELS, follow());
+        }
+        break;
+    case TOURMENU_LV_NUM:
+        if (cur >= 0 && cur < TOUR_ENTRY_MAX) {
+            snprintf(text, sizeof(text), sEs ? "Participantes: %d" : "Entrants: %d", cur + 1);
+            say_item(text, -1, 1, follow());
+        }
+        break;
+    default: /* TOURMENU_LV_INFO: the guide explains the tournament */
+        break;
+    }
+}
+
+/* include/menu/menu_c.h: HistSel (src/menu/menu_b_d.c), the story mode's saga select of mode 6. Focus 0 is the menu
+   (0 the sagas, 1 the level), focus 1 the ring of sagas and focus 2 the level; HistSel_Input reads the pad only while
+   no guide script runs. The plates and the saga names are pictures; Goku's voice speaks each move. */
+typedef struct {
+    char unk0[0x1CC];
+    int flags;           /* 0x1CC: HISTSEL_ */
+    int cursor[3];       /* 0x1D0: by focus */
+    char unk1DC[0x1EC - 0x1DC];
+    int focus;           /* 0x1EC */
+    int script;          /* 0x1F0: guide script step, 0 = none */
+    int items[9];        /* 0x1F4: listed sagas (8 the ending movie), padded with HISTSEL_ITEM_NONE */
+    int itemCount;       /* 0x218 */
+    char unk21C[0x228 - 0x21C];
+    int percent;         /* 0x228: cleared episodes, in percent */
+} A11yHistSel;
+_Static_assert(offsetof(A11yHistSel, focus) == 0x1EC && offsetof(A11yHistSel, percent) == 0x228, "HistSel");
+extern A11yHistSel GAME_PTR gHistSel;
+#define HISTSEL_CHOSEN 1
+#define HISTSEL_LEAVING 2
+#define HISTSEL_STARTED 4
+#define HISTSEL_ITEM_ENDING 8
+#define HISTSEL_ITEM_NONE 9
+#define HIST_SAGAS 8
+#define HIST_LEVELS 3
+
+/* Episodes of each saga: ModeMenu's itemMax (MD_SETUP in ModeMenu_Init). */
+static const int kHistEpisodes[HIST_SAGAS] = {3, 4, 7, 5, 16, 5, 4, 4};
+/* Provisional: the plates are pictures, not yet read from the disc. */
+static const char *const kHistMenu[2][2] = {
+    {"Choose a saga", "Level"},
+    {"Elegir saga", "Dificultad"},
+};
+static const char *const kHistLevels[2][HIST_LEVELS] = {
+    {"Easy", "Normal", "Hard"},
+    {"Fácil", "Normal", "Difícil"},
+};
+
+static int bit_count(unsigned v) {
+    int n = 0;
+
+    for (; v != 0; v &= v - 1) {
+        n++;
+    }
+    return n;
+}
+
+static const char *hist_level(int level) {
+    return level >= 0 && level < HIST_LEVELS ? kHistLevels[sEs][level] : "";
+}
+
+static void hist_select(void) {
+    static int focus = -1, item = -1, told = 0;
+    A11yHistSel GAME_PTR m = gHistSel;
+    char text[256];
+    int cur, id, real, i, n;
+
+    /* the object is freed, not cleared, when the screen leaves: trust it only in its own mode */
+    if (m == NULL || gProgress == NULL || gProgress->mode != MODE_HIST_SEL) {
+        focus = item = -1;
+        told = 0;
+        return;
+    }
+    if (!(m->flags & HISTSEL_STARTED) || (m->flags & (HISTSEL_CHOSEN | HISTSEL_LEAVING)) || m->script != 0 ||
+        m->focus < 0 || m->focus > 2) {
+        return;
+    }
+    cur = m->cursor[m->focus];
+    if (m->focus == focus && cur == item) {
+        return;
+    }
+    focus = m->focus;
+    item = cur;
+    switch (m->focus) {
+    case 0:
+        if (cur < 0 || cur > 1) {
+            break;
+        }
+        n = snprintf(text, sizeof(text), "%s", kHistMenu[sEs][cur]);
+        if (cur == 1 && gSaveData != NULL) {
+            snprintf(text + n, sizeof(text) - n, ": %s", hist_level(gSaveData->histLevel));
+        }
+        say_item(text, cur, 2, follow());
+        if (!told) {
+            snprintf(text, sizeof(text), sEs ? "Completado: %d por ciento" : "Completed: %d percent", m->percent);
+            PortA11y_Say(text, 0);
+            told = 1;
+        }
+        break;
+    case 1:
+        if (cur < 0 || cur >= m->itemCount || cur >= 9) {
+            break;
+        }
+        id = m->items[cur];
+        for (real = 0, i = 0; i < m->itemCount && i < 9; i++) {
+            real += m->items[i] != HISTSEL_ITEM_NONE;
+        }
+        if (id == HISTSEL_ITEM_NONE) {
+            say_item(sEs ? "Vacío" : "Empty", -1, 1, follow());
+            break;
+        }
+        if (id == HISTSEL_ITEM_ENDING) {
+            say_item(sEs ? "Ver el final" : "Watch the ending", cur, real, follow());
+            break;
+        }
+        n = snprintf(text, sizeof(text), "Saga %d", id + 1);
+        if (gSaveData != NULL && id >= 0 && id < HIST_SAGAS) {
+            if (gSaveData->slot[id].flags & 2) { /* MSLOT_NEW */
+                n += snprintf(text + n, sizeof(text) - n, sEs ? ", nueva" : ", new");
+            }
+            snprintf(text + n, sizeof(text) - n, sEs ? ", %d de %d episodios superados" : ", %d of %d episodes cleared",
+                     bit_count((unsigned)gSaveData->slot[id].val[1]), kHistEpisodes[id]);
+        }
+        say_item(text, cur, real, follow());
+        break;
+    default:
+        if (cur >= 0 && cur < HIST_LEVELS) {
+            snprintf(text, sizeof(text), sEs ? "Dificultad: %s" : "Level: %s", hist_level(cur));
+            say_item(text, cur, HIST_LEVELS, follow());
+        }
+        break;
+    }
+}
+
+/* include/menu/menu_b.h: ModeMenu (src/menu/menu_a_d.c), the episode list of mode 7 for the saga gProgress->subMenu.
+   Left and right move without wrapping, X opens the episode's description, which the narrator reads aloud (its
+   lines are real text and already reach the speech through the text boxes). The episode titles are pictures. */
+typedef struct {
+    char unk0[0xF4];
+    int flags;           /* 0xF4: MODEMENU_ */
+    int cursor[2];       /* 0xF8: [0] the index into items */
+    char unk100[0x104 - 0x100];
+    int focus;           /* 0x104: 0 the list, 1 the description */
+    char unk108[0x114 - 0x108];
+    int step;            /* 0x114: MODEMENU_STEP_, 0 = idle */
+    char unk118[0x128 - 0x118];
+    int items[16];       /* 0x128: episode ids, padded with itemMax */
+    int itemCount;       /* 0x168 */
+    char unk16C[0x178 - 0x16C];
+    int itemMax;         /* 0x178 */
+} A11yModeMenu;
+_Static_assert(offsetof(A11yModeMenu, step) == 0x114 && offsetof(A11yModeMenu, itemMax) == 0x178, "ModeMenu");
+extern A11yModeMenu GAME_PTR gModeMenu;
+#define MODEMENU_CHOSEN 1
+#define MODEMENU_LEAVING 2
+#define MODEMENU_STARTED 4
+#define PROGRESS_SUB_MENU (0x34 / 4) /* gProgress, in ints: the saga of the story mode */
+
+static void episode_list(void) {
+    static int item = -1;
+    A11yModeMenu GAME_PTR m = gModeMenu;
+    char text[256];
+    int cur, id, saga, real, i, n;
+
+    if (m == NULL || gProgress == NULL || gProgress->mode != MODE_EPISODES) {
+        item = -1;
+        return;
+    }
+    if (!(m->flags & MODEMENU_STARTED) || (m->flags & (MODEMENU_CHOSEN | MODEMENU_LEAVING)) || m->focus != 0 ||
+        m->step != 0) {
+        item = -1; /* back from the description: say the episode again */
+        return;
+    }
+    cur = m->cursor[0];
+    if (cur == item || cur < 0 || cur >= m->itemCount || cur >= 16) {
+        return;
+    }
+    item = cur;
+    id = m->items[cur];
+    if (id == m->itemMax) {
+        return;
+    }
+    for (real = 0, i = 0; i < m->itemCount && i < 16; i++) {
+        real += m->items[i] != m->itemMax;
+    }
+    n = snprintf(text, sizeof(text), sEs ? "Episodio %d" : "Episode %d", id + 1);
+    saga = gProgress != NULL ? ((int GAME_PTR)gProgress)[PROGRESS_SUB_MENU] : -1;
+    if (gSaveData != NULL && saga >= 0 && saga < 9 && id >= 0 && id < 32) {
+        if (gSaveData->slot[saga].val[2] & (1 << id)) {
+            n += snprintf(text + n, sizeof(text) - n, sEs ? ", nuevo" : ", new");
+        }
+        if (gSaveData->slot[saga].val[1] & (1 << id)) {
+            snprintf(text + n, sizeof(text) - n, sEs ? ", superado" : ", cleared");
+        }
+    }
+    say_item(text, cur, real, follow());
+}
+
+/* include/menu/menu_i.h: Train (src/menu/menu_h_d.c), the training menu of mode 44. Level 0 has two plates (0 the
+   character select for free practice, 1 the lessons), level 1 the three classes and level 2 the class's lessons,
+   three rows of a scrolling list whose names are real text. The explanation pages that follow are the message
+   window's text (msg_window). The plates and the class names are pictures. */
+typedef struct {
+    char unk0[0x420];
+    uint32_t GAME_PTR text;  /* 0x420: the lesson names */
+    char unk424[0x444 - 0x424];
+    int sel[2];              /* 0x444: the cursor of levels 0 and 1 */
+    char unk44C[0x458 - 0x44C];
+    int level;               /* 0x458: TRAIN_LV_ */
+    int top;                 /* 0x45C: first visible lesson */
+    int row;                 /* 0x460: row of the cursor, 0..2 */
+    char unk464[0x478 - 0x464];
+    int flags;               /* 0x478: TRAIN_ */
+    char unk47C[0x1994 - 0x47C];
+    int nameLine[3][15];     /* 0x1994: text line of each listed lesson's name */
+    char unk1A48[0x1BB0 - 0x1A48];
+    int count[3];            /* 0x1BB0: lessons listed per class */
+} A11yTrain;
+_Static_assert(offsetof(A11yTrain, level) == 0x458 && offsetof(A11yTrain, nameLine) == 0x1994 &&
+                   offsetof(A11yTrain, count) == 0x1BB0, "Train");
+extern A11yTrain GAME_PTR gTrain;
+#define TRAIN_LEAVING 8
+#define TRAIN_LV_TOP 0
+#define TRAIN_LV_CLASS 1
+#define TRAIN_LV_LESSON 2
+#define TRAIN_CLASSES 3
+
+/* Provisional: they say what the plates lead to; the pictures are not yet read from the disc. */
+static const char *const kTrainTop[2][2] = {
+    {"Free practice, choose a character", "Lessons"},
+    {"Práctica libre, elegir personaje", "Lecciones"},
+};
+
+static void train_menu(void) {
+    static int level = -1, item = -1;
+    A11yTrain GAME_PTR m = gTrain;
+    char text[256], name[200];
+    int cur = -1, class, done, n;
+
+    if (m == NULL) {
+        level = item = -1;
+        return;
+    }
+    if ((m->flags & TRAIN_LEAVING) || m->level < TRAIN_LV_TOP || m->level > TRAIN_LV_LESSON) {
+        level = -1; /* the lesson's introduction and pages: say the lesson again when back */
+        return;
+    }
+    class = m->sel[1];
+    cur = m->level == TRAIN_LV_LESSON ? m->top + m->row : m->sel[m->level];
+    if (m->level == level && cur == item) {
+        return;
+    }
+    level = m->level;
+    item = cur;
+    switch (m->level) {
+    case TRAIN_LV_TOP:
+        if (cur >= 0 && cur < 2) {
+            say_item(kTrainTop[sEs][cur], cur, 2, follow());
+        }
+        break;
+    case TRAIN_LV_CLASS:
+        if (cur < 0 || cur >= TRAIN_CLASSES) {
+            break;
+        }
+        n = snprintf(text, sizeof(text), sEs ? "Clase %d" : "Class %d", cur + 1);
+        if (gSaveData != NULL && m->count[cur] > 0 && m->count[cur] <= 15) {
+            snprintf(text + n, sizeof(text) - n, sEs ? ", %d de %d lecciones superadas" : ", %d of %d lessons cleared",
+                     bit_count((unsigned)gSaveData->trainClear[cur] & ((1U << m->count[cur]) - 1)), m->count[cur]);
+        }
+        say_item(text, cur, TRAIN_CLASSES, follow());
+        break;
+    default:
+        if (class < 0 || class >= TRAIN_CLASSES || cur < 0 || cur >= m->count[class] || cur >= 15) {
+            break;
+        }
+        if (!text_line(name, sizeof(name), m->text, m->nameLine[class][cur])) {
+            snprintf(name, sizeof(name), sEs ? "Lección %d" : "Lesson %d", cur + 1);
+        }
+        done = gSaveData != NULL && (gSaveData->trainClear[class] & (1 << cur));
+        snprintf(text, sizeof(text), "%s%s", name, done ? (sEs ? ", superada" : ", cleared") : "");
+        say_item(text, cur, m->count[class], follow());
+        break;
+    }
+}
+
+/* include/menu/menu_s.h: SurvSel (src/menu/menu_s_b.c), the survival course select of mode 17. Up and down move
+   through the three courses (wrapping), X opens the course's window (level 1) and X there starts it. The course
+   names are real text (lines 0x13C.. of the screen's text); the best result is drawn with digit pictures. */
+typedef struct {
+    char unk0[0x8];
+    uint32_t GAME_PTR text;  /* 0x008 */
+    char unkC[0x2F0 - 0xC];
+    int flags;               /* 0x2F0: SURVSEL_ */
+    int cur[2];              /* 0x2F4: only cur[0], the course, is used */
+    char unk2FC[0x308 - 0x2FC];
+    int level;               /* 0x308: 0 choosing, 1 the course's window is open */
+} A11ySurvSel;
+_Static_assert(offsetof(A11ySurvSel, flags) == 0x2F0 && offsetof(A11ySurvSel, level) == 0x308, "SurvSel");
+extern A11ySurvSel GAME_PTR gSurvSel;
+#define SURVSEL_CHOSEN 1
+#define SURVSEL_LEAVING 2
+#define SURVSEL_STARTED 4
+#define SURV_COURSES 3
+#define SURV_NAME_LINE 0x13C
+
+static void survival_select(void) {
+    static int level = -1, item = -1;
+    A11ySurvSel GAME_PTR m = gSurvSel;
+    A11ySurvRecord GAME_PTR r;
+    char text[256], name[200];
+    int cur, n;
+
+    if (m == NULL) {
+        level = item = -1;
+        return;
+    }
+    cur = m->cur[0];
+    if (!(m->flags & SURVSEL_STARTED) || (m->flags & (SURVSEL_CHOSEN | SURVSEL_LEAVING)) || cur < 0 ||
+        cur >= SURV_COURSES || (m->level == level && cur == item)) {
+        return;
+    }
+    level = m->level;
+    item = cur;
+    if (!text_line(name, sizeof(name), m->text, SURV_NAME_LINE + cur)) {
+        snprintf(name, sizeof(name), sEs ? "Recorrido %d" : "Course %d", cur + 1);
+    }
+    if (m->level != 0) {
+        snprintf(text, sizeof(text),
+                 sEs ? "%s: X para empezar, triángulo para volver" : "%s: X to start, triangle to go back", name);
+        PortA11y_Say(text, follow());
+        return;
+    }
+    snprintf(text, sizeof(text), "%s", name);
+    add_position(text, sizeof(text), cur, SURV_COURSES);
+    n = (int)strlen(text);
+    r = gSaveData != NULL ? &gSaveData->surv[cur] : NULL;
+    if (r != NULL && r->defeated > 0) {
+        snprintf(text + n, sizeof(text) - n,
+                 sEs ? ". Récord: %d rivales derrotados, tiempo %d:%02d:%02d, puntaje %d"
+                     : ". Best: %d opponents beaten, time %d:%02d:%02d, score %d",
+                 r->defeated, r->hours, r->minutes, r->seconds, r->score * 100);
+    }
+    PortA11y_Say(text, follow());
+}
+
+/* include/menu/menu_r.h: SimTop (src/menu/menu_r_d.c), the Sim Dragon entry screen of mode 20. Up and down move
+   through three plates drawn as pictures (start, ranking, how to play; wrapping), X opens one and triangle goes back.
+   The ranking shows five of its ten rows and scrolls one row at a time; the help is one text line per page. */
+typedef struct {
+    char unk0[0xC];
+    uint32_t GAME_PTR text;  /* 0x00C: section 8; line n is help page n */
+    char unk10[0x170 - 0x10];
+    int flags;               /* 0x170: SIMTOP_ */
+    int cur[6];              /* 0x174: only cur[0], the plate, is used */
+    char unk18C[0x190 - 0x18C];
+    int level;               /* 0x190: SIMTOP_LV_ */
+    char unk194[0x1B8 - 0x194];
+    int top;                 /* 0x1B8: first ranking row shown, 0..5 */
+    int cursor;              /* 0x1BC */
+    int page;                /* 0x1C0: help page, 0..10 */
+} A11ySimTop;
+_Static_assert(offsetof(A11ySimTop, flags) == 0x170 && offsetof(A11ySimTop, level) == 0x190 &&
+               offsetof(A11ySimTop, top) == 0x1B8 && offsetof(A11ySimTop, page) == 0x1C0, "SimTop");
+extern A11ySimTop GAME_PTR gSimTop;
+#define SIMTOP_CHOSEN 1
+#define SIMTOP_LEAVING 2
+#define SIMTOP_STARTED 4
+#define SIMTOP_LV_MENU 0
+#define SIMTOP_LV_RANKING 1
+#define SIMTOP_LV_HELP 2
+#define SIMTOP_PLATES 3
+#define SIMTOP_SHOWN 5
+#define SIMTOP_RANKS 10
+#define SIMTOP_PAGES 11
+
+/* Descriptive: the plates are pictures. */
+static const char *const kSimTopPlates[2][SIMTOP_PLATES] = {
+    {"Start", "Ranking", "How to play"},
+    {"Empezar", "Clasificación", "Cómo se juega"},
+};
+
+/* Row `row` of the ranking. Its portrait is the only thing that says who it was, so the character is left out. */
+static void sim_rank_row(char *out, int cap, int row) {
+    A11ySimRank GAME_PTR r = gSaveData != NULL ? &gSaveData->simRank[row] : NULL;
+
+    if (r == NULL || r->score <= 0) {
+        snprintf(out, cap, sEs ? "Puesto %d: sin registro" : "Rank %d: no record", row + 1);
+        return;
+    }
+    snprintf(out, cap, sEs ? "Puesto %d: %d puntos%s" : "Rank %d: %d points%s", row + 1, r->score * 100,
+             r->cleared ? (sEs ? ", completado" : ", cleared") : "");
+}
+
+static void sim_top(void) {
+    static int level = -1, item = -1, top = -1, page = -1;
+    A11ySimTop GAME_PTR m = gSimTop;
+    char text[1024];
+    int i, n;
+
+    if (m == NULL) {
+        level = item = top = page = -1;
+        return;
+    }
+    if (!(m->flags & SIMTOP_STARTED) || (m->flags & (SIMTOP_CHOSEN | SIMTOP_LEAVING))) {
+        return;
+    }
+    switch (m->level) {
+    case SIMTOP_LV_MENU:
+        if (m->cur[0] < 0 || m->cur[0] >= SIMTOP_PLATES || (level == SIMTOP_LV_MENU && m->cur[0] == item)) {
+            return;
+        }
+        level = m->level;
+        item = m->cur[0];
+        say_item(kSimTopPlates[sEs][item], item, SIMTOP_PLATES, follow());
+        break;
+    case SIMTOP_LV_RANKING:
+        if (m->top < 0 || m->top > SIMTOP_RANKS - SIMTOP_SHOWN || (level == SIMTOP_LV_RANKING && m->top == top)) {
+            return;
+        }
+        if (level != SIMTOP_LV_RANKING) {
+            /* Just opened: the five rows on screen. */
+            n = 0;
+            for (i = 0; i < SIMTOP_SHOWN && n < (int)sizeof(text) - 2; i++) {
+                sim_rank_row(text + n, (int)sizeof(text) - n - 2, m->top + i);
+                n = (int)strlen(text);
+                text[n++] = '.';
+                text[n++] = ' ';
+                text[n] = '\0';
+            }
+            PortA11y_Say(text, follow());
+        } else {
+            /* Scrolled: only the row that came in. */
+            sim_rank_row(text, sizeof(text), m->top > top ? m->top + SIMTOP_SHOWN - 1 : m->top);
+            PortA11y_Say(text, A11Y_INTERRUPT);
+        }
+        level = m->level;
+        top = m->top;
+        break;
+    case SIMTOP_LV_HELP:
+        if (m->page < 0 || m->page >= SIMTOP_PAGES || (level == SIMTOP_LV_HELP && m->page == page)) {
+            return;
+        }
+        level = m->level;
+        page = m->page;
+        n = text_line(text, sizeof(text) - 40, m->text, page);
+        snprintf(text + n, sizeof(text) - n, sEs ? "%sPágina %d de %d" : "%sPage %d of %d", n > 0 ? ". " : "",
+                 page + 1, SIMTOP_PAGES);
+        PortA11y_Say(text, follow());
+        break;
+    }
+}
+
+/* Every name a select's text gave, kept for the screens that show the characters only as pictures (the replay
+   list). Only in memory: it comes from the disc each run. */
+static char sNameCache[MCHR_RANDOM][64];
+
+/* The name of character `chara` from a select's own text (line chara of its name and form files: sections 43 and 44
+   of the versus select, as CharSel_Draw shows them), and its form after it when that says something else. */
+static void chara_name(char *out, int cap, uint32_t GAME_PTR nameText, uint32_t GAME_PTR formText, int chara) {
     char form[256];
     size_t len;
 
-    if (text_line(out, cap, cs->nameText, chara) == 0) {
+    if (text_line(out, cap, nameText, chara) == 0) {
         if (chara >= MCHR_RANDOM && chara < MCHR_RANDOM + 4) {
             snprintf(out, cap, "%s", kCellMarks[sEs][chara - MCHR_RANDOM]);
         } else {
@@ -455,10 +1333,147 @@ static void char_name(char *out, int cap, A11yCharSel GAME_PTR cs, int chara) {
         }
         return;
     }
-    if (text_line(form, sizeof(form), cs->formText, chara) > 0 && strcmp(form, out) != 0) {
+    if (text_line(form, sizeof(form), formText, chara) > 0 && strcmp(form, out) != 0) {
         len = strlen(out);
         snprintf(out + len, cap - len, ", %s", form);
     }
+    if (chara >= 0 && chara < MCHR_RANDOM) {
+        snprintf(sNameCache[chara], sizeof(sNameCache[chara]), "%s", out);
+    }
+}
+
+/* Reads every character's name once from a select's text into sNameCache. */
+static void name_cache_fill(uint32_t GAME_PTR nameText, uint32_t GAME_PTR formText) {
+    char name[A11Y_TEXT];
+    int chara, lines = MCHR_RANDOM;
+
+    if (nameText == NULL) {
+        return;
+    }
+    /* the offset table ends where the first line starts: no line past it */
+    if (nameText[1] >> 2 != 0 && (int)(nameText[1] >> 2) - 1 < lines) {
+        lines = (int)(nameText[1] >> 2) - 1;
+    }
+    for (chara = 0; chara < lines; chara++) {
+        chara_name(name, sizeof(name), nameText, formText, chara);
+    }
+}
+
+/* A name from sNameCache, or the character's number when no select has given it yet. */
+static void cached_name(char *out, int cap, int chara) {
+    if (chara >= 0 && chara < MCHR_RANDOM && sNameCache[chara][0] != '\0') {
+        snprintf(out, cap, "%s", sNameCache[chara]);
+    } else {
+        snprintf(out, cap, sEs ? "Personaje %d" : "Character %d", chara);
+    }
+}
+
+static void char_name(char *out, int cap, A11yCharSel GAME_PTR cs, int chara) {
+    chara_name(out, cap, cs->nameText, cs->formText, chara);
+}
+
+/* include/menu/menu_k.h: Bracket (src/menu/menu_k_b.c), the tournament tree of mode 35. While BRK_INPUT is set the
+   tree can be scrolled and X starts the next match; the winner's chip moving up (BRK_MOVE_B) shows who won. The
+   names come from the screen's own name and form text, as its versus panel shows them. */
+typedef struct {
+    unsigned short flags;    /* 0x00: TOUR_ENT_ */
+    unsigned short unk2;
+    int chara;               /* 0x04 */
+    int costume;             /* 0x08 */
+    int player;              /* 0x0C: which of the player's entrants, the "1P".."8P" plate */
+    char unk10[0x28 - 0x10];
+} A11yBrkEntrant;            /* include/menu/menu_k.h: BrkEntrant */
+
+typedef struct {
+    unsigned short flags;    /* 0x00: TOUR_MATCH_ */
+    unsigned short ent[2];   /* 0x02: entrant indices, left and right */
+    char unk6[0x10 - 0x6];
+} A11yTourMatch;             /* include/menu/menu_k.h: TourMatch */
+
+typedef struct {
+    char unk0[0x24];
+    uint32_t GAME_PTR nameText;  /* 0x024: section 21 */
+    uint32_t GAME_PTR formText;  /* 0x028: section 22 */
+    char unk2C[0x2DC - 0x2C];
+    int flags;                   /* 0x2DC: BRK_ */
+    int voiceLine;               /* 0x2E0 */
+    int winSide;                 /* 0x2E4: side of the current match that won, 0 left, 1 right */
+    char unk2E8[0x1A44 - 0x2E8];
+    int round;                   /* 0x1A44 */
+    int match;                   /* 0x1A48: index into m[] */
+    char unk1A4C[0x1A68 - 0x1A4C];
+    A11yBrkEntrant ent[17];      /* 0x1A68 */
+    A11yTourMatch m[16];         /* 0x1D10 */
+} A11yBracket;
+_Static_assert(sizeof(A11yBrkEntrant) == 0x28 && sizeof(A11yTourMatch) == 0x10, "Bracket");
+_Static_assert(offsetof(A11yBracket, flags) == 0x2DC && offsetof(A11yBracket, round) == 0x1A44 &&
+               offsetof(A11yBracket, ent) == 0x1A68 && offsetof(A11yBracket, m) == 0x1D10, "Bracket");
+extern A11yBracket GAME_PTR gBracket;
+#define BRK_INPUT 4
+#define BRK_MOVE_B 0x20
+#define BRK_ENTRANTS 17
+#define BRK_MATCHES 16
+#define BRK_REC_NAME_LINE 0xA3   /* the versus panel's name line of a saved custom character */
+#define TOUR_ENT_PLAYER 1
+#define TOUR_ENT_REC 0x10
+#define TOUR_MATCH_FINAL 0x10
+
+static void brk_entrant(char *out, int cap, A11yBracket GAME_PTR b, int e) {
+    A11yBrkEntrant GAME_PTR p;
+    size_t len;
+
+    if (e < 0 || e >= BRK_ENTRANTS) {
+        snprintf(out, cap, "%s", sEs ? "nadie" : "nobody");
+        return;
+    }
+    p = &b->ent[e];
+    chara_name(out, cap, b->nameText, b->formText, (p->flags & TOUR_ENT_REC) ? BRK_REC_NAME_LINE : p->chara);
+    if (p->flags & TOUR_ENT_PLAYER) {
+        len = strlen(out);
+        snprintf(out + len, cap - len, sEs ? " (jugador %d)" : " (player %d)", p->player + 1);
+    }
+}
+
+static void bracket(void) {
+    static int input = 0, moving = 0, match = -1;
+    A11yBracket GAME_PTR b = gBracket;
+    A11yTourMatch GAME_PTR mt;
+    char text[640], left[256], right[256];
+    int n;
+
+    if (b == NULL) {
+        input = moving = 0;
+        match = -1;
+        return;
+    }
+    if (b->match < 0 || b->match >= BRK_MATCHES) {
+        return;
+    }
+    mt = &b->m[b->match];
+    if ((b->flags & BRK_MOVE_B) && !moving && (b->winSide == 0 || b->winSide == 1)) {
+        brk_entrant(left, sizeof(left), b, mt->ent[b->winSide]);
+        snprintf(text, sizeof(text), sEs ? "Gana %s" : "%s wins", left);
+        PortA11y_Say(text, A11Y_INTERRUPT);
+    }
+    moving = (b->flags & BRK_MOVE_B) != 0;
+    if (!(b->flags & BRK_INPUT)) {
+        input = 0;
+        return;
+    }
+    if (input && b->match == match) {
+        return;
+    }
+    input = 1;
+    match = b->match;
+    brk_entrant(left, sizeof(left), b, mt->ent[0]);
+    brk_entrant(right, sizeof(right), b, mt->ent[1]);
+    if (mt->flags & TOUR_MATCH_FINAL) {
+        n = snprintf(text, sizeof(text), "%s", "Final: ");
+    } else {
+        n = snprintf(text, sizeof(text), sEs ? "Ronda %d: " : "Round %d: ", b->round + 1);
+    }
+    snprintf(text + n, sizeof(text) - n, sEs ? "%s contra %s. X para seguir" : "%s versus %s. X to go on", left, right);
+    PortA11y_Say(text, 0);
 }
 
 /* What each side of the character select showed when it was last told. */
@@ -572,40 +1587,41 @@ static const char *song_name(int v) {
 }
 
 /* The stage and music choice: the stage under the cursor, the music entry with the song that plays, and in the
-   music list the song under the cursor. */
-static void char_stage(A11yCharSel GAME_PTR cs) {
+   music list the song under the cursor. `stStage` and `stBgm` are the select's own state numbers for its stage grid
+   and its music list (the team select's stage work has the same layout under other numbers). NULL: it starts
+   (again). */
+static void stage_pick(A11yCharStage GAME_PTR st, int GAME_PTR bgmIds, int bgmCount, int rows, int stStage,
+                       int stBgm) {
     static int open, state, col, row, value;
-    A11yCharStage GAME_PTR st;
     char text[A11Y_TEXT];
     int v;
 
-    if (cs == NULL) { /* the choice starts (again) */
+    if (st == NULL) {
         open = 0;
         state = -1;
         return;
     }
-    st = cs->stage;
-    if (st == NULL || cs->bgmIds == NULL || cs->bgmCount < 1 || cs->bgmCount > 64) {
+    if (bgmIds == NULL || bgmCount < 1 || bgmCount > 64) {
         return;
     }
     if (!open) {
         heading(sEs ? "Escenario y música" : "Stage and music");
         open = 1;
     }
-    if (st->state == CHARSEL_ST_STAGE && st->col == CHARSEL_STAGE_BGM_COL) {
-        v = st->bgmPlaying >= 0 && st->bgmPlaying < cs->bgmCount ? cs->bgmIds[st->bgmPlaying] : -1;
+    if (st->state == stStage && st->col == CHARSEL_STAGE_BGM_COL) {
+        v = st->bgmPlaying >= 0 && st->bgmPlaying < bgmCount ? bgmIds[st->bgmPlaying] : -1;
         snprintf(text, sizeof(text), sEs ? "Música: %s" : "Music: %s", song_name(v));
-    } else if (st->state == CHARSEL_ST_STAGE) {
+    } else if (st->state == stStage) {
         v = st->stage;
         snprintf(text, sizeof(text), "%s", stage_name(v));
-        if ((st->row != row || state != CHARSEL_ST_STAGE) && cs->stageRows > 1) {
+        if ((st->row != row || state != stStage) && rows > 1) {
             snprintf(text + strlen(text), sizeof(text) - strlen(text), sEs ? ", fila %d de %d" : ", row %d of %d",
-                     st->row + 1, cs->stageRows);
+                     st->row + 1, rows);
         }
-    } else if (st->state == CHARSEL_ST_BGM && st->bgm >= 0 && st->bgm < cs->bgmCount) {
-        v = cs->bgmIds[st->bgm];
+    } else if (st->state == stBgm && st->bgm >= 0 && st->bgm < bgmCount) {
+        v = bgmIds[st->bgm];
         snprintf(text, sizeof(text), "%s", song_name(v));
-        add_position(text, sizeof(text), st->bgm, cs->bgmCount);
+        add_position(text, sizeof(text), st->bgm, bgmCount);
     } else {
         return;
     }
@@ -635,6 +1651,7 @@ static void char_select(void) {
     }
     if (!open) {
         heading(sEs ? "Selección de personajes" : "Character select");
+        name_cache_fill(cs->nameText, cs->formText);
         open = 1;
         stage = 0;
         sSideSaid = -1;
@@ -645,9 +1662,11 @@ static void char_select(void) {
     if (cs->flags & CHARSEL_STAGE_PHASE) {
         if (!stage) {
             stage = 1;
-            char_stage(NULL);
+            stage_pick(NULL, NULL, 0, 0, 0, 0);
         }
-        char_stage(cs);
+        if (cs->stage != NULL) {
+            stage_pick(cs->stage, cs->bgmIds, cs->bgmCount, cs->stageRows, CHARSEL_ST_STAGE, CHARSEL_ST_BGM);
+        }
         return;
     }
     if (stage) { /* back from the stage choice to the sides */
@@ -661,6 +1680,864 @@ static void char_select(void) {
             char_side(cs, i);
         }
     }
+}
+
+/* What a one-fighter select shows, from either layout. */
+typedef struct {
+    uint32_t GAME_PTR nameText;
+    uint32_t GAME_PTR formText;
+    A11ySelEntry GAME_PTR entry;
+    A11yChrCell GAME_PTR grid;
+    int gridCount, image, step, rows, customCount, colorCount;
+} A11yPick;
+
+/* What the one-fighter select showed when it was last told (all -1 when it opens). */
+static struct { int step, pos, row, image, entrant; } sPick;
+
+/* One step of a one-fighter select: the character under the cursor, then its form, item set and costume, with the
+   place in the list; in the tournament, before it, the entrant being chosen when that changes. */
+static void fighter_pick(const A11yPick *p, int entrant, int entrants) {
+    A11ySelEntry GAME_PTR e = p->entry;
+    A11yChrCell GAME_PTR cell;
+    char text[A11Y_TEXT], what[A11Y_TEXT];
+    int pos = 0, count = 0, cellIdx;
+    size_t len;
+
+    switch (p->step) {
+    case PICK_STEP_CHARA:
+        pos = e->col;
+        chara_name(what, sizeof(what), p->nameText, p->formText, p->image);
+        if ((p->step != sPick.step || e->row != sPick.row) && p->rows > 1) {
+            len = strlen(what);
+            snprintf(what + len, sizeof(what) - len, sEs ? ", fila %d de %d" : ", row %d of %d", e->row + 1, p->rows);
+        }
+        break;
+    case PICK_STEP_FORM:
+        pos = e->form;
+        chara_name(what, sizeof(what), p->nameText, p->formText, p->image);
+        cellIdx = e->col + e->row * MCHR_COLS;
+        if (p->grid != NULL && cellIdx >= 0 && cellIdx < p->gridCount) {
+            cell = &p->grid[cellIdx];
+            count = cell->formCount >= 1 && cell->formCount <= 7 ? cell->formCount : 0;
+        }
+        break;
+    case PICK_STEP_CUSTOM:
+        pos = e->custom;
+        count = p->customCount;
+        if (pos == 0) {
+            snprintf(what, sizeof(what), "%s", sEs ? "Sin objetos" : "No items");
+        } else {
+            snprintf(what, sizeof(what), sEs ? "Juego de objetos %d" : "Item set %d", pos);
+        }
+        break;
+    case PICK_STEP_PANEL:
+        snprintf(what, sizeof(what), "%s", sEs ? "Panel de objetos" : "Item panel");
+        break;
+    case PICK_STEP_COLOR:
+        pos = e->costume;
+        count = p->colorCount;
+        snprintf(what, sizeof(what), sEs ? "Traje %d" : "Costume %d", pos + 1);
+        break;
+    default: /* the item's help window over the panel (its text is drawn: shown_text) */
+        sPick.step = p->step;
+        return;
+    }
+    if (p->step == sPick.step && pos == sPick.pos && e->row == sPick.row && p->image == sPick.image &&
+        entrant == sPick.entrant) {
+        return;
+    }
+    add_position(what, sizeof(what), pos, count);
+    if (entrant != sPick.entrant && entrants > 1) {
+        snprintf(text, sizeof(text), sEs ? "Participante %d de %d: %s" : "Entrant %d of %d: %s", entrant + 1, entrants,
+                 what);
+    } else {
+        snprintf(text, sizeof(text), "%s", what);
+    }
+    sPick.step = p->step;
+    sPick.pos = pos;
+    sPick.row = e->row;
+    sPick.image = p->image;
+    sPick.entrant = entrant;
+    PortA11y_Say(text, follow());
+}
+
+/* A one-fighter select opens: its name, and nothing told yet. */
+static void pick_open(const char *en, const char *es) {
+    heading(sEs ? es : en);
+    sPick.step = sPick.pos = sPick.row = sPick.image = sPick.entrant = -1;
+}
+
+/* The one-fighter select of the main menu's second item (modes 15, 18, 21, 25 and 29). Quiet once it leaves. */
+static void solo_select(void) {
+    static int open;
+    A11ySoloSel GAME_PTR s = gSoloSel;
+    A11yPick p;
+
+    if (s == NULL || !(s->flags & SOLOSEL_STARTED)) {
+        open = 0;
+        return;
+    }
+    if (s->flags & SOLOSEL_LEAVING) {
+        return;
+    }
+    if (!open) {
+        pick_open("Choose your fighter", "Elige a tu luchador");
+        open = 1;
+    }
+    p.nameText = s->nameText;
+    p.formText = s->formText;
+    p.entry = &s->entry;
+    p.grid = s->grid;
+    p.gridCount = s->gridCount;
+    p.image = s->image;
+    p.step = s->step;
+    p.rows = s->rows;
+    p.customCount = s->customCount;
+    p.colorCount = s->colorCount;
+    fighter_pick(&p, 0, 1);
+}
+
+/* The tournament's entrants (mode 34), one after the other. Quiet once it leaves. */
+static void entry_select(void) {
+    static int open;
+    A11yEntrySel GAME_PTR s = gEntrySel;
+    A11yPick p;
+    int cur = s != NULL ? s->cur : -1;
+    int entrants = gProgress != NULL ? ((int GAME_PTR)gProgress)[TOUR_ENTRY_NUM] : ESEL_ENTRIES;
+
+    if (s == NULL || !(s->flags & ESEL_STARTED)) {
+        open = 0;
+        return;
+    }
+    if ((s->flags & ESEL_LEAVING) || cur < 0 || cur >= ESEL_ENTRIES || cur >= entrants) {
+        /* past the last entrant the cursor rests on an empty entry until the screen leaves */
+        return;
+    }
+    if (!open) {
+        pick_open("Tournament entry", "Inscripción al torneo");
+        open = 1;
+    }
+    p.nameText = s->nameText;
+    p.formText = s->formText;
+    p.entry = &s->entry[cur];
+    p.grid = s->grid;
+    p.gridCount = s->gridCount;
+    p.image = s->image;
+    p.step = s->step;
+    p.rows = s->rows;
+    p.customCount = s->customCount;
+    p.colorCount = s->colorCount;
+    fighter_pick(&p, cur, entrants);
+}
+
+/* include/menu/menu_e.h and menu_f.h: TeamSel (src/menu/menu_e_b.c), the team select of the versus modes. Each side
+   fills a list of up to five members, each chosen like in the versus select (grid, form, item set, costume), and
+   confirms the list on its last plate; then pad 0 chooses the stage and the music. */
+typedef struct {
+    int col;          /* 0x00: cursor in the character grid */
+    int row;          /* 0x04 */
+    int form;         /* 0x08: chip of the form reel */
+    int customCol;    /* 0x0C: cursor in the saved custom characters */
+    int customRow;    /* 0x10 */
+    int plate;        /* 0x14: item set, 0 none */
+    int color;        /* 0x18: costume */
+    int chara;        /* 0x1C: the chosen character, -1 none yet */
+    char unk20[0x30 - 0x20];
+} A11yTsMember;       /* include/menu/menu_e.h: TsMember */
+
+typedef struct {
+    A11yTsMember member[5]; /* 0x000 */
+    char unkF0[0x128 - 0xF0];
+    int flags;        /* 0x128: TEAMSEL_SIDE_ */
+    int cur;          /* 0x12C: member being chosen; TS_CUR_MENU = on the plate that confirms the team */
+    int cost;         /* 0x130: DP total of the team */
+    int memberCount;  /* 0x134 */
+    int chara;        /* 0x138: character under the cursor, line of the name files */
+    int state;        /* 0x13C: TEAMSEL_ST_ */
+} A11yTeamSide;       /* include/menu/menu_e.h: TeamSelSide */
+_Static_assert(sizeof(A11yTsMember) == 0x30 && offsetof(A11yTeamSide, state) == 0x13C, "TeamSelSide");
+
+typedef struct {
+    char unk0[0x28];
+    uint32_t GAME_PTR nameText;     /* 0x028: section 43 */
+    uint32_t GAME_PTR formText;     /* 0x02C: section 44 */
+    char unk30[0x3BC - 0x30];
+    int flags;                      /* 0x3BC: TEAMSEL_ */
+    char unk3C0[0x8E8 - 0x3C0];
+    A11yTeamSide GAME_PTR side[2];  /* 0x8E8 */
+    char unk8F0[0x9A4 - 0x8F0];
+    A11yCharStage GAME_PTR stage;   /* 0x9A4: TeamSelStage, the versus select's layout; states 9 and 10 */
+    char unk9A8[0x9B0 - 0x9A8];
+    A11yChrCell GAME_PTR cells[2];  /* 0x9B0: each side's grid */
+    int cellCount[2];               /* 0x9B8 */
+    char unk9C0[0x3828 - 0x9C0];
+    int customCount[2];             /* 0x3828 */
+    char unk3830[0x3C20 - 0x3830];
+    int rows[2];                    /* 0x3C20: rows of each side's grid */
+    int plateCount[2];              /* 0x3C28: item sets offered */
+    int colorCount[2];              /* 0x3C30 */
+    int players;                    /* 0x3C38: TEAMSEL_PLAYERS_ */
+    int battleType;                 /* 0x3C3C: 2 = with a DP limit */
+    int dpLevel;                    /* 0x3C40 */
+    int dpMax;                      /* 0x3C44: 10, 15 or 20 */
+    char unk3C48[0x3C58 - 0x3C48];
+    int base;                       /* 0x3C58: the side pad 0 chooses for */
+    int GAME_PTR stageIds;          /* 0x3C5C */
+    int GAME_PTR bgmIds;            /* 0x3C60 */
+    int stageCount;                 /* 0x3C64 */
+    int bgmCount;                   /* 0x3C68 */
+} A11yTeamSel;
+_Static_assert(offsetof(A11yTeamSel, flags) == 0x3BC && offsetof(A11yTeamSel, side) == 0x8E8 &&
+               offsetof(A11yTeamSel, stage) == 0x9A4 && offsetof(A11yTeamSel, cells) == 0x9B0, "TeamSel");
+_Static_assert(offsetof(A11yTeamSel, customCount) == 0x3828 && offsetof(A11yTeamSel, rows) == 0x3C20 &&
+               offsetof(A11yTeamSel, base) == 0x3C58 && offsetof(A11yTeamSel, bgmCount) == 0x3C68, "TeamSel");
+extern A11yTeamSel GAME_PTR gTeamSel;
+#define TEAMSEL_STARTED 2
+#define TEAMSEL_STAGE_PHASE 4
+#define TEAMSEL_LEAVING 0x10
+#define TEAMSEL_PLAYERS_TWO 1
+#define TEAMSEL_DP 2
+#define TEAMSEL_SIDE_CUSTOM 0x80
+#define TEAMSEL_ST_GRID 0
+#define TEAMSEL_ST_FORM 1
+#define TEAMSEL_ST_PLATE 2
+#define TEAMSEL_ST_PANEL 3
+#define TEAMSEL_ST_PANEL_HELP 4
+#define TEAMSEL_ST_COLOR 5
+#define TEAMSEL_ST_TEAM 6
+#define TEAMSEL_ST_CUSTOM 7
+#define TEAMSEL_ST_DONE 8
+#define TEAMSEL_STAGE_GRID 9
+#define TEAMSEL_STAGE_BGM 10
+#define TS_MEMBERS 5
+#define TS_CUR_MENU 5
+
+/* One side of the team select, as char_side does it for the versus select; in the member list, the member under the
+   cursor (or the plate that confirms the team) and, with a DP limit, the team's total. */
+static void team_side(A11yTeamSel GAME_PTR ts, int i) {
+    static int cur[2] = {-1, -1};
+    A11yTeamSide GAME_PTR s = ts->side[i];
+    A11yTsMember GAME_PTR mb;
+    A11yChrCell GAME_PTR cell;
+    char text[A11Y_TEXT], what[A11Y_TEXT];
+    int pos = 0, count = 0, cellIdx, newRow, flags, chara;
+    size_t len;
+
+    if (ts == NULL) { /* the choice starts (again) */
+        cur[0] = cur[1] = -1;
+        return;
+    }
+    if (s == NULL || s->state < TEAMSEL_ST_GRID || s->state > TEAMSEL_ST_DONE || s->cur < 0 || s->cur > TS_CUR_MENU) {
+        return;
+    }
+    mb = &s->member[s->cur < TS_MEMBERS ? s->cur : 0];
+    newRow = s->state != sSide[i].state || mb->row != sSide[i].row;
+    chara = s->chara;
+    what[0] = '\0';
+    switch (s->state) {
+    case TEAMSEL_ST_GRID:
+        pos = mb->col;
+        chara_name(what, sizeof(what), ts->nameText, ts->formText, chara);
+        if (newRow && ts->rows[i] > 1) {
+            len = strlen(what);
+            snprintf(what + len, sizeof(what) - len, sEs ? ", fila %d de %d" : ", row %d of %d", mb->row + 1,
+                     ts->rows[i]);
+        }
+        break;
+    case TEAMSEL_ST_FORM:
+        pos = mb->form;
+        chara_name(what, sizeof(what), ts->nameText, ts->formText, chara);
+        cellIdx = mb->col + mb->row * MCHR_COLS;
+        if (!(s->flags & TEAMSEL_SIDE_CUSTOM) && ts->cells[i] != NULL && cellIdx >= 0 && cellIdx < ts->cellCount[i]) {
+            cell = &ts->cells[i][cellIdx];
+            count = cell->formCount >= 1 && cell->formCount <= 7 ? cell->formCount : 0;
+        }
+        break;
+    case TEAMSEL_ST_PLATE:
+        pos = mb->plate;
+        count = ts->plateCount[i];
+        if (pos == 0) {
+            snprintf(what, sizeof(what), "%s", sEs ? "Sin objetos" : "No items");
+        } else {
+            snprintf(what, sizeof(what), sEs ? "Juego de objetos %d" : "Item set %d", pos);
+        }
+        break;
+    case TEAMSEL_ST_PANEL:
+        snprintf(what, sizeof(what), "%s", sEs ? "Panel de objetos" : "Item panel");
+        break;
+    case TEAMSEL_ST_PANEL_HELP: /* the item's description window over the panel */
+        sSide[i].state = s->state;
+        return;
+    case TEAMSEL_ST_COLOR:
+        pos = mb->color;
+        count = ts->colorCount[i];
+        snprintf(what, sizeof(what), sEs ? "Traje %d" : "Costume %d", pos + 1);
+        break;
+    case TEAMSEL_ST_TEAM:
+        chara = -1;
+        if (s->cur == TS_CUR_MENU) {
+            snprintf(what, sizeof(what), "%s", sEs ? "Confirmar el equipo" : "Confirm the team");
+            pos = -1;
+        } else {
+            pos = s->cur;
+            count = s->memberCount < TS_MEMBERS ? s->memberCount + 1 : TS_MEMBERS;
+            if (s->cur < s->memberCount && mb->chara >= 0) {
+                chara = mb->chara;
+                len = (size_t)snprintf(what, sizeof(what), sEs ? "Miembro %d: " : "Member %d: ", s->cur + 1);
+                chara_name(what + len, sizeof(what) - len, ts->nameText, ts->formText, chara);
+            } else {
+                snprintf(what, sizeof(what), sEs ? "Miembro %d: vacío" : "Member %d: empty", s->cur + 1);
+            }
+        }
+        break;
+    case TEAMSEL_ST_CUSTOM:
+        pos = mb->customCol + mb->customRow * MCHR_COLS;
+        count = ts->customCount[i];
+        chara_name(what, sizeof(what), ts->nameText, ts->formText, chara);
+        break;
+    case TEAMSEL_ST_DONE:
+        snprintf(what, sizeof(what), "%s", sEs ? "Equipo listo" : "Team ready");
+        break;
+    }
+    if (s->state == sSide[i].state && pos == sSide[i].pos && mb->row == sSide[i].row && chara == sSide[i].chara &&
+        s->cur == cur[i]) {
+        return;
+    }
+    add_position(what, sizeof(what), pos, count);
+    if (s->state == TEAMSEL_ST_TEAM && sSide[i].state != TEAMSEL_ST_TEAM && ts->battleType == TEAMSEL_DP) {
+        len = strlen(what);
+        snprintf(what + len, sizeof(what) - len, sEs ? ". DP del equipo: %d de %d" : ". Team DP: %d of %d", s->cost,
+                 ts->dpMax);
+    }
+    if (s->state != TEAMSEL_ST_TEAM && s->cur != cur[i] && s->cur < TS_MEMBERS) {
+        /* choosing another member: say which */
+        snprintf(text, sizeof(text), sEs ? "Miembro %d: %s" : "Member %d: %s", s->cur + 1, what);
+        snprintf(what, sizeof(what), "%s", text);
+    }
+    sSide[i].state = s->state;
+    sSide[i].pos = pos;
+    sSide[i].row = mb->row;
+    sSide[i].chara = chara;
+    cur[i] = s->cur;
+    flags = follow();
+    if (i != sSideSaid) { /* the other side spoke last: say whose this is, after it */
+        snprintf(text, sizeof(text), sEs ? "Equipo %d: %s" : "Team %d: %s", i + 1, what);
+        if (sSideSaid != -1) {
+            flags = 0;
+        }
+    } else {
+        snprintf(text, sizeof(text), "%s", what);
+    }
+    sSideSaid = i;
+    PortA11y_Say(text, flags);
+}
+
+/* The team select (mode 40 and the others that use it): its name when the cursors light, each side's choice, then
+   the stage and music. Quiet once it leaves. */
+static void team_select(void) {
+    static int open, stage;
+    A11yTeamSel GAME_PTR ts = gTeamSel;
+    int i, rows;
+
+    if (ts == NULL || !(ts->flags & TEAMSEL_STARTED)) {
+        open = 0;
+        return;
+    }
+    if (ts->flags & TEAMSEL_LEAVING) {
+        return;
+    }
+    if (!open) {
+        heading(sEs ? "Selección de equipos" : "Team select");
+        name_cache_fill(ts->nameText, ts->formText);
+        open = 1;
+        stage = 0;
+        sSideSaid = -1;
+        team_side(NULL, 0);
+        for (i = 0; i < 2; i++) {
+            sSide[i].state = sSide[i].pos = sSide[i].row = sSide[i].chara = -1;
+        }
+    }
+    if (ts->flags & TEAMSEL_STAGE_PHASE) {
+        if (!stage) {
+            stage = 1;
+            stage_pick(NULL, NULL, 0, 0, 0, 0);
+        }
+        /* rows of six, at least six (menu_e_b.c, the stages the port adds) */
+        rows = (ts->stageCount + 5) / 6;
+        if (ts->stage != NULL) {
+            stage_pick(ts->stage, ts->bgmIds, ts->bgmCount, rows < 6 ? 6 : rows, TEAMSEL_STAGE_GRID,
+                       TEAMSEL_STAGE_BGM);
+        }
+        return;
+    }
+    if (stage) { /* back from the stage choice to the teams */
+        stage = 0;
+        for (i = 0; i < 2; i++) {
+            sSide[i].state = -1;
+        }
+    }
+    if (ts->players == TEAMSEL_PLAYERS_TWO) {
+        team_side(ts, 0);
+        team_side(ts, 1);
+    } else if (ts->base == 0 || ts->base == 1) { /* one pad chooses both teams, one after the other */
+        team_side(ts, ts->base);
+    }
+}
+
+/* include/menu/menu_za.h: ReplayMenu (src/menu/menu_za_d.c), the replay list of mode 56. It shows one of the seven
+   replay files at a time, its number and the two teams as chips; confirm loads it (from the Data Center) or saves
+   the last fight into it (after a fight). The card's questions and messages are a Dialog, read by dialog(). */
+typedef struct {
+    char unk0[0xE8];
+    int busy;       /* 0xE8: REPLAY_BUSY_, a card flow running */
+    int unkEC;
+    int cursor;     /* 0xF0: slot shown, 0..6 */
+    int timer;      /* 0xF4 */
+    int flags;      /* 0xF8: REPLAY_ */
+    int unkFC;
+    int mcState;    /* 0x100: not 0 while a card flow runs */
+} A11yReplayMenu;
+_Static_assert(offsetof(A11yReplayMenu, busy) == 0xE8 && offsetof(A11yReplayMenu, mcState) == 0x100, "ReplayMenu");
+extern A11yReplayMenu GAME_PTR gReplayMenu; /* NULL outside the screen */
+
+typedef struct {
+    int flags;      /* bit 0: the slot holds a replay */
+    int chara[10];  /* two teams of five, REPLAY_NO_CHARA empty */
+} A11yReplaySlot;
+typedef struct {
+    char unk0[0x68C];
+    int replayFlags;              /* 0x68C: ZAPROG_REPLAY_SAVE */
+    char unk690[0x69C - 0x690];
+    A11yReplaySlot replay[7];     /* 0x69C */
+} A11yZaProgress;                 /* include/menu/menu_za.h: ZaProgress, the view of gProgress */
+_Static_assert(sizeof(A11yReplaySlot) == 0x2C && offsetof(A11yZaProgress, replay) == 0x69C, "ZaProgress");
+#define REPLAY_LEAVE 1
+#define REPLAY_STARTED 4
+#define REPLAY_BUSY_NONE 0
+#define REPLAY_SLOTS 7
+#define REPLAY_MEMBERS 5
+#define REPLAY_NO_CHARA 0xA4
+#define ZAPROG_REPLAY_SAVE 1
+
+/* The replay list: whether it loads or saves, then the slot shown and who fought in it, once the card is read and
+   again after each card question. */
+static void replay_menu(void) {
+    static int open, cursor;
+    A11yReplayMenu GAME_PTR r = gReplayMenu;
+    A11yZaProgress GAME_PTR prog = (A11yZaProgress GAME_PTR)gProgress;
+    A11yReplaySlot GAME_PTR slot;
+    char text[A11Y_TEXT], name[96];
+    int team, i, n, len, chara;
+
+    if (r == NULL || prog == NULL || !(r->flags & REPLAY_STARTED)) {
+        open = 0;
+        return;
+    }
+    if (r->flags & REPLAY_LEAVE) {
+        return;
+    }
+    if (!open) {
+        heading(prog->replayFlags & ZAPROG_REPLAY_SAVE
+                    ? (sEs ? "Guardar datos de repetición" : "Save replay data")
+                    : (sEs ? "Ver datos de repetición" : "View replay data"));
+        open = 1;
+        cursor = -1;
+    }
+    if (r->busy != REPLAY_BUSY_NONE || r->mcState != 0) {
+        cursor = -1; /* the slot is said again once the card is done */
+        return;
+    }
+    if (r->cursor == cursor || r->cursor < 0 || r->cursor >= REPLAY_SLOTS) {
+        return;
+    }
+    cursor = r->cursor;
+    slot = &prog->replay[cursor];
+    len = snprintf(text, sizeof(text), sEs ? "Repetición %d de %d: " : "Replay %d of %d: ", cursor + 1,
+                   REPLAY_SLOTS);
+    if (!(slot->flags & 1)) {
+        snprintf(text + len, sizeof(text) - len, "%s", sEs ? "vacía" : "empty");
+    } else {
+        for (team = 0; team < 2; team++) {
+            n = 0;
+            for (i = 0; i < REPLAY_MEMBERS; i++) {
+                chara = slot->chara[team * REPLAY_MEMBERS + i];
+                if (chara < 0 || chara >= MCHR_RANDOM) {
+                    continue;
+                }
+                cached_name(name, sizeof(name), chara);
+                len += snprintf(text + len, sizeof(text) - len, "%s%s",
+                                n > 0 ? ", " : team > 0 ? (sEs ? " contra " : " versus ") : "", name);
+                n++;
+                if (len >= (int)sizeof(text)) {
+                    len = (int)sizeof(text) - 1;
+                }
+            }
+        }
+    }
+    PortA11y_Say(text, follow());
+}
+
+/* include/menu/menu_h.h: CharRef (src/menu/menu_h_b.c), the character reference of mode 60. A list of the unlocked
+   characters; X opens one's page, whose menu has the profile (real text), a voice sample, the guide's comment
+   (voiced, with subtitles) and the model viewer. Left and right page through the characters there too. */
+typedef struct {
+    char unk0[8];
+    int chara;        /* 0x08: line of the name, form and profile files */
+    int commentLine;
+    int commentNum;
+} A11yCharRefEntry;   /* 0x14 */
+typedef struct {
+    char unk0[0x18];
+    uint32_t GAME_PTR text[4];          /* 0x18: names, forms, voice labels, profiles */
+    char unk28[0x190 - 0x28];
+    A11yCharRefEntry entry[161];        /* 0x190: in list order */
+    char unkE24[0x15DC - 0xE24];
+    int cursor;                         /* 0x15DC: list index of the current character */
+    int count;                          /* 0x15E0: listed characters */
+    int total;                          /* 0x15E4 */
+    int costume;                        /* 0x15E8: for the model viewer */
+    char unk15EC[0x15FC - 0x15EC];
+    int menuCursor;                     /* 0x15FC: item of the page's menu, 5 while the model is shown */
+    char unk1600[0x1628 - 0x1600];
+    int state;                          /* 0x1628: CHARREF_ST_ */
+} A11yCharRef;
+_Static_assert(sizeof(A11yCharRefEntry) == 0x14 && offsetof(A11yCharRef, cursor) == 0x15DC, "CharRef");
+_Static_assert(offsetof(A11yCharRef, menuCursor) == 0x15FC && offsetof(A11yCharRef, state) == 0x1628, "CharRef");
+extern A11yCharRef GAME_PTR gCharRef; /* NULL outside the screen */
+#define CHARREF_CHARA_MAX 161
+#define CHARREF_ITEMS 4
+#define CHARREF_ST_INTRO 0
+#define CHARREF_ST_LIST 1
+#define CHARREF_ST_DETAILS 2
+#define CHARREF_ST_PROFILE 3
+#define CHARREF_ST_VOICE 4
+#define CHARREF_ST_COMMENT 5
+#define CHARREF_ST_COSTUME 6
+#define CHARREF_ST_VIEW 7
+#define CHARREF_ST_VIEW_WAIT 8
+
+/* The items of a character's page: pictures, named here (menu_h_b.c, CharRef_StateDetails). */
+static const char *const kCharRefItems[2][CHARREF_ITEMS] = {
+    {"Profile", "Voice", "Chi-Chi's comment", "Model"},
+    {"Perfil", "Voz", "Comentario de Milk", "Modelo"},
+};
+
+/* Says a long text in two pieces if it does not fit one message, cut at a sentence or a word. */
+static void say_long(const char *text, int flags) {
+    char part[A11Y_TEXT];
+    size_t len = strlen(text), cut;
+
+    if (len < sizeof(part)) {
+        PortA11y_Say(text, flags);
+        return;
+    }
+    cut = sizeof(part) - 1;
+    while (cut > sizeof(part) / 2 && text[cut] != '.' && text[cut] != '\n') {
+        cut--;
+    }
+    if (cut == sizeof(part) / 2) {
+        for (cut = sizeof(part) - 1; cut > 0 && text[cut] != ' '; cut--) {
+        }
+    }
+    if (cut == 0) {
+        cut = sizeof(part) - 2;
+    }
+    snprintf(part, sizeof(part), "%.*s", (int)cut + 1, text);
+    PortA11y_Say(part, flags);
+    PortA11y_Say(text + cut + 1, 0);
+}
+
+/* The character reference: the character under the cursor in the list, the item of its page, the profile when it
+   opens, the voice's label, the costume of the model viewer. The guide's comment is voiced: not read. */
+static void char_ref(void) {
+    static int open, state, cursor, item, costume;
+    A11yCharRef GAME_PTR c = gCharRef;
+    char text[2 * A11Y_TEXT], name[A11Y_TEXT];
+    int chara, len;
+
+    if (c == NULL) {
+        open = 0;
+        return;
+    }
+    if (c->state < CHARREF_ST_LIST || c->state > CHARREF_ST_VIEW_WAIT || c->count <= 0 ||
+        c->count > CHARREF_CHARA_MAX || c->cursor < 0 || c->cursor >= c->count) {
+        return; /* the intro, or leaving */
+    }
+    if (!open) {
+        heading(sEs ? "Referencia de personajes" : "Character reference");
+        open = 1;
+        state = cursor = item = costume = -1;
+    }
+    chara = c->entry[c->cursor].chara;
+    switch (c->state) {
+    case CHARREF_ST_LIST:
+        if (state == CHARREF_ST_LIST && cursor == c->cursor) {
+            break;
+        }
+        chara_name(name, sizeof(name), c->text[0], c->text[1], chara);
+        add_position(name, sizeof(name), c->cursor, c->count);
+        PortA11y_Say(name, follow());
+        break;
+    case CHARREF_ST_DETAILS:
+        if (c->menuCursor < 0 || c->menuCursor >= CHARREF_ITEMS ||
+            (state == CHARREF_ST_DETAILS && cursor == c->cursor && item == c->menuCursor)) {
+            break;
+        }
+        text[0] = '\0';
+        if (cursor != c->cursor) { /* opened, or paged to another character */
+            chara_name(name, sizeof(name), c->text[0], c->text[1], chara);
+            add_position(name, sizeof(name), c->cursor, c->count);
+            snprintf(text, sizeof(text), "%s. ", name);
+        }
+        len = (int)strlen(text);
+        snprintf(text + len, sizeof(text) - len, "%s", kCharRefItems[sEs][c->menuCursor]);
+        add_position(text, sizeof(text), c->menuCursor, CHARREF_ITEMS);
+        PortA11y_Say(text, follow());
+        break;
+    case CHARREF_ST_PROFILE:
+        if (state != CHARREF_ST_PROFILE && text_line(text, sizeof(text), c->text[3], chara * 2 + 1) > 0) {
+            say_long(text, follow());
+        }
+        break;
+    case CHARREF_ST_VOICE:
+        if (state != CHARREF_ST_VOICE) {
+            len = text_line(text, sizeof(text) - 80, c->text[2], chara * 2);
+            snprintf(text + len, sizeof(text) - len, sEs ? "%sX reproduce una frase, triángulo vuelve"
+                                                         : "%sX plays a line, triangle goes back",
+                     len > 0 ? ". " : "");
+            PortA11y_Say(text, follow());
+        }
+        break;
+    case CHARREF_ST_COSTUME:
+        if (state != CHARREF_ST_COSTUME || costume != c->costume) {
+            snprintf(text, sizeof(text), sEs ? "Traje %d. X muestra el modelo" : "Costume %d. X shows the model",
+                     c->costume + 1);
+            PortA11y_Say(text, follow());
+        }
+        break;
+    case CHARREF_ST_VIEW:
+        if (state != CHARREF_ST_VIEW) {
+            PortA11y_Say(sEs ? "Modelo en pantalla. Triángulo vuelve" : "Model shown. Triangle goes back", follow());
+        }
+        break;
+    }
+    state = c->state;
+    cursor = c->cursor;
+    item = c->menuCursor;
+    costume = c->costume;
+}
+
+/* include/menu/menu_v.h: ItemHelp (src/menu/menu_v_c.c), the item details page: the item's name and description
+   from its own text. Its owner (the shop) says when it is open and which item it shows. */
+typedef struct {
+    uint32_t GAME_PTR nameText;   /* 0x00: item names */
+    uint32_t GAME_PTR descText;   /* 0x04: item descriptions */
+} A11yItemHelp;
+extern A11yItemHelp GAME_PTR gItemHelp; /* NULL while no screen has it loaded */
+
+/* Says the details page of item `item` (0-based). */
+static void item_help(int item) {
+    char text[2 * A11Y_TEXT];
+    int len;
+
+    if (gItemHelp == NULL || item < 0 || item >= SAVE_ITEMS) {
+        return;
+    }
+    len = text_line(text, sizeof(text) / 4, gItemHelp->nameText, item);
+    if (len > 0) {
+        text[len++] = '.';
+        text[len++] = ' ';
+        text[len] = '\0';
+    }
+    if (text_line(text + len, sizeof(text) - len, gItemHelp->descText, item) == 0 && len == 0) {
+        return;
+    }
+    say_long(text, follow());
+}
+
+/* include/menu/menu_w.h: Shop (src/menu/menu_v_d.c), the item shop of Evolution Z (mode 50). Two plates (buy, the
+   collection); each opens a list with four tabs (L1 and R1), the buy list asks for confirmation (buy, cancel,
+   details) and shows what was bought. The guides' lines are voiced, with subtitles: not read. */
+typedef struct {
+    unsigned char type;   /* 0x00: 0..2, the list tab is type + 1 */
+    unsigned char unk1;
+    unsigned char picture;
+    unsigned char slots;
+    int price;            /* 0x04 */
+    char unk8[0x14 - 8];
+    int flags;            /* 0x14: WITEM_ */
+    char unk18[0x28 - 0x18];
+} A11yShopItem;           /* include/menu/menu_w.h: WItemEntry */
+typedef struct {
+    int cur[4];           /* 0x0000: cursor of each tab */
+    int tab;              /* 0x0010 */
+    char unk14[0x20 - 0x14];
+    int count[4];         /* 0x0020 */
+    int ids[4][350];      /* 0x0030: 0-based items */
+    char unk1610[0x1630 - 0x1610];
+} A11yShopList;           /* include/menu/menu_w.h: ShopList */
+typedef struct {
+    char unk0[0x10];
+    uint32_t GAME_PTR itemText;   /* 0x0010: item names; line 350 is the name of an item not owned */
+    char unk14[0x230 - 0x14];
+    int flags;                    /* 0x0230: SHOP_ */
+    int cursor[6];                /* 0x0234: by level; [0] the plate, [4] the confirmation row */
+    int timer;
+    int level;                    /* 0x0250: SHOP_LV_ */
+    int seq;                      /* 0x0254: a scripted step, 0 = the pad is read */
+    char unk258[0x26C - 0x258];
+    int helpItem;                 /* 0x026C: item of the details page */
+    int item;                     /* 0x0270: item just bought */
+    int total;                    /* 0x0274: collectable items */
+    int owned;                    /* 0x0278 */
+    int percent;                  /* 0x027C */
+    char unk280[4];
+    A11yShopList list[2];         /* 0x0284: [0] on sale, [1] every item */
+    A11yShopItem GAME_PTR items;  /* 0x2EE4 */
+} A11yShop;
+_Static_assert(sizeof(A11yShopItem) == 0x28 && offsetof(A11yShopItem, flags) == 0x14 && sizeof(A11yShopList) == 0x1630, "ShopList");
+_Static_assert(offsetof(A11yShop, flags) == 0x230 && offsetof(A11yShop, level) == 0x250 &&
+               offsetof(A11yShop, list) == 0x284 && offsetof(A11yShop, items) == 0x2EE4, "Shop");
+extern A11yShop GAME_PTR gShop; /* NULL outside the screen */
+#define SHOP_STARTED 4
+#define SHOP_TABS 4
+#define SHOP_LV_MENU 0
+#define SHOP_LV_BUY 1
+#define SHOP_LV_ALL 2
+#define SHOP_LV_HELP 3
+#define SHOP_LV_CONFIRM 4
+#define SHOP_LV_BOUGHT 5
+#define WITEM_HIDDEN 5
+#define WITEM_SOLD 0x20
+
+static const char *const kShopPlates[2][2] = {{"Buy", "Collection"}, {"Comprar", "Colección"}};
+static const char *const kShopConfirm[2][3] = {{"Buy", "Cancel", "Details"}, {"Comprar", "Cancelar", "Ver detalles"}};
+
+/* The shop: the plate, then in a list the tab, each item with its price or whether it is owned, the confirmation
+   rows, what was bought and the details page. The money and the collection when the menu level comes back. */
+static void shop(void) {
+    static int open, level, plate, tab, cur, row;
+    A11yShop GAME_PTR s = gShop;
+    A11yShopList GAME_PTR l;
+    A11yShopItem GAME_PTR it;
+    char text[A11Y_TEXT], name[256];
+    int k, item, owned, len, idx;
+
+    if (s == NULL) {
+        open = 0;
+        return;
+    }
+    if (!(s->flags & SHOP_STARTED) || s->seq != 0 || gSaveData == NULL || s->items == NULL) {
+        return; /* a scripted step: the guide is talking */
+    }
+    if (!open) {
+        heading(sEs ? "Tienda de objetos" : "Item shop");
+        open = 1;
+        level = plate = tab = cur = row = -1;
+    }
+    switch (s->level) {
+    case SHOP_LV_MENU:
+        if (s->cursor[0] < 0 || s->cursor[0] > 1 || (level == SHOP_LV_MENU && plate == s->cursor[0])) {
+            break;
+        }
+        snprintf(text, sizeof(text), "%s", kShopPlates[sEs][s->cursor[0]]);
+        add_position(text, sizeof(text), s->cursor[0], 2);
+        if (level != SHOP_LV_MENU) {
+            len = (int)strlen(text);
+            snprintf(text + len, sizeof(text) - len,
+                     sEs ? ". Dinero: %d zeni. Colección: %d de %d, %d por ciento"
+                         : ". Money: %d zeni. Collection: %d of %d, %d percent",
+                     gSaveData->money, s->owned, s->total, s->percent);
+        }
+        PortA11y_Say(text, follow());
+        break;
+    case SHOP_LV_BUY:
+    case SHOP_LV_ALL:
+        k = s->level == SHOP_LV_BUY ? 0 : 1;
+        l = &s->list[k];
+        if (l->tab < 0 || l->tab >= SHOP_TABS || l->count[l->tab] <= 0 || l->count[l->tab] > SAVE_ITEMS) {
+            break;
+        }
+        idx = l->cur[l->tab];
+        if (idx < 0 || idx >= l->count[l->tab] || (level == s->level && tab == l->tab && cur == idx)) {
+            break;
+        }
+        item = l->ids[l->tab][idx];
+        if (item < 0 || item >= SAVE_ITEMS) {
+            break;
+        }
+        it = &s->items[item];
+        owned = gSaveData->item[item] & SAVE_ITEM_OWNED;
+        text[0] = '\0';
+        if (level != s->level || tab != l->tab) {
+            snprintf(text, sizeof(text), sEs ? "Pestaña %d de %d%s. " : "Tab %d of %d%s. ", l->tab + 1, SHOP_TABS,
+                     l->tab == 0 ? (sEs ? ", todos" : ", all") : "");
+        }
+        len = (int)strlen(text);
+        if (k == 1 && !owned) {
+            snprintf(text + len, sizeof(text) - len, "%s", sEs ? "No obtenido" : "Not owned");
+        } else {
+            if (text_line(name, sizeof(name), s->itemText, item) == 0) {
+                snprintf(name, sizeof(name), sEs ? "Objeto %d" : "Item %d", item + 1);
+            }
+            if (k == 1) {
+                snprintf(text + len, sizeof(text) - len, "%s", name);
+            } else if (owned) {
+                snprintf(text + len, sizeof(text) - len, sEs ? "%s, ya lo tienes" : "%s, owned", name);
+            } else if (!(it->flags & WITEM_HIDDEN) && (it->flags & WITEM_SOLD)) {
+                snprintf(text + len, sizeof(text) - len, sEs ? "%s, %d zeni" : "%s, %d zeni", name, it->price);
+            } else {
+                snprintf(text + len, sizeof(text) - len, "%s", name);
+            }
+        }
+        add_position(text, sizeof(text), idx, l->count[l->tab]);
+        PortA11y_Say(text, follow());
+        tab = l->tab;
+        cur = idx;
+        break;
+    case SHOP_LV_CONFIRM:
+        if (s->cursor[4] < 0 || s->cursor[4] > 2 || (level == SHOP_LV_CONFIRM && row == s->cursor[4])) {
+            break;
+        }
+        text[0] = '\0';
+        if (level != SHOP_LV_CONFIRM) {
+            l = &s->list[0];
+            item = l->tab >= 0 && l->tab < SHOP_TABS && l->cur[l->tab] >= 0 && l->cur[l->tab] < SAVE_ITEMS
+                       ? l->ids[l->tab][l->cur[l->tab]]
+                       : -1;
+            if (item >= 0 && item < SAVE_ITEMS && text_line(name, sizeof(name), s->itemText, item) > 0) {
+                snprintf(text, sizeof(text), sEs ? "¿Comprar %s por %d zeni? Tienes %d. " : "Buy %s for %d zeni? You have %d. ",
+                         name, s->items[item].price, gSaveData->money);
+            }
+        }
+        len = (int)strlen(text);
+        snprintf(text + len, sizeof(text) - len, "%s", kShopConfirm[sEs][s->cursor[4]]);
+        add_position(text, sizeof(text), s->cursor[4], 3);
+        PortA11y_Say(text, follow());
+        row = s->cursor[4];
+        break;
+    case SHOP_LV_BOUGHT:
+        if (level != SHOP_LV_BOUGHT && s->item >= 0 && s->item < SAVE_ITEMS) {
+            if (text_line(name, sizeof(name), s->itemText, s->item) == 0) {
+                snprintf(name, sizeof(name), sEs ? "Objeto %d" : "Item %d", s->item + 1);
+            }
+            snprintf(text, sizeof(text), sEs ? "Compraste %s. Te quedan %d zeni. X para seguir"
+                                             : "Bought %s. %d zeni left. X to go on",
+                     name, gSaveData->money);
+            PortA11y_Say(text, follow());
+        }
+        break;
+    case SHOP_LV_HELP:
+        if (level != SHOP_LV_HELP) {
+            item_help(s->helpItem);
+        }
+        break;
+    }
+    if (s->level != SHOP_LV_CONFIRM) {
+        row = -1;
+    }
+    plate = s->cursor[0];
+    level = s->level;
 }
 
 /* The label of value `v` of the duel setting in row `row`, NULL when out of range. */
@@ -779,10 +2656,381 @@ static void duel_menu(void) {
     }
 }
 
+/* ---- the options screen ---- */
+
+/* include/menu/menu_x.h: Option (src/menu/menu_x_c.c, Option_Input), mode 62. The rows, the choices and the
+   volumes are pictures; the guide's line under each row says what it does, not its name or value. */
+typedef struct {
+    char unk0[0x10];
+    uint32_t flags;          /* 0x010: flash[0].flags, OPTION_PAD: the screen takes input */
+    char unk14[0xF0];
+    int cursor;              /* 0x104: OPT_ the row under the cursor */
+    int state;               /* 0x108: OPT_; equal to a row number, that row is open */
+    char unk10C[4];
+    int bgmVolume;           /* 0x110: the volumes when their window opened or X was last pressed in it */
+    int seVolume;            /* 0x114 */
+    int bgmCursor;           /* 0x118: the sound test's row */
+    char unk11C[0xC];
+    int value;               /* 0x128: a two-way choice's column, the volume row (0 music, 1 effects), the player */
+    char unk12C[0xC];
+    int pad;                 /* 0x138: the controller page's player */
+    char unk13C[0x10];
+    int type;                /* 0x14C: the screen type shown, 0..2 */
+    char unk150[0x38];
+    int mcBusy;              /* 0x188: a memory card flow runs; dialog() reads it */
+    char unk18C[0x10];
+    int GAME_PTR bgmIds;     /* 0x19C: the sound test's list (values: kSongNames) */
+    int bgmCount;            /* 0x1A0 */
+} A11yOption;
+_Static_assert(offsetof(A11yOption, cursor) == 0x104 && offsetof(A11yOption, value) == 0x128 &&
+                   offsetof(A11yOption, type) == 0x14C && offsetof(A11yOption, bgmCount) == 0x1A0,
+               "Option");
+extern A11yOption GAME_PTR gOption; /* NULL outside the screen */
+#define OPTION_PAD 2 /* MFLASH_PAD */
+#define OPT_ST_TOP 0
+#define OPT_ITEM_SAVE 1
+#define OPT_ITEM_SCREEN 2
+#define OPT_ITEM_SOUND 3
+#define OPT_ITEM_CTRL 4
+#define OPT_ITEM_TYPE 7
+#define OPT_ITEM_SCR2 8
+#define OPT_ITEM_STEREO 12
+#define OPT_ITEM_VOLUME 13
+#define OPT_ITEM_BGM 14
+#define OPT_ITEM_VOICE 15
+#define OPT_ITEM_KEYS 17
+#define OPT_ITEM_VIB 18
+#define OPT_ST_VIB_EDIT 20
+#define OPT_ST_KEYS_PAD 21
+#define OPT_ITEMS 20
+
+/* By OPT_ number; NULL: not a row. The three pages start at 7, 12 and 17. */
+static const char *const kOptionRows[2][OPT_ITEMS] = {
+    {NULL, "Save / Load", "Screen", "Sound", "Controller", "Exit", NULL, "Screen type", "Screen setting 2",
+     "Screen position", "Default", NULL, "Stereo / Mono", "Volume", "Sound test", "Voices", "Default",
+     "Button setup", "Vibration", "Default"},
+    {NULL, "Guardar y cargar", "Pantalla", "Sonido", "Control", "Salir", NULL, "Tipo de pantalla",
+     "Ajuste de pantalla 2", "Posición de la pantalla", "Restablecer", NULL, "Estéreo o mono", "Volumen",
+     "Prueba de sonido", "Voces", "Restablecer", "Asignación de botones", "Vibración", "Restablecer"},
+};
+static const char *const kOptionSave[2][2] = {{"Save", "Load"}, {"Guardar", "Cargar"}};
+static const char *const kOptionScreenType[2][3] = {{"Type 1", "Type 2", "Type 3"}, {"Tipo 1", "Tipo 2", "Tipo 3"}};
+static const char *const kOptionScreen2[2][2] = {{"Choice 1", "Choice 2"}, {"Opción 1", "Opción 2"}};
+static const char *const kOptionStereo[2][2] = {{"Stereo", "Mono"}, {"Estéreo", "Mono"}};
+static const char *const kOptionVoice[2][2] = {{"English", "Japanese"}, {"Inglés", "Japonés"}};
+static const char *const kOptionOnOff[2][2] = {{"Off", "On"}, {"No", "Sí"}};
+static const char *const kOptionKeys[2][2] = {{"default buttons", "own buttons, X edits them"},
+                                              {"botones predeterminados", "botones propios, X para editarlos"}};
+
+/* The first row of a row's page and how many rows it has. */
+static int option_page(int row, int *count) {
+    if (row >= 1 && row <= 5) {
+        *count = 5;
+        return 1;
+    }
+    if (row >= 7 && row <= 10) {
+        *count = 4;
+        return 7;
+    }
+    if (row >= 12 && row <= 16) {
+        *count = 5;
+        return 12;
+    }
+    if (row >= 17 && row <= 19) {
+        *count = 3;
+        return 17;
+    }
+    return -1;
+}
+
+/* What the open row shows: the choice under the cursor, the volume being moved, the song under the cursor.
+   Empty for what other readers say (the reset questions, the memory card) and for the screen position. */
+static void option_open(char *text, int cap, A11yOption GAME_PTR o) {
+    int v = o->value, two = (v & ~1) == 0;
+
+    text[0] = '\0';
+    switch (o->state) {
+    case OPT_ITEM_SAVE:
+        if (two) {
+            snprintf(text, cap, "%s", kOptionSave[sEs][v]);
+            add_position(text, cap, v, 2);
+        }
+        break;
+    case OPT_ITEM_TYPE:
+        if (o->type >= 0 && o->type < 3) {
+            snprintf(text, cap, "%s", kOptionScreenType[sEs][o->type]);
+            add_position(text, cap, o->type, 3);
+        }
+        break;
+    case OPT_ITEM_SCR2:
+        if (two) {
+            snprintf(text, cap, "%s", kOptionScreen2[sEs][v]);
+            add_position(text, cap, v, 2);
+        }
+        break;
+    case OPT_ITEM_STEREO:
+        if (two) {
+            snprintf(text, cap, "%s", kOptionStereo[sEs][v]);
+            add_position(text, cap, v, 2);
+        }
+        break;
+    case OPT_ITEM_VOLUME:
+        if (two) {
+            /* 0..9, and the game wraps from 9 to 0 (Option_Input, src/menu/menu_x_c.c:646): the top is said */
+            snprintf(text, cap, sEs ? "%s, %d de 9" : "%s, %d of 9",
+                     v ? (sEs ? "Efectos" : "Effects") : (sEs ? "Música" : "Music"),
+                     v ? gSaveData->seVolume : gSaveData->bgmVolume);
+        }
+        break;
+    case OPT_ITEM_BGM:
+        if (o->bgmIds != NULL && o->bgmCount > 0 && o->bgmCount <= 64 && o->bgmCursor >= 0 && o->bgmCursor < o->bgmCount) {
+            snprintf(text, cap, "%s", song_name(o->bgmIds[o->bgmCursor]));
+            add_position(text, cap, o->bgmCursor, o->bgmCount);
+        }
+        break;
+    case OPT_ITEM_VOICE:
+        if (two) {
+            snprintf(text, cap, "%s", kOptionVoice[sEs][v]);
+            add_position(text, cap, v, 2);
+        }
+        break;
+    case OPT_ITEM_KEYS:
+    case OPT_ITEM_VIB:
+        if (two) {
+            snprintf(text, cap, sEs ? "Jugador %d" : "Player %d", v + 1);
+            add_position(text, cap, v, 2);
+        }
+        break;
+    case OPT_ST_KEYS_PAD: /* 0 the default buttons, 1 the player's own, which X opens to edit (Option_Input) */
+        if (two && (o->pad & ~1) == 0) {
+            snprintf(text, cap, sEs ? "Jugador %d: %s" : "Player %d: %s", o->pad + 1, kOptionKeys[sEs][v]);
+        }
+        break;
+    case OPT_ST_VIB_EDIT:
+        if (two && (o->pad & ~1) == 0) {
+            snprintf(text, cap, sEs ? "Jugador %d, vibración: %s" : "Player %d, vibration: %s", o->pad + 1,
+                     kOptionOnOff[sEs][v]);
+        }
+        break;
+    }
+}
+
+/* The options screen: its name, then on each page the row under the cursor; an open row says its choice, the
+   volume window its number. X keeps a volume and leaves the window open; triangle leaves and puts back the last
+   kept volumes (Option_Input, case OPT_ITEM_VOLUME), so that is said: once the first time the window opens, and
+   when leaving drops a change. */
+static void options(void) {
+    static int open, page, volume, hinted, kept[2], shown[2];
+    static char said[256];
+    A11yOption GAME_PTR o = gOption;
+    char text[256];
+    int first, count, st;
+
+    if (o == NULL || !(o->flags & OPTION_PAD)) {
+        open = 0;
+        return;
+    }
+    if (!open) {
+        heading(sEs ? "Opciones" : "Options");
+        open = 1;
+        page = 1;
+        volume = 0;
+        said[0] = '\0';
+    }
+    if (o->mcBusy) {
+        said[0] = '\0'; /* the row is said again when the memory card closes */
+        return;
+    }
+    st = o->state;
+    if (volume && st != OPT_ITEM_VOLUME) {
+        volume = 0;
+        if (shown[0] != kept[0] || shown[1] != kept[1]) {
+            heading(sEs ? "Cambio de volumen descartado, no se guardó con X" : "Volume change dropped, it was not kept with X");
+        }
+    }
+    text[0] = '\0';
+    if (st == OPT_ST_TOP || st == OPT_ITEM_SCREEN || st == OPT_ITEM_SOUND || st == OPT_ITEM_CTRL) {
+        first = option_page(o->cursor, &count);
+        if (first < 0 || o->cursor >= OPT_ITEMS || kOptionRows[sEs][o->cursor] == NULL) {
+            return;
+        }
+        if (first != page) {
+            heading(first == 1 ? (sEs ? "Opciones" : "Options") : kOptionRows[sEs][st]);
+            page = first;
+        }
+        snprintf(text, sizeof(text), "%s", kOptionRows[sEs][o->cursor]);
+        add_position(text, sizeof(text), o->cursor - first, count);
+    } else {
+        if (st == OPT_ITEM_VOLUME) {
+            if (!volume) {
+                volume = 1;
+                kept[0] = o->bgmVolume;
+                kept[1] = o->seVolume;
+                if (!hinted) {
+                    hinted = 1;
+                    heading(sEs ? "Volumen. Izquierda y derecha cambian, X guarda, triángulo sale y deshace lo no guardado"
+                                : "Volume. Left and right change it, X keeps it, triangle leaves and undoes what was not kept");
+                }
+            } else if (o->bgmVolume != kept[0] || o->seVolume != kept[1]) {
+                kept[0] = o->bgmVolume;
+                kept[1] = o->seVolume;
+                PortA11y_Say(sEs ? "Guardado" : "Kept", A11Y_INTERRUPT);
+            }
+            shown[0] = gSaveData->bgmVolume;
+            shown[1] = gSaveData->seVolume;
+        }
+        option_open(text, sizeof(text), o);
+        if (text[0] == '\0') {
+            said[0] = '\0'; /* the row is said again when the question or the screen position closes */
+        }
+    }
+    if (text[0] != '\0' && strcmp(text, said) != 0) {
+        snprintf(said, sizeof(said), "%s", text);
+        PortA11y_Say(text, follow());
+    }
+}
+
+/* ---- the battle's pause and result menus ---- */
+
+/* include/battle/hud_0.h: BtlMenuItem, BtlMenu and BtlMenuWork (src/battle/hud_0_b.c, the menu engine), only what
+   is read. */
+typedef struct {
+    int16_t text[2];      /* 0x00: text number per controller port (entry n + 8 of the battle's text table); negative:
+                             a picture */
+    char unk4[4];
+    void GAME_PTR sub;    /* 0x08: menu opened by confirm */
+    char unkC[8];
+    int type;             /* 0x14 */
+    char unk18[4];
+    int disabled;         /* 0x1C: the cursor steps over it (the menus' first item, their title) */
+    char unk20[0x10];
+} A11yBtlMenuItem;
+_Static_assert(sizeof(A11yBtlMenuItem) == 0x30, "BtlMenuItem");
+typedef struct {
+    A11yBtlMenuItem GAME_PTR items; /* 0x00 */
+    int count;                      /* 0x04 */
+    char unk8[0xC];
+    int open;                       /* 0x14: index of the item whose sub menu is open, -1 none */
+    int cursor;                     /* 0x18 */
+    int state;                      /* 0x1C */
+} A11yBtlMenu;
+_Static_assert(sizeof(A11yBtlMenu) == 0x20, "BtlMenu");
+typedef struct {
+    char unk0[8];
+    int active;              /* 0x08: the menu is shown */
+    int pad;                 /* 0x0C: controller port that owns it (-1: nobody) */
+    char unk10[4];
+    A11yBtlMenu GAME_PTR top; /* 0x14: the tree being shown */
+} A11yBtlMenuWork;
+_Static_assert(sizeof(A11yBtlMenuWork) == 0x18, "BtlMenuWork");
+extern A11yBtlMenuWork GAME_PTR gBtlMenu; /* NULL outside a battle */
+extern int gPauseMenuWhich;              /* src/battle/hud_0.c: 0 the pause menu, 1 the result menu */
+#define BTL_MENU_ITEM_SKILLS 3   /* as the first item: the page is the skill list */
+#define BTL_MENU_ITEM_CONTROLS 4 /* as the first item: the page is the controls */
+#define BTL_MENU_STATE_ACTIVE 4
+
+/* include/sys/common.h: CommonRes; in a battle, 0x28 is its common file, whose offset table holds the menus' text
+   (src/battle/hud_0_b.c, BtlMenu_GetText). */
+extern struct { char unk0[0x28]; uint32_t GAME_PTR battle; } GAME_PTR gCommonRes;
+
+/* The menu of the battle's tree that takes input (the deepest one open), or NULL when none is shown. */
+static A11yBtlMenu GAME_PTR btl_menu_shown(void) {
+    A11yBtlMenuWork GAME_PTR w = gBtlMenu;
+    A11yBtlMenu GAME_PTR m;
+    int depth;
+
+    if (w == NULL || !w->active || w->top == NULL) {
+        return NULL;
+    }
+    m = w->top;
+    for (depth = 0; depth < 8 && m->open >= 0 && m->open < m->count && m->items[m->open].sub != NULL; depth++) {
+        m = (A11yBtlMenu GAME_PTR)m->items[m->open].sub;
+    }
+    return m->count > 0 && m->count < 64 ? m : NULL;
+}
+
+/* 1: the menu is the skill list or the controls page, which are not a list of items (left to shown_text). */
+static int btl_menu_page(A11yBtlMenu GAME_PTR m) {
+    return m->items[0].type == BTL_MENU_ITEM_SKILLS || m->items[0].type == BTL_MENU_ITEM_CONTROLS;
+}
+
+/* Item i's text, as the engine draws it for the menu's owner. */
+static void btl_menu_item(char *out, int cap, A11yBtlMenu GAME_PTR m, int i) {
+    uint32_t GAME_PTR file = gCommonRes != NULL ? gCommonRes->battle : NULL;
+    uint32_t ofs;
+    int pad = gBtlMenu->pad < 0 || gBtlMenu->pad > 1 ? 0 : gBtlMenu->pad, n = m->items[i].text[pad];
+
+    out[0] = '\0';
+    if (file != NULL && n >= 0 && n < 0x1000) {
+        ofs = file[n + 8] >> 2 << 2;
+        if (ofs != 0 && ofs < 0x200000) {
+            PortA11y_Utf8(out, cap, (const uint16_t *)(uint16_t GAME_PTR)((uint8_t GAME_PTR)file + ofs));
+        }
+    }
+    if (out[0] == '\0') {
+        snprintf(out, cap, sEs ? "Opción %d" : "Item %d", i + 1);
+    }
+}
+
+/* The pause menu and the menu after a fight: its name when it opens, then the item under the cursor, one at a time
+   (the engine draws the whole list at once, which the text reader would say as one message). */
+static void btl_menu(void) {
+    static A11yBtlMenu GAME_PTR said; /* the menu last spoken for */
+    static int saidCursor, named;
+    A11yBtlMenu GAME_PTR m = btl_menu_shown();
+    char text[256];
+    int i, pos = 0, count = 0;
+
+    if (m == NULL) {
+        said = NULL;
+        named = 0;
+        return;
+    }
+    if (btl_menu_page(m)) {
+        said = m; /* (back from it, the item is said again) */
+        return;
+    }
+    if (m->state != BTL_MENU_STATE_ACTIVE || m->cursor < 0 || m->cursor >= m->count) {
+        return;
+    }
+    if (!named) {
+        heading(gPauseMenuWhich ? (sEs ? "Fin de la pelea" : "Fight over") : (sEs ? "Pausa" : "Pause"));
+        named = 1;
+    }
+    if (m != said || m->cursor != saidCursor) {
+        for (i = 0; i < m->count; i++) { /* (counted among the items the cursor stops on) */
+            if (!m->items[i].disabled) {
+                pos += i < m->cursor;
+                count++;
+            }
+        }
+        btl_menu_item(text, sizeof(text), m, m->cursor);
+        say_item(text, pos, count, follow());
+        said = m;
+        saidCursor = m->cursor;
+    }
+}
+
 /* ---- the voices, and the text on screens without a reader of their own ---- */
 
 /* include/battle/battle.h: BattleWork; `running` is 1 between Battle_Main's entry and exit (src/battle/battle.c). */
 extern struct { char unk0[0x19F8]; int running; } gBattleWork;
+
+/* include/battle/hud_a.h: Hud, only its visibility bits. The fight shows the gauges from its "ready" state to the
+   finish (src/battle/btl_seq.c, BtlSeqReady_Enter and the finish's Hud_ShowGauges(0)). */
+typedef struct {
+    char unk0[0x30];
+    uint32_t flags; /* 0x30: HUD_SHOW_* */
+} A11yHud;
+extern A11yHud GAME_PTR gHud; /* allocated by each battle and never set back to NULL */
+#define HUD_SHOW_GAUGES 0x01
+
+/* 1: a fight is on, with its gauges on screen. */
+static int fighting(void) {
+    A11yHud GAME_PTR h = gHud;
+
+    return gBattleWork.running && h != NULL && (h->flags & HUD_SHOW_GAUGES);
+}
 
 /* include/sys/file.h: AdxPlayer, one per channel (include/sys/adx.h); `adxt` is the port's player
    (gs/snd_adx.c, ADXT_Create). */
@@ -810,6 +3058,7 @@ static int sOn;                  /* set by the first blank with the speaker on *
 static int sBlank;               /* blanks counted since then */
 static int sVoiceBlank = -1000;  /* the blank the last voice with a shown line started in */
 static int sMenuVoices = 100;    /* bt3_settings.txt a11y_menu_voices, percent */
+static int sFightVoices = 100;   /* bt3_settings.txt a11y_fight_voices, percent (default: a11y_menu_voices) */
 
 /* gs/snd_adx.c, ADXT_StartAfs: the game started a stream (path: its file). */
 void PortA11y_StreamStart(const char *path) {
@@ -830,16 +3079,17 @@ void PortA11y_StreamStart(const char *path) {
 }
 
 /* gs/a11y.c, PortA11y_StreamGain (for gs/snd_adx.c, apply_volume): the percent of the game's own volume one of its
-   players gets, or -1 to leave it alone. Outside a fight the two voice channels play at a11y_menu_voices percent, so
-   the screen reader can be heard over the guides. An int, not a gain: this file is built soft-float and gs/ is not,
-   so a float returned from here would not reach the caller (it would read another register). */
+   players gets, or -1 to leave it alone. The two voice channels play at a11y_menu_voices percent, so the screen
+   reader can be heard over the guides, and in a battle at a11y_fight_voices (the same unless set: the fighters'
+   voices do not jump up as the battle starts). An int, not a gain: this file is built soft-float and gs/ is not, so a
+   float returned from here would not reach the caller (it would read another register). */
 int PortA11y_VoicePercent(const void *player) {
-    if (!sOn || gBattleWork.running || player == NULL) {
+    if (!sOn || player == NULL) {
         return -1;
     }
     if (player == (const void *)gAdxPlayerTbl[ADX_CH_VOICE0].adxt ||
         player == (const void *)gAdxPlayerTbl[ADX_CH_VOICE1].adxt) {
-        return sMenuVoices;
+        return gBattleWork.running ? sFightVoices : sMenuVoices;
     }
     return -1;
 }
@@ -880,6 +3130,8 @@ static void msg_window(void) {
 
 /* Screens with no reader of their own, by mode (docs/systems/menu_overlay.md): the main menu's name for the first
    screen of a mode (item), or a short description. "Not read yet" where a choice is made that is not read. */
+#define MODE_TEAM_PICK 15 /* a team (UbTeamSel, not read yet) or one fighter (SoloSel, solo_select) */
+#define TEAM_SIZE (0x644 / 4) /* gProgress, in ints: fighters to choose there (menu_o.h) */
 static const struct {
     int mode, item;
     const char *text[2];
@@ -891,24 +3143,19 @@ static const struct {
     {10, -1, {"Save", "Guardar"}},
     {13, 1, {NULL, NULL}},
     {14, -1, {"Choose a mission", "Elige una misión"}},
-    {15, -1, {"Choose your fighters, not read yet", "Elige a tus luchadores, todavía sin lectura"}},
+    {MODE_TEAM_PICK, -1, {"Choose your fighters, not read yet", "Elige a tus luchadores, todavía sin lectura"}},
     {16, -1, {"Mission result", "Resultado de la misión"}},
     {17, -1, {"Survival", "Supervivencia"}},
-    {18, -1, {"Choose your fighter, not read yet", "Elige a tu luchador, todavía sin lectura"}},
     {19, -1, {"Survival result", "Resultado de supervivencia"}},
-    {20, -1, {"Sim Dragon", "Simulador Dragón"}},
-    {21, -1, {"Choose your fighter, not read yet", "Elige a tu luchador, todavía sin lectura"}},
-    {22, -1, {"Sim Dragon, the day", "Simulador Dragón, jornada"}},
+    {20, -1, {"Sim Dragon", "Sim Dragón"}},
+    {22, -1, {"Sim Dragon, the day", "Sim Dragón, jornada"}},
     {23, -1, {"Day result", "Resultado de la jornada"}},
-    {24, -1, {"Disc Fusion", "Fusión de discos"}},
-    {25, -1, {"Choose your fighter, not read yet", "Elige a tu luchador, todavía sin lectura"}},
+    {24, -1, {"Disc Fusion", "Fusión de disco"}},
     {26, -1, {"Ranking", "Clasificación"}},
     {27, -1, {"Result", "Resultado"}},
     {28, -1, {"Choose a course", "Elige un recorrido"}},
-    {29, -1, {"Choose your fighter, not read yet", "Elige a tu luchador, todavía sin lectura"}},
     {30, -1, {"Result", "Resultado"}},
     {33, 2, {NULL, NULL}},
-    {34, -1, {"Entry: choose your fighter, not read yet", "Inscripción: elige a tu luchador, todavía sin lectura"}},
     {35, -1, {"Tournament bracket", "Cuadro del torneo"}},
     {40, -1, {"Team select, not read yet", "Selección por equipos, todavía sin lectura"}},
     {44, 6, {NULL, NULL}},
@@ -921,6 +3168,7 @@ static const struct {
 #define MODE_DUEL_MENU 38
 #define MODE_DUEL_CHARSEL 39
 #define MODE_TRAIN_CHARSEL 45
+#define MODE_OPTION 62
 
 /* 1: the game set this mode as it left for a fight, whose result it shows after (the episode's, the mission's...):
    said when the fight is over, not before. */
@@ -933,6 +3181,9 @@ static int mode_text(char *out, int cap, int mode) {
     size_t i;
     int n;
 
+    if (mode == MODE_TEAM_PICK && gProgress != NULL && ((int GAME_PTR)gProgress)[TEAM_SIZE] < 2) {
+        return 0;
+    }
     for (i = 0; i < sizeof(kModeNames) / sizeof(kModeNames[0]); i++) {
         if (kModeNames[i].mode != mode) {
             continue;
@@ -975,17 +3226,27 @@ static void screen_change(void) {
 
 /* 1: one of the readers above has this screen (what it draws is not read again from the text). */
 static int own_screen(void) {
+    A11yBtlMenu GAME_PTR btl = btl_menu_shown();
     int m;
 
     if (gDialog != NULL && (gDialog->flags & DIALOG_FLAG_OPEN)) {
         return 1;
     }
+    if (btl != NULL) {
+        return !btl_menu_page(btl);
+    }
     if (gBattleWork.running || gProgress == NULL) {
         return 0;
     }
+    if (gSoloSel != NULL || gEntrySel != NULL || gUbMenu != NULL || gMisSel != NULL || gTourMenu != NULL ||
+        gDiscFusion != NULL || gTrain != NULL || gSurvSel != NULL || gSimTop != NULL ||
+        gBracket != NULL || gTeamSel != NULL || gReplayMenu != NULL ||
+        gCharRef != NULL || gShop != NULL) {
+        return 1;
+    }
     m = gProgress->mode;
     return m == MODE_TITLE || m == MODE_MAIN_MENU || m == MODE_DUEL_MENU || m == MODE_DUEL_CHARSEL ||
-           m == MODE_TRAIN_CHARSEL;
+           m == MODE_TRAIN_CHARSEL || m == MODE_OPTION || m == MODE_HIST_SEL || m == MODE_EPISODES;
 }
 
 /* The game's strings drawn lately (PortA11y_FontText), by their hash. */
@@ -1058,13 +3319,15 @@ void PortA11y_FontText(int kind, int arg, int flags) {
 
 /* The strings that showed up on a screen no reader has, in the order they were first drawn, once they have
    stayed TEXT_STABLE blanks: together as one message. Not the message window's line (msg_window) nor a line a
-   voice says. */
+   voice says. In a fight with no menu over it (the HUD's technique names), only noted in the log: the owner asked
+   for the gauges on request instead (fight_gauges). */
 static void shown_text(void) {
     A11yMsgWin GAME_PTR w = gMsgWin;
     uint32_t skip = w != NULL ? (uint32_t)(uintptr_t)w->str : 0;
     uint16_t buf[1025];
-    char text[A11Y_TEXT], line[A11Y_TEXT];
-    int idx[TEXT_SLOTS], n = 0, own = own_screen(), i, j, k, len, letters;
+    char text[A11Y_TEXT], line[A11Y_TEXT], note[A11Y_TEXT + 32];
+    int idx[TEXT_SLOTS], n = 0, own = own_screen(), quiet = !own && btl_menu_shown() == NULL && fighting(), i, j, k,
+        len, letters;
     A11yShown *e;
     const uint16_t *s;
     size_t used;
@@ -1109,9 +3372,76 @@ static void shown_text(void) {
             used += snprintf(text + used, sizeof(text) - used, "%s%s", used > 0 && strchr(".!?:", text[used - 1]) == NULL ? ". " : used > 0 ? " " : "", line);
         }
     }
-    if (text[0] != '\0') {
+    if (text[0] != '\0' && quiet) {
+        snprintf(note, sizeof(note), "in a fight, not said: %s", text);
+        PortA11y_Note(note);
+    } else if (text[0] != '\0') {
         PortA11y_Say(text, follow());
     }
+}
+
+/* ---- the fight's gauges, on request ---- */
+
+/* src/battle/btl_capi_b.c: the active member's gauges by object id, which is the side (docs/systems/fighter.md);
+   0 while there is no such fighter (they only read, and check gBtlChars, NULL outside a battle). */
+extern int BtlCharApi_GetHp(int objId), BtlCharApi_GetHpMax(int objId), BtlCharApi_GetKi(int objId),
+    BtlCharApi_GetBlast(int objId), BtlCharApi_GetBlastMax(int objId);
+extern int BtlSide_IsPoweredUp(int side), BtlSide_CountAlive(int side);
+extern int PortA11y_GaugesAsked(int fight); /* gs/a11y.c */
+
+#define GAUGE_HP_BAR 10000  /* docs/systems/hud.md: health per bar */
+#define GAUGE_KI_BAR 20000  /* ki per bar, five bars */
+#define GAUGE_KI_BARS 5
+#define GAUGE_BLAST 100000  /* blast per stock */
+
+/* `value` in units of `per`, with a decimal when it has one ("3,4"); at least 0,1 while above 0. */
+static void gauge_units(char *out, int cap, int value, int per) {
+    int tenths = value <= 0 ? 0 : (int)((int64_t)value * 10 / per);
+
+    if (value > 0 && tenths == 0) {
+        tenths = 1;
+    }
+    if (tenths % 10 == 0) {
+        snprintf(out, cap, "%d", tenths / 10);
+    } else {
+        snprintf(out, cap, "%d%c%d", tenths / 10, sEs ? ',' : '.', tenths % 10);
+    }
+}
+
+/* The gauges of the player asked for (F3 / F4, or the touchpad click in a fight: gs/a11y.c), as the HUD shows them:
+   health and ki in bars, the blast stock, the powered-up mode and how many of a team are still up. */
+static void fight_gauges(void) {
+    static int shown;
+    int fight = fighting(), ask = PortA11y_GaugesAsked(fight && btl_menu_shown() == NULL), side = ask - 1, alive;
+    char hp[16], hpMax[16], ki[16], text[256];
+    size_t n;
+
+    if (fight != shown) {
+        shown = fight;
+        PortA11y_Note(fight ? "gauges on screen" : "gauges gone");
+    }
+    if (ask == 0) {
+        return;
+    }
+    if (!fight) {
+        PortA11y_Note("gauges asked for outside a fight");
+        return;
+    }
+    gauge_units(hp, sizeof(hp), BtlCharApi_GetHp(side), GAUGE_HP_BAR);
+    gauge_units(hpMax, sizeof(hpMax), BtlCharApi_GetHpMax(side), GAUGE_HP_BAR);
+    gauge_units(ki, sizeof(ki), BtlCharApi_GetKi(side), GAUGE_KI_BAR);
+    n = (size_t)snprintf(text, sizeof(text),
+                         sEs ? "Jugador %d: vida %s de %s barras, ki %s de %d, blast %d de %d"
+                             : "Player %d: health %s of %s bars, ki %s of %d, blast %d of %d",
+                         side + 1, hp, hpMax, ki, GAUGE_KI_BARS, BtlCharApi_GetBlast(side) / GAUGE_BLAST,
+                         BtlCharApi_GetBlastMax(side) / GAUGE_BLAST);
+    if (BtlSide_IsPoweredUp(side) && n < sizeof(text)) {
+        n += (size_t)snprintf(text + n, sizeof(text) - n, sEs ? ", en máximo poder" : ", max power");
+    }
+    if ((alive = BtlSide_CountAlive(side)) > 1 && n < sizeof(text)) {
+        snprintf(text + n, sizeof(text) - n, sEs ? ", %d luchadores en pie" : ", %d fighters still up", alive);
+    }
+    PortA11y_Say(text, A11Y_INTERRUPT);
 }
 
 /* Once per blank (plat_stub.c: Port_VBlank). */
@@ -1125,6 +3455,8 @@ void PortA11y_GameTick(void) {
         sOn = 1;
         v = Port_Setting("a11y_menu_voices", 50);
         sMenuVoices = v < 0 ? 0 : v > 100 ? 100 : v;
+        v = Port_Setting("a11y_fight_voices", sMenuVoices);
+        sFightVoices = v < 0 ? 0 : v > 100 ? 100 : v;
     }
     sBlank++;
     sEs = PortA11y_Spanish();
@@ -1135,7 +3467,26 @@ void PortA11y_GameTick(void) {
         main_menu();
     }
     duel_menu();
+    options();
     char_select();
+    solo_select();
+    entry_select();
+    ub_menu();
+    mission_select();
+    tour_menu();
+    hist_select();
+    episode_list();
+    train_menu();
+    survival_select();
+    sim_top();
+    bracket();
+    team_select();
+    replay_menu();
+    char_ref();
+    shop();
+    disc_fusion();
+    btl_menu();
     msg_window();
     shown_text();
+    fight_gauges();
 }

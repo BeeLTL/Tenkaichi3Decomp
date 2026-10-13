@@ -12,7 +12,9 @@
  *
  *   bt3_settings.txt  a11y=0            off, even with the library there
  *                     a11y_key_repeat   the repeat key, an SDL scancode (default F2); the controller's touchpad
- *                                       click repeats too
+ *                                       click repeats too, except in a fight
+ *                     a11y_key_gauges1  the keys that say player 1's and player 2's gauges in a fight (default F3
+ *                     a11y_key_gauges2  and F4); the touchpad click says them too, by the half it is clicked on
  *                     a11y_log=1        the log below, into a11y_log.txt in the program's folder (for a report)
  *   $BT3_A11Y_LOG=<file>                writes what is said, one line each with the blank (tests without a screen
  *                                       reader: the headless build has no library), and notes on what changed on
@@ -152,8 +154,12 @@ static PrismBackend *choose_backend(PrismContext *ctx) {
 /* ---- the speaker ---- */
 
 static volatile int sOn; /* set once by the game's thread before the speaker starts; read by the render thread */
-static int sSpanish, sRepeatKey;
+static int sSpanish, sRepeatKey, sGaugeKey[2];
 static int sFrame; /* blanks since the start (only for the log) */
+static SDL_AtomicInt sAsk;   /* the gauges asked for and not said yet: 1 + the player's side, 0 none */
+static SDL_AtomicInt sFight; /* 1 while a fight is on with no menu over it (a11y_game.c says so every blank) */
+static float sTouchX = -1;   /* where a finger last touched the controller's touchpad, 0 left to 1 right (render
+                                thread only; -1: none yet) */
 static FILE *sLog;
 static SDL_Mutex *sLock;
 static SDL_Condition *sWake;
@@ -328,6 +334,59 @@ static int spanish_line(char *out, int cap, int n) {
     return n;
 }
 
+/* In Spanish, the names the player's mod spells otherwise (the owner's choice) and the mod's abbreviations written
+   out, as whole words. `dot`: a period right after the match belongs to the abbreviation and goes too. */
+static const struct {
+    const char *from, *to;
+    int dot;
+} kOwnNames[] = {
+    {"Célula", "Cell", 0},
+    {"Shenron", "Shenlon", 0},
+    {"Aleator", "Aleatorio", 1},
+    {"Personaj", "Personaje", 1},
+    {"Volver a selecc. person", "Volver a la selección de personajes", 1},
+    {"Volver menú princip", "Volver al menú principal", 1},
+    {"Ver datos repet", "Ver datos de repetición", 1},
+    {"Guar. datos rep", "Guardar datos de repetición", 1},
+};
+
+/* A byte of a word: an ASCII letter or any byte of a letter outside ASCII. */
+static int word_byte(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (uint8_t)c >= 0x80;
+}
+
+/* kOwnNames on `out` (n bytes, room for cap with the terminator); returns the new length. A replacement that does not
+   fit is left out. */
+static int own_names(char *out, int n, int cap) {
+    size_t k, from, to;
+    char *p;
+
+    if (!sSpanish || cap <= 0) {
+        return n;
+    }
+    for (k = 0; k < sizeof(kOwnNames) / sizeof(kOwnNames[0]); k++) {
+        to = strlen(kOwnNames[k].to);
+        for (p = strstr(out, kOwnNames[k].from); p != NULL; p = strstr(p, kOwnNames[k].from)) {
+            from = strlen(kOwnNames[k].from);
+            if ((p > out && word_byte(p[-1])) || word_byte(p[from])) {
+                p++;
+                continue;
+            }
+            if (kOwnNames[k].dot && p[from] == '.') {
+                from++;
+            }
+            if (n + (int)to - (int)from >= cap) {
+                break;
+            }
+            memmove(p + to, p + from, n - (size_t)(p - out) - from + 1);
+            memcpy(p, kOwnNames[k].to, to);
+            n += (int)to - (int)from;
+            p += to;
+        }
+    }
+    return n;
+}
+
 static void start(void) {
     const char *lang = getenv("BT3_A11Y_LANG"), *base;
     char path[1024];
@@ -359,6 +418,8 @@ static void start(void) {
         }
     }
     sRepeatKey = Port_Setting("a11y_key_repeat", SDL_SCANCODE_F2);
+    sGaugeKey[0] = Port_Setting("a11y_key_gauges1", SDL_SCANCODE_F3);
+    sGaugeKey[1] = Port_Setting("a11y_key_gauges2", SDL_SCANCODE_F4);
     sLock = SDL_CreateMutex();
     sWake = SDL_CreateCondition();
     if (sLock == NULL || sWake == NULL || SDL_CreateThread(speaker, "a11y", NULL) == NULL) {
@@ -433,16 +494,44 @@ void PortA11y_Repeat(void) {
     SDL_UnlockMutex(sLock);
 }
 
-/* The render thread's events (gs_gpu.c, gs_gl.c): the repeat key and the controller's touchpad click. Nothing is
-   taken from the game: neither is bound to a button of it. */
+/* The render thread's events (gs_gpu.c, gs_gl.c): the repeat key, the gauge keys and the controller's touchpad. Its
+   click repeats, but in a fight it asks for the gauges of the player on the half it was clicked (left: player 1),
+   which a11y_game.c says at the next blank. Nothing is taken from the game: none of them is bound to a button of it. */
 void PortA11y_Event(const SDL_Event *ev) {
+    char note[64];
+    int side;
+
     if (!sOn) {
         return;
     }
-    if ((ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat && (int)ev->key.scancode == sRepeatKey) ||
-        (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && ev->gbutton.button == SDL_GAMEPAD_BUTTON_TOUCHPAD)) {
-        PortA11y_Repeat();
+    if (ev->type == SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN || ev->type == SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION) {
+        if (sTouchX < 0) {
+            PortA11y_Note("touchpad: a finger is seen");
+        }
+        sTouchX = ev->gtouchpad.x;
+    } else if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat) {
+        if ((int)ev->key.scancode == sRepeatKey) {
+            PortA11y_Repeat();
+        } else if ((int)ev->key.scancode == sGaugeKey[0] || (int)ev->key.scancode == sGaugeKey[1]) {
+            SDL_SetAtomicInt(&sAsk, (int)ev->key.scancode == sGaugeKey[0] ? 1 : 2);
+        }
+    } else if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && ev->gbutton.button == SDL_GAMEPAD_BUTTON_TOUCHPAD) {
+        side = sTouchX >= 0.5f ? 1 : 0;
+        snprintf(note, sizeof(note), "touchpad click at %d%%", sTouchX < 0 ? -1 : (int)(sTouchX * 100));
+        PortA11y_Note(note);
+        if (SDL_GetAtomicInt(&sFight)) {
+            SDL_SetAtomicInt(&sAsk, 1 + side);
+        } else {
+            PortA11y_Repeat();
+        }
     }
+}
+
+/* For a11y_game.c, once per blank: whether a fight is on with no menu over it (the touchpad click asks for the gauges
+   then), and the gauges asked for since the last call (1 + the player's side, 0 none). */
+int PortA11y_GaugesAsked(int fight) {
+    SDL_SetAtomicInt(&sFight, fight);
+    return SDL_SetAtomicInt(&sAsk, 0);
 }
 
 /* One of the game's strings (UTF-16 in the machine's order, U+FEFF first, '\n' between lines) as UTF-8 on one
@@ -491,5 +580,5 @@ int PortA11y_Utf8(char *out, int cap, const uint16_t *str) {
     if (cap > 0) {
         out[n] = '\0';
     }
-    return spanish_line(out, cap, n);
+    return own_names(out, spanish_line(out, cap, n), cap);
 }
