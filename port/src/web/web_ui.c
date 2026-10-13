@@ -491,6 +491,33 @@ static PadSeen pad_seen(const unsigned char *data) {
     return s;
 }
 
+/* ---- the page's touch controls (port/web/touch.js) --------------------------------------------------------------
+   They hold engine actions as held keys do: gs_input.c's Port_PadRead asks PortInput_VirtualActions where it reads the
+   keyboard (and not while the settings window is open), and turns them into the game's pad bits through the same
+   action table, before "Square counts as a direction". The page sets them on every change (Bt3Ui_TouchSet); they play
+   as player 1. */
+#define TOUCH_SOCKET 0           /* the player the touch controls play as (player 1) */
+#define TOUCH_STICK_NONE (-1)    /* no on-screen stick held */
+#define TOUCH_STICK_MAX 0xFF     /* a stick axis: 0 (up / left) .. 0x80 (centre) .. 0xFF (down / right) */
+static uint32_t sTouchActions;
+static int sTouchLx = TOUCH_STICK_NONE, sTouchLy = TOUCH_STICK_NONE;
+
+uint32_t PortInput_VirtualActions(int socket, int *lx, int *ly) {
+    if (socket != TOUCH_SOCKET) {
+        return 0;
+    }
+    *lx = sTouchLx;
+    *ly = sTouchLy;
+    return sTouchActions;
+}
+
+/* actions: bits in the engine's action order (Bt3Ui_ActionLabel); lx, ly: the on-screen stick (0..255), or -1 */
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_TouchSet(uint32_t actions, int lx, int ly) {
+    sTouchActions = actions & ((1u << PORT_ACTIONS) - 1u);
+    sTouchLx = lx < 0 ? TOUCH_STICK_NONE : lx > TOUCH_STICK_MAX ? TOUCH_STICK_MAX : lx;
+    sTouchLy = ly < 0 ? TOUCH_STICK_NONE : ly > TOUCH_STICK_MAX ? TOUCH_STICK_MAX : ly;
+}
+
 int __wrap_Port_PadRead(int socket, unsigned char *data) {
     int n;
     if (sInputTest && gPortOverlayOpen && socket >= 0 && socket < PAD_COUNT) {
