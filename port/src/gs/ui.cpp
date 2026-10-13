@@ -1854,8 +1854,9 @@ static bool frame_build(void) {
            window (the letterbox gs_gpu.c just blitted into). */
         float sx = (float)gUiPresentW / 512.0f;
         float sy = (float)gUiPresentH / 448.0f;
-        // Names belong to the game picture, behind settings and other UI windows.
-        ImDrawList *dl = ImGui::GetBackgroundDrawList();
+        // With a menu font every name is drawn here, so the names belong to the game picture, behind the settings
+        // and other windows. With "Original" only an added stage or song is, in front of everything as before.
+        ImDrawList *dl = MenuText_GetFont() != 0 ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
 
         if (nameOn && MenuText_GetFont() != 0) {
             const FontName *fn = font_name(NF_STAGE, PortStages_Name(gUiNameIdx));
