@@ -2159,3 +2159,141 @@ outline's copy of the ids 0.3 ms; the shadow buffer 1.1 ms. These are the effect
 tab already turns off. The driver's buffer compression is not the cost (`RADV_DEBUG=nodcc,nohiz` changes nothing
 or is slower). Two measurements were thrown away: skipping "every buffer but the first" and "buffer 070" doubled
 the speed only because the game shows buffers 000 and 070 in turn, so every other frame was not drawn at all.
+
+## Online: two games that never agreed again after the start (2026-10-13)
+
+**The report** (a player, 0.1.33): "if they got matched with a slower machine and they reached the character
+select first, they become de-synced and never re-sync".
+
+**How a session starts** (gs/net.c, gs/state.c, plat_stub.c, headless.c). Both sides connect (`net_start`: greeting,
+the host's pings and choices), then put the game back to the state of the program's first vertical blank
+(`Port_SessionPoll`, `sBoot`; or the program starts again, `relaunch`) and run from blank 1 as a session. Every
+blank goes through `Port_NetBeginTick`: with rollback (`roll_tick`) a copy never runs more than the rollback limit
+(8) ahead of the other's last known input, without it not at all. The start-up (first-run sequence, memory card
+check) runs unseen and not held to real time (`Port_NetWarp`) until `Port_Trace` sees the first-run flag clear
+(`Port_NetArrived`). File reads finish at once (plat_file.c), there is no loading thread, movies are not played and
+sound is counted in blanks, so real time enters nowhere: a slow machine only makes both copies' blanks come later.
+
+**The slow machine was not the cause, and could not be reproduced as one.** Test: two copies without a window over
+127.0.0.1, each in its own folder with its own saves, a session asked for at blank 200
+(`BT3_SESSION_TEST`) or from the start (`BT3_NET_HOST` / `BT3_NET_JOIN` with `BT3_NET_SESSION=1`), both players'
+buttons from one table of random presses from blank 1 (`BT3_NET_SCRIPT`), rollback 8, automatic delay, `BT3_HASH`
+logs compared blank by blank (the last line written for a blank counts), both copies showing the same view
+(`BT3_VIEW=0 BT3_HUD_SWAP=1`) so that the checksum of the whole state can be compared and not only the fight's
+values. One copy made slow with three new test variables (gs/net.c `Port_TestSlow`): `BT3_TEST_SLOW_READ=<ms>`
+(every file read, plat_file.c `ADXF_ReadNw`), `BT3_TEST_SLOW_START=<ms>` (between the connection and the first
+blank), `BT3_TEST_SLOW_BLANK=<ms>` (every blank). With 0.1.33's code, in real time (`BT3_PACED=1`):
+
+| | start-up over at blank (host / joiner) | after connecting | the two copies |
+|---|---|---|---|
+| both fast | 778 / 778 | 1.7 s / 1.7 s | whole state the same, 4,584 blanks |
+| joiner slow (read 20 ms, start 3 s, blank 3 ms) | 778 / 778 | 6.8 s / 7.0 s | the same, 4,273 blanks |
+| host slow (the same) | 778 / 778 | 7.0 s / 6.8 s | the same, 4,273 blanks |
+| joiner slow, the program started as the session | 778 / 778 | 6.8 s / 7.0 s | the same, 4,471 blanks |
+
+The fast copy is held by the slow one and both reach the character select on the same blank, a fifth of a second
+apart. Also the same: sessions asked for at different blanks of the two games (200 and 1500), and without real
+time.
+
+**The cause as found: "Skip logos" and "Skip intro video"** (0.1.32, the day before the report). `FirstRun_Main`
+(src/menu/menu_i_c.c) leaves out `Logo_ShowAll` and `Movie_PlayOpening` when the player's settings say so
+(`FIRSTRUN_SHOW`), and the first-run sequence is part of what a session computes from blank 1. With "Skip logos" on
+one side only, 0.1.33:
+
+| | start-up over at blank | after connecting | the two copies |
+|---|---|---|---|
+| host skips the logos | host 241, joiner 778 | host 0.9 s, joiner 9.7 s | whole state differs from blank 238; one copy is in a fight at blank 1497 and the other in the menus; they end on different fights |
+| joiner skips the logos | host 778, joiner 241 | host 9.7 s, joiner 0.9 s | the same, mirrored |
+| host skips the intro video | host 775, joiner 778 | 1.7 s both | whole state differs from blank 775 for good (the fight's values happened to stay the same in this run) |
+| both skip everything | the same blank | | the same, 4,860 blanks |
+
+The player with the setting is in the character select 537 blanks before the other and, being held to real time
+from there, keeps the other 8 to 9 seconds in its unseen start-up: "they reached the character select first", and
+the other machine looks slow. Nothing compared the two games, so they went on apart. ("Skip copyright page" is the
+title screen's, which a session does not enter: no difference found.)
+
+**The fix.** In a session the first-run sequence and the copyright page are the game's own whatever the settings
+say: `Port_NetFixedStart()` (gs/net.c) in `FIRSTRUN_SHOW` and in `Title_Run`'s loop (src/menu/menu_a_c.c). It costs
+nothing: that part of a session is not shown and not timed. Outside a session the settings work as before.
+
+**The check that was missing** (gs/net.c `sync_note` / `sync_check`, headless.c `Port_NetDigest`). Every 32 blanks
+each copy notes a number made of what must be the same on both whatever each player's settings, view and system
+are: the blank its start-up ended at (`sNetArrivedAt`, a variable of the game's state, so it goes back with a
+rollback), the menu mode, whether the first-run part still runs, and in a fight the sequence's state, the clock and
+both fighters' health and position (what `BT3_HASH` logs as the fight's values, without the generator). A note
+counts once every blank before it was run with the other player's real input (`sChecked`); the newest such note
+travels in every input packet (12 bytes more in the head); a copy that has its own sure note for the same blank
+compares. When they differ both sides log "the two games differ at blank N", show "The two games no longer agree
+(desync): the match has ended." and go back to their own game (the goodbye packet says why, so the side that
+hears it first says the same). `BT3_GS_VERBOSE` shows the count: about 470 comparisons per 600 blanks on a 120 ms
+line with 10% loss, 599 without rollback. Tests: `BT3_TEST_OWN_START=1` (this copy follows its skip settings in
+a session, as 0.1.33 did) with "Skip logos": ended on both sides at blanks 256 and 265 (the games part at 238);
+with "Skip intro video": at 800 and 802; `BT3_TEST_APART=<blank>` (a false value sent once): both end at 3002.
+No false alarm in any of the runs below.
+
+**After**, the same runs: start-up over at blank 778 on both sides and the whole state the same in every case:
+both fast (4,556 blanks), host / joiner skips the logos (4,528 / 4,556), host skips the intro (4,528), joiner slow
+(4,245), host slow (4,245), started as the session with a slow joiner (4,443), a slow host that skips everything
+(4,245). With each copy showing its own view (fight values compared): 60 ms each way and 10% loss (5,395 blanks),
+no rollback (8,700), no rollback against rollback (6,842), one copy at 21:9 (6,728), sessions asked for at
+different blanks (3,848), a slow joiner on an 80 ms line with loss (5,077), rollback 4 with delay 0 (6,417),
+seven sessions one after another in one run. The regression replay is unchanged.
+
+**The netcode's version is 4** (`NET_VERSION`; it was 3 since 0.1.15): both players need the new release. The
+game computed in a session is 0.1.33's when its skip settings are off, but a 0.1.32 / 0.1.33 with either on still
+computes another start-up, cannot be told from outside and sends no check values, so it is refused instead:
+through the service a room code answers "The host's game is a different version", quick-match queues are per
+version, and by address the host logs "a copy of another version tried to join" (checked both ways with the
+0.1.33 program: no match starts). `MIN_RELEASE` of the matchmaking service can be raised when the release is out.
+
+### Can a player's own sound files change a match? (the same day)
+
+Asked with voice mods in quick match in mind. What a session does: the game's logic asks only one thing of the
+sound, `ADXT_GetStat` of a stream player (src/sys/adx.c `Adx_GetStat` / `Adx_IsStopped`, behind `Voice_GetStat`,
+`Voice_IsStopped`, `Bgm_IsStopped`, `StreamSe_GetStat`, and the movie player). In a versus session that is: the
+fight's intro and win talk, which wait for each fighter's line to end (src/battle/btl_seq.c, one of the three
+waits has no time limit), `btl_char_get.c` (a fighter flag while his line plays), src/battle/view_b_c.c, and the duel
+/ character-select menus' announcer and guide lines (menu_g_c.c, menu_c_b.c and others). The sound effects
+(gs/snd_se.c) answer nothing to the game. In a session the answer comes from plat_sndstate.c (`gPortAdxView`,
+counted down once a blank by `Port_AdxTick`), and the count was set by gs/snd_adx.c `view_start` from the header
+of the file this copy found for that line (`adx_blanks` of `Port_FilePath`, where a file under `mods/` wins).
+
+- **The other voice language: no.** `voice_own_path` plays the other set's file, while the count is the default
+  set's file's on both sides. Checked (one copy with `BT3_NET_VOICE=alt`): fight values the same, 0.1.33 and now.
+- **A voice file of another length under `mods/` (or replaced in place, or missing): yes, until today.** Test: one
+  copy with a data folder whose `mods/pzs3us2/` holds two fighters' intro lines replaced by other lines (216
+  blanks for 105, 27 for 160). 0.1.33: the fight begins on another blank on that copy (fight values differ from
+  blank 2167) and the two play different fights without a word. With the check above alone: the match ends on
+  both sides at blank 2177 / 2179.
+- **Fixed**: in a match the count is the ORIGINAL disc's file's, from a table in the program
+  (port/src/plat_adxlen_tab.h, made by port/tools/make_adxlen.py with `adx_blanks`' formula: one number for each
+  of the third archive's 65,201 files and the two movie tracks, 72 of them looping, the longest line 1,048
+  blanks), whatever file the copy has there, also when it has none. What is heard is the player's own file; a
+  longer line is cut where the original ends, as the other voice set's already is. The log says once "a sound
+  stream here is not the original's length". Outside a match (`Port_NetActive` false) nothing changes: the
+  device's own progress, or with `BT3_SOUND_TICKS` / `BT3_SYNCTEST` the local header.
+- Checked: with the original files the table and the header agree for every stream started and the fight values
+  are those of the build before the table (3,769 blanks of fighting, the fight beginning at blank 2168 in both);
+  the modded copy against an original one: fight values the same for 8,441 blanks; a copy that LACKS the two
+  files: the same; mod, other voice set, 16:9, 60 ms and loss together: the same (5,558 blanks). The local sound
+  files were confirmed to be the disc's first (every size, 3,004 checksums against plat_verify_tab.h).
+
+### Not covered
+
+- No window, no sound device, one machine, Linux only: the Windows program was not built or run, and Linux against
+  Windows was not repeated (the check value is made of numbers the earlier Linux / Wine comparison found equal,
+  but that is the reason to believe it, not a test). A false alarm there would end matches: watch for the message.
+- Real controllers; the room-code / quick-match path through the service and the relay (not contacted).
+- The check sees what it is made of. Two copies whose menus differ in something else (a cursor) are only caught
+  when that reaches the mode, the fight's start or the fight; the generator's state is left out on purpose.
+- Other things of a player's own that reach the game were not audited one by one: `mods/` files that are not
+  sound (models, parameters: they change the fight and the check will end such a match), the picture's shape (one
+  run at 21:9 against 4:3: fight values the same), `Port_FxOff`, the HUD layout.
+- Seen and left: with random buttons the start-up ends at blank 777 / 778 / 779 for input delay 0 / 1 / 2 (the
+  logos take buttons); `sArrived` (picture on) is set from a blank that may still be run again, so a wrong guess
+  at that very moment can show a few blanks of the start-up. On a line of 60 ms each way the unseen start-up takes
+  5 to 8 seconds, because each copy may only run 8 blanks ahead of the other's input (1 to 2.5 s on a local
+  line): a black wait, not a disagreement. If `net_start`'s exchange of the host's choices times out (3 s / 5 s)
+  the two sides can start with different input delays; the check now ends such a match, the cause is not fixed.
+- The connecting screen of pull request #40 was not taken: nothing here makes the wait before the two games
+  start longer.
