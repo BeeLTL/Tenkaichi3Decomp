@@ -6,11 +6,11 @@ How to build and check the browser version. For what the build is made of, see [
 
 | Tool | Version | Notes |
 |---|---|---|
-| Emscripten | 6.0.12 (clang 24.0.0git) | `C:\project\Tenkaichi3Web\tools\emsdk`, put on the PATH by `env.sh` |
+| Emscripten | 6.0.12 (clang 24.0.0git) | emsdk: `emsdk install 6.0.12`, `emsdk activate 6.0.12`; on the PATH with its `upstream/bin` (llvm-objdump, llvm-nm) |
 | SDL3 port | 3.4.2 | fetched by Emscripten (`-sUSE_SDL=3`) |
 | emdawnwebgpu | v20260423.175430 | `--use-port=emdawnwebgpu` |
-| Python | 3.12.10 | venv `C:\project\Tenkaichi3Web\tools\venv`, with `libclang` 18.1.1 (for `ptr32.r2l`) |
-| naga CLI | 30.0.1 | built with Rust 1.99.0; the default stable toolchain is 1.93.1 |
+| Python | 3.12.10 | with `pip install libclang==18.1.1` (for `ptr32.r2l`) |
+| naga CLI | 30.0.1 | `cargo +1.99.0 install naga-cli --version 30.0.1 --locked`; found on the PATH, in Cargo's `bin`, or named by `BT3_NAGA` |
 | Node.js | 24.19.0 | tests |
 | Chrome | 154.0.8037.98 | tests (headless via CDP) |
 
@@ -18,11 +18,7 @@ Python must load libclang from a short path. A very long working-directory path 
 
 ## 2. Build
 
-Run from the repository root in Git Bash:
-
-```bash
-source /c/project/Tenkaichi3Web/env.sh
-```
+Run from the repository root (on Windows in Git Bash), with Emscripten's environment loaded (`source <emsdk>/emsdk_env.sh`). On the development machine one script does that and the rest (`env.sh`, outside the repository).
 
 ```bash
 python port/tools/wasm_build.py game
@@ -67,7 +63,7 @@ python port/tools/extract_disc.py bt3.iso gamedata
 ```
 
 ```bash
-python port/web/devserver.py --port 8080 --mount gamedata=C:/project/Tenkaichi3Web/gamedata
+python port/web/devserver.py --port 8080 --mount gamedata=<path to gamedata>
 ```
 
 Then open `http://127.0.0.1:8080/index.html`.

@@ -8,7 +8,7 @@ The translator is naga, the shader compiler of the wgpu project (https://github.
         RUSTUP_HOME=<tools>/rust/rustup CARGO_HOME=<tools>/rust/cargo
         rustup-init.exe -y --no-modify-path --profile minimal --default-toolchain 1.99.0
         cargo +1.99.0 install naga-cli --version 30.0.1 --locked
-    (<tools> = C:/project/Tenkaichi3Web/tools on the development machine; BT3_NAGA names another naga executable.)
+    (<tools>: any folder. The naga used: BT3_NAGA if set, else naga on the PATH, else <cargo home>/bin/naga.)
 Fragment shaders are translated with SEPARATE_SAMPLERS defined: WGSL has no combined texture + sampler, and naga's
 GLSL frontend does not accept `uniform sampler2D`; the shaders declare a texture at binding 2k and its sampler at
 2k + 1 instead under that switch (see their headers). And with NO_DEPTH_QUALIFIER: naga does not accept
@@ -21,13 +21,13 @@ gsnz.frag is gs.frag with NO_FRAG_DEPTH (without its own depth output; key bit 2
 Output: port/build/gen_wasm/wgsl/<shader>.wgsl and port/build/gen_wasm/wgsl_shaders.h (one NUL-terminated
 `static const char k<Name><Stage>Wgsl[]` per shader, the naming of shaders.h).
 Usage: python port/tools/wasm_shaders.py"""
-import os, pathlib, subprocess, sys
+import os, pathlib, shutil, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHADERS = ROOT / "port/src/gs/shaders"
 GEN = ROOT / "port/build/gen_wasm"
 NAGA_VERSION = "30.0.1"
-DEFAULT_NAGA = pathlib.Path("C:/project/Tenkaichi3Web/tools/rust/cargo/bin/naga.exe")
+DEFAULT_NAGA = pathlib.Path(shutil.which("naga") or pathlib.Path(os.environ.get("CARGO_HOME", pathlib.Path.home() / ".cargo")) / "bin" / ("naga.exe" if os.name == "nt" else "naga"))
 STAGE_DEFINES = {"vert": [], "frag": ["SEPARATE_SAMPLERS", "NO_DEPTH_QUALIFIER"]}
 # name -> (the shader it is made from, the define that makes it); the same as undefined.py's
 VARIANTS = {"gsnz.frag": ("gs.frag", "NO_FRAG_DEPTH")}
