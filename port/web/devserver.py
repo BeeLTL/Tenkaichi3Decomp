@@ -143,6 +143,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             fp.write(body + b"\n")
         self.send_error_text(200, "ok\n")
 
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # the browser closing a connection (a reload, a closed tab, a read it no longer needs) is normal: not an error
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8080)
@@ -156,7 +165,7 @@ def main():
     for m in a.mount:
         prefix, folder = m.split("=", 1)
         Handler.mounts["/" + prefix.strip("/")] = pathlib.Path(folder)
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    srv = Server(("127.0.0.1", a.port), Handler)
     print(f"serving {Handler.root} on http://127.0.0.1:{a.port}/ (isolation {'on' if Handler.isolation else 'off'})", flush=True)
     srv.serve_forever()
 

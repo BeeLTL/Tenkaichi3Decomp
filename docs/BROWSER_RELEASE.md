@@ -1,8 +1,9 @@
-# Tenkaichi3Decomp in the browser: release web-0.1.33.2
+# Tenkaichi3Decomp in the browser: release web-0.1.33.3
 
 *Dragon Ball Z: Budokai Tenkaichi 3* (PlayStation 2, USA release, SLUS-21678) in your web browser: the decompiled game's code compiled to WebAssembly, running in a web page on your own computer.
 - Based on upstream Tenkaichi3Decomp **0.1.33**. Source: [BeeLTL/Tenkaichi3Decomp](https://github.com/BeeLTL/Tenkaichi3Decomp), branch `browser-port`.
-- **A preview:** tested in Chrome on Windows 11; controllers and touch with simulated devices only.
+- Tested in Chrome on Windows 11, from the downloaded package: unpacking a disc, `play.py`, boot, a fight, the settings. Controllers and touch were tested with simulated devices only.
+- Since web-0.1.33.2: the server no longer prints error messages when the browser closes a connection (a reload or a closed tab).
 
 > **The game's data is not included.** You need your own copy of the game's disc. The package contains only program code; the game's data tables are built empty and filled from your disc when the game starts. Do not share the extracted data, and do not put it on a public server.
 
