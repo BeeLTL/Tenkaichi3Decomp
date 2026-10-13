@@ -19,6 +19,8 @@ typedef struct PortVideo {
     int vsync;       /* 1 = a picture waits for the display's refresh (no tearing where the driver has no other way) */
     int frameSkip;   /* 1 = a tick's picture is left out when the machine is behind, instead of the game slowing down */
     int hudLayout;   /* a fight's HUD in a wide picture: 0 at the edges, 1 at the edges with long health bars, 2 in the middle as in 4:3 */
+    int menuFont;    /* 0 Original (default), then entries in the generated font catalog */
+    int textFont;    /* separate font for dialogue and other shared Font_Print text */
     int smooth2d;    /* "2D filtering": 0 sharp (a PS2 pixel is a block), 1 smooth (sampled per output pixel) */
 } PortVideo;
 
@@ -52,6 +54,21 @@ int *PortInput_OverlayPad(void);       /* the controller button that does (-1 = 
 int PortInput_Hotkey(const SDL_Event *ev); /* 1 = the event opens or closes the settings window */
 void PortInput_Swallow(void);           /* the controller buttons held now are not the game's until they are let go */
 void PortInput_ResetDefaults(int player);
+#define PORT_DEADZONE_MAX 90   /* percent */
+#define PORT_TRIGGER_AT 12000  /* of 32767: from here a trigger counts as pressed */
+int *PortInput_Deadzone(int player);  /* [2] left, right stick: -1 = the game's own (per axis), 0..PORT_DEADZONE_MAX = a round one, percent */
+int *PortInput_Vibration(int player); /* [2] on (0 / 1), strength (0..100 percent) */
+void PortInput_VibrationTest(int player); /* half a second of both motors */
+typedef struct PortStickView { /* [0] the left stick / trigger, [1] the right */
+    int connected, canVibrate;
+    float raw[2][2];            /* x, y as the controller gives them: -1..1, + = right / down */
+    unsigned char bytes[2][2];  /* the pad's bytes the game is given for them */
+    float game[2][2];           /* what the game makes of those (Pad_Update) */
+    int dir[2];                 /* the direction the game takes the stick for: 0 none, 1 up, 2 down, 3 left, 4 right */
+    float trigger[2];           /* 0..1 */
+    int triggerHeld[2];
+} PortStickView;
+void PortInput_StickView(int player, PortStickView *out);
 void PortInput_Save(void);
 extern int gPortOverlayOpen;   /* the settings window is open: neither keyboard nor controller reaches the game */
 extern int gPortInputCapture;  /* it is waiting for a key or button to bind: nothing reaches the game */

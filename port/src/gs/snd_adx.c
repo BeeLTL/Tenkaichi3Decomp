@@ -63,6 +63,7 @@ typedef struct PortAdxView { int stat, paused, left, vol, pan[2]; char path[256]
 extern int gPortAdxCount;
 extern PortAdxView gPortAdxView[MAX_PLAYERS];
 
+extern int Port_NetActive(void); /* net.c */
 static int by_ticks(void) {
     extern int Port_NetSession(void); /* net.c */
     static int on = -1;
@@ -102,12 +103,52 @@ static int adx_blanks(const char *path) {
     return rate == 0 ? 0 : (int)(((uint64_t)total * 60000 + (uint64_t)rate * 1001 - 1) / ((uint64_t)rate * 1001)) + 1;
 }
 
-static void view_start(Player *p, const char *path) {
+/* How long a stream of the ORIGINAL disc lasts, by its place in the data (plat_adxlen_tab.h); 0 when the table does
+   not know the file. */
+#include "../plat_adxlen_tab.h"
+static int disc_blanks(const char *path) {
+    const char *at = strstr(path, "pzs3us2/"), *name;
+    int fid, i;
+
+    if (at != NULL && sscanf(at + 8, "%d.bin", &fid) == 1 && strchr(at + 8, '/') == NULL) {
+        return fid >= 0 && fid < ADXLEN_COUNT ? kAdxLen[fid] : 0;
+    }
+    name = strrchr(path, '/');
+    name = name != NULL ? name + 1 : path;
+    for (i = 0; i < (int)(sizeof(kAdxLenLoose) / sizeof(kAdxLenLoose[0])); i++) {
+        if (strcmp(name, kAdxLenLoose[i].name) == 0 && strstr(path, "disc/DATA/") != NULL) {
+            return kAdxLenLoose[i].blanks;
+        }
+    }
+    return 0;
+}
+
+/* What the game is told about a stream it starts: playing, and for how many blanks. `found`: the file is there.
+   In an online match the length is the original disc's file's, from the table, whatever file this copy has in
+   that place: the game waits for voice lines to end (the fight's intro and win talk, src/battle/btl_seq.c; the
+   menus' guides), and a player's own sound files (a voice mod under mods/, a replaced file, a missing one) must
+   not make their copy wait longer or shorter than the other's. With "Skip logos" fixed this was the other way two
+   copies came apart: one voice line of another length on one side and the fight began on another blank
+   (2026-10-13). What is HEARD is the player's own file, as long as it lasts. Outside a match nothing changes. */
+static void view_start(Player *p, const char *path, int found) {
     PortAdxView *v = &gPortAdxView[p - sPlayers];
-    int blanks = adx_blanks(path);
+    int own = found ? adx_blanks(path) : 0, blanks = own;
+
+    if (by_ticks() && Port_NetActive() && disc_blanks(path) != 0) {
+        blanks = disc_blanks(path);
+        if (blanks != own) {
+            static int said;
+            if (!said++) {
+                fprintf(stderr, "bt3: net: a sound stream here is not the original's length (%d blanks, the original %d): the match counts with the original's\n", own, blanks);
+            }
+        }
+    }
     v->stat = blanks != 0 ? ADXT_STAT_PLAYING : ADXT_STAT_STOP;
     v->left = blanks;
     snprintf(v->path, sizeof(v->path), "%s", path);
+    if (getenv("BT3_SND_VERBOSE") != NULL && by_ticks()) {
+        fprintf(stderr, "adx: player %d: %s counts as %d blanks (this copy's file: %d)\n", (int)(p - sPlayers), path, blanks, own);
+    }
 }
 static SDL_AudioDeviceID sDevice;
 static int sMono, sTried;
@@ -349,11 +390,13 @@ int gPortMusicPercent = 100, gPortSePercent = 100, gPortVoicePercent = 100, gPor
    fitted to the speed, because the game counts its length in vertical blanks. */
 int gPortMusicFollows = -1; /* (-1: not read from the settings yet) */
 
+extern float PortA11y_StreamGain(const void *player); /* a11y.c: the voices are lower in the menus */
+
 static void apply_volume(Player *p) {
     if (p->stream != NULL) {
         int ch = (int)(p - sPlayers); /* (the game makes its six players in the order of include/sys/adx.h) */
         int percent = ch == 0 ? gPortMusicPercent : ch == 1 ? gPortStagePercent : ch == 4 || ch == 5 ? gPortVoicePercent : gPortSePercent;
-        SDL_SetAudioStreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)percent / 100.0f);
+        SDL_SetAudioStreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)percent / 100.0f * PortA11y_StreamGain(p));
     }
 }
 
@@ -524,18 +567,30 @@ void ADXT_SetSvrFreq(void *adxt, int freq) { (void)adxt; (void)freq; }
 void ADXT_StartAfs(void *adxt, int patid, int fid) {
     char path[512];
 
-    if (adxt != NULL && Port_FilePath(patid, fid, NULL, path, sizeof(path))) {
-        start(adxt, path);
-        view_start(adxt, path);
+    if (adxt != NULL) {
+        int found = Port_FilePath(patid, fid, NULL, path, sizeof(path));
+        if (found) {
+            extern void PortA11y_StreamStart(const char *path); /* a11y_game.c: a voice with its line shown as text */
+            start(adxt, path);
+            PortA11y_StreamStart(path);
+        }
+        if (found || (by_ticks() && Port_NetActive() && disc_blanks(path) != 0)) { /* (a match: counted even when this copy lacks the file) */
+            view_start(adxt, path, found);
+        }
     }
 }
 
 void ADXT_StartFname(void *adxt, char *fname) {
     char path[512];
 
-    if (adxt != NULL && Port_FilePath(0, 0, fname, path, sizeof(path))) {
-        start(adxt, path);
-        view_start(adxt, path);
+    if (adxt != NULL) {
+        int found = Port_FilePath(0, 0, fname, path, sizeof(path));
+        if (found) {
+            start(adxt, path);
+        }
+        if (found || (by_ticks() && Port_NetActive() && disc_blanks(path) != 0)) {
+            view_start(adxt, path, found);
+        }
     }
 }
 

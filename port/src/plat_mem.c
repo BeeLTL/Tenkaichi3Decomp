@@ -12,6 +12,7 @@
  *   0x70000000              the 16 KB scratchpad.
  */
 #include "port_host.h"
+#include "port_addr.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,14 @@
 #define HEAP_END 0x02000000u
 
 static uint32_t sHeapNext = HEAP_FIRST, sHeapEnd = HEAP_END;
+
+/* The 64-bit builds (the game's pointers 4 bytes wide, ptr32.py) keep the port's blocks for the game in a region of
+   their own (Port_LowAlloc); the 32-bit build uses the C library's. */
+#if defined(__x86_64__) || defined(__APPLE__)
+#define PORT_LOW_REGION 1
+#else
+#define PORT_LOW_REGION 0
+#endif
 
 /* How far the start got, for the crash report (plat_crash.c). */
 const char *volatile gPortStage = "starting";
@@ -134,6 +143,10 @@ int __wrap_main(int argc, char **argv) {
 
     sArgc = argc;
     sArgv = argv;
+    if (getenv("BT3_SIGN_TEST") != NULL) { /* testing the build key's signature (gs/net_match.c): prints and ends */
+        extern int Match_SignTest(void);
+        return Match_SignTest();
+    }
     if (getenv("BT3_CRASH_TEST") != NULL) { /* testing the crash report */
         *(volatile int *)(uintptr_t)8 = 0;
     }
@@ -186,6 +199,103 @@ static void map(uint32_t addr, uint32_t size, const char *what) {
 
 static void map_heap(void) {
     map(HEAP_BASE, HEAP_END - HEAP_BASE, "the game heap");
+}
+
+#elif defined(__APPLE__)
+/* -------------------------------------------------------------------------------------------------------- macOS
+   The same regions, in the window of the game's addresses (port_addr.h): each at W + its PS2 address. The program
+   itself starts 0x20000000 into the window (port/tools/link.py), its globals are game addresses like the rest.
+     - pages are 16 KB on Apple Silicon: a region starts on the page that holds its first address;
+     - mmap is given the address as a hint (no MAP_FIXED, which would replace whatever is there): macOS takes the
+       hint when the range is free, and anything else is reported;
+     - the game's main() runs on a stack in the window (the game stores addresses of its locals), on the main
+       thread.
+   The entry point of the program is __wrap_main (link.py: ld64 has no --wrap; the game's main() is called by
+   name). */
+#include <crt_externs.h>
+#include <mach-o/dyld.h>
+#include <spawn.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+/* The window's base for the game's code (port/tools/macwin/macwin.cpp loads it in every function). */
+void *Port_Window = (char *)&_mh_execute_header - 0x20000000u;
+
+/* The window starts on a 4 GB boundary (link.py places the program at 1 TB + 0x20000000), so that the low 32 bits of
+   any address in it ARE the game address, as on Linux, where the two are equal: the game passes addresses as
+   integers and integers as addresses through its function pointers (a task's argument is a `void *` to some and a
+   character number to others), and those keep their 4 bytes. The system moves programs by a random amount at
+   start (ASLR); when it has, the program starts itself again in the same process with that switched off, as a
+   debugger does. */
+#define _POSIX_SPAWN_DISABLE_ASLR 0x0100
+static void window_aligned(void) {
+    char path[4096];
+    uint32_t size = sizeof(path);
+    posix_spawnattr_t attr;
+
+    if ((PORT_WINDOW & 0xFFFFFFFFu) == 0) {
+        unsetenv("BT3_NO_ASLR");
+        return;
+    }
+    if (getenv("BT3_NO_ASLR") == NULL && _NSGetExecutablePath(path, &size) == 0 && posix_spawnattr_init(&attr) == 0) {
+        setenv("BT3_NO_ASLR", "1", 1);
+        posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETEXEC | _POSIX_SPAWN_DISABLE_ASLR);
+        posix_spawn(NULL, path, NULL, &attr, *_NSGetArgv(), *_NSGetEnviron()); /* (returns only on failure) */
+    }
+    fprintf(stderr, "bt3: the program was not loaded at the address it needs (window at %p) and could not be started again there\n",
+            (void *)PORT_WINDOW);
+    exit(4);
+}
+
+static void *map_at(uint32_t addr, uint32_t size) {
+    uintptr_t page = (uintptr_t)getpagesize(), at = (PORT_WINDOW + addr) & ~(page - 1);
+    size_t n = (size_t)((PORT_WINDOW + addr + size - at + page - 1) & ~(page - 1));
+    void *p = mmap((void *)at, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+
+    if (p != (void *)at) {
+        if (p != MAP_FAILED) {
+            munmap(p, n);
+        }
+        return NULL;
+    }
+    return p;
+}
+
+static void map(uint32_t addr, uint32_t size, const char *what) {
+    if (map_at(addr, size) == NULL) {
+        fprintf(stderr, "bt3: cannot map %s at window + 0x%08X\n", what, addr);
+        exit(2);
+    }
+}
+
+static void map_heap(void) {
+    map(HEAP_BASE, HEAP_END - HEAP_BASE, "the game heap");
+}
+
+#define STACK_BASE 0x02000000u
+#define STACK_SIZE 0x01000000u
+extern int main(int argc, char **argv);
+extern void Port_CallOnStack(void (*fn)(void), void *top);
+PORT_HOST static int sArgc = 0, sResult = 0; /* (the process's own arguments: an address on its stack, not game state) */
+PORT_HOST static char **sArgv = NULL;
+
+/* fn() with the stack pointer at `top`. The game runs on the main thread (Cocoa, and so SDL's windows and events,
+   work there only), on a stack in the window. */
+__asm__(".text\n.globl _Port_CallOnStack\n.p2align 2\n_Port_CallOnStack:\n"
+        "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    mov sp, x1\n    blr x0\n"
+        "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
+
+static void game_main(void) {
+    sResult = main(sArgc, sArgv);
+}
+
+int __wrap_main(int argc, char **argv) {
+    sArgc = argc;
+    sArgv = argv;
+    sGameStackTop = (uint8_t *)Port_Ptr(STACK_BASE + STACK_SIZE);
+    gPortStage = "the game is running (on its stack in the window)";
+    Port_CallOnStack(game_main, sGameStackTop);
+    return sResult;
 }
 
 #else
@@ -242,6 +352,10 @@ int __wrap_main(int argc, char **argv) {
 
     sArgc = argc;
     sArgv = argv;
+    if (getenv("BT3_SIGN_TEST") != NULL) { /* testing the build key's signature (gs/net_match.c): prints and ends */
+        extern int Match_SignTest(void);
+        return Match_SignTest();
+    }
     pthread_attr_init(&attr);
     pthread_attr_setstack(&attr, (void *)(uintptr_t)STACK_BASE, STACK_SIZE);
     if (pthread_create(&th, &attr, game_thread, NULL) != 0) {
@@ -328,6 +442,9 @@ static void Port_LoadGameData(void) {
 #else
 #ifdef _WIN32
     long n = (long)GetModuleFileNameA(NULL, exe, sizeof(exe) - 1);
+#elif defined(__APPLE__)
+    uint32_t exeSize = sizeof(exe) - 1;
+    long n = _NSGetExecutablePath(exe, &exeSize) == 0 ? (long)strlen(exe) : -1;
 #else
     long n = (long)readlink("/proc/self/exe", exe, sizeof(exe) - 1);
 #endif
@@ -419,7 +536,7 @@ static void Port_LoadGameData(void) {
             data_fail("damaged file (list of the game's data)", NULL);
         }
         from = src[r[1]] + r[2];
-        memcpy((void *)(uintptr_t)r[0], from, r[3]);
+        memcpy(Port_Ptr(r[0]), from, r[3]);
         for (k = 0; k < r[3]; k++) {
             hash = (hash ^ from[k]) * 0x100000001B3ull;
         }
@@ -432,7 +549,7 @@ static void Port_LoadGameData(void) {
     }
 }
 
-#if defined(__x86_64__)
+#if PORT_LOW_REGION
 /* (between the GS registers at 0x12000000 and the program at 0x20000000: see the note at STACK_BASE) */
 #define LOW_ARENA_BASE 0x13000000u
 #define LOW_ARENA_SIZE 0x0C000000u /* address space only: pages are taken as they are first used */
@@ -451,7 +568,7 @@ static volatile int sLowLock;
    blocks of Port_LowAlloc hold what the game was handed by address (file handles, sound buffers), and the
    allocator's own variables say which of them are in use. Also where the game thread's stack ends. */
 uint32_t Port_LowRegionSize(void) {
-#if defined(__x86_64__)
+#if PORT_LOW_REGION
     return LOW_ARENA_SIZE;
 #else
     return 0;
@@ -467,8 +584,8 @@ void Port_LowFree(void *addr);
    compiled with 32-bit pointers and must not be handed a host function's pointer result. 0: not available
    (the 32-bit program, whose blocks are the C library's and cannot be told from the heap's by address). */
 unsigned Port_GameBigAlloc(int size) {
-#if defined(__x86_64__)
-    return (unsigned)(uintptr_t)Port_LowAlloc((size_t)size);
+#if PORT_LOW_REGION
+    return Port_Addr(Port_LowAlloc((size_t)size));
 #else
     (void)size;
     return 0;
@@ -477,9 +594,9 @@ unsigned Port_GameBigAlloc(int size) {
 
 /* 1 if `addr` was such a block (it is given back); 0: it is the game heap's (Heap_Free goes on). */
 int Port_GameBigFree(unsigned addr) {
-#if defined(__x86_64__)
-    if (sLowArena != NULL && addr >= (unsigned)(uintptr_t)sLowArena && addr - (unsigned)(uintptr_t)sLowArena < LOW_ARENA_SIZE) {
-        Port_LowFree((void *)(uintptr_t)addr);
+#if PORT_LOW_REGION
+    if (sLowArena != NULL && addr >= Port_Addr(sLowArena) && addr - Port_Addr(sLowArena) < LOW_ARENA_SIZE) {
+        Port_LowFree(Port_Ptr(addr));
         return 1;
     }
 #else
@@ -490,7 +607,7 @@ int Port_GameBigFree(unsigned addr) {
 
 int Port_StateExtra(void **p, size_t *n, int max) {
     int k = 0;
-#if defined(__x86_64__)
+#if PORT_LOW_REGION
     if (max >= 4 && sLowArena != NULL) {
         p[k] = &sLowNext; n[k++] = sizeof(sLowNext);
         p[k] = sLowList; n[k++] = sizeof(sLowList);
@@ -503,7 +620,7 @@ int Port_StateExtra(void **p, size_t *n, int max) {
     return k;
 }
 uint8_t *Port_GameStackTop(void) {
-#if defined(__x86_64__)
+#if PORT_LOW_REGION
     return sGameStackTop;
 #else
     return NULL;
@@ -512,11 +629,11 @@ uint8_t *Port_GameStackTop(void) {
 
 /* Where the game's heap is in this process (at its PS2 address unless that was taken) and how large. */
 void Port_HeapRegion(uint8_t **base, uint32_t *size) {
-    *base = (uint8_t *)(uintptr_t)(sHeapEnd - (HEAP_END - HEAP_BASE));
+    *base = (uint8_t *)Port_Ptr(sHeapEnd - (HEAP_END - HEAP_BASE));
     *size = HEAP_END - HEAP_BASE;
 }
 
-#if defined(__x86_64__)
+#if PORT_LOW_REGION
 static void low_region_take(void);
 #endif
 __attribute__((constructor)) static void Port_MapMemory(void) {
@@ -539,10 +656,16 @@ __attribute__((constructor)) static void Port_MapMemory(void) {
         ExitProcess(4);
     }
 #endif
+#if defined(__APPLE__)
+    window_aligned();
+#endif
     gPortStage = "reading the game's programs from gamedata";
     Port_LoadGameData();
     gPortStage = "reserving the game's memory";
-#if defined(__x86_64__) && !defined(_WIN32)
+#if defined(__APPLE__)
+    map(STACK_BASE, STACK_SIZE, "the game thread's stack");
+    low_region_take(); /* the region of Port_LowAlloc, now (see there) */
+#elif defined(__x86_64__) && !defined(_WIN32)
     mallopt(M_MMAP_MAX, 0);
     mallopt(M_ARENA_MAX, 1);
     map(STACK_BASE, STACK_SIZE, "the game thread's stack");
@@ -567,13 +690,13 @@ void *Port_Malloc(uint32_t size) {
         exit(2);
     }
     sHeapNext = p + size;
-    return (void *)(uintptr_t)p;
+    return Port_Ptr(p);
 }
 
 /* Memory the port hands to the game by address (file handles, the "second processor's" memory): zeroed, and below
    4 GB in the 64-bit build, where the game keeps such an address in 4 bytes. The C library's malloc is not safe
    for this there: it moves to mappings far above 4 GB whenever the break area cannot grow. */
-#if defined(__x86_64__)
+#if PORT_LOW_REGION
 /* Takes the region of Port_LowAlloc. At the program's start (Port_MapMemory), before anything else can sit at its
    address and before any state is saved: a state restored to before the region existed would otherwise take it a
    second time, somewhere else. */
@@ -589,6 +712,12 @@ static void low_region_take(void) {
             exit(2);
         }
         sLowCommitted = sLowArena;
+#elif defined(__APPLE__)
+        sLowArena = map_at(LOW_ARENA_BASE, LOW_ARENA_SIZE); /* (pages are only taken as they are first used) */
+        if (sLowArena == NULL) {
+            fprintf(stderr, "bt3: the window has no room for the port's own blocks\n");
+            exit(2);
+        }
 #else
         sLowArena = mmap((void *)(uintptr_t)LOW_ARENA_BASE, LOW_ARENA_SIZE, PROT_READ | PROT_WRITE,
                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
@@ -606,7 +735,7 @@ static void low_region_take(void) {
 #endif
 
 void *Port_LowAlloc(size_t size) {
-#if defined(__x86_64__)
+#if PORT_LOW_REGION
     /* From one region at a fixed address, handed out in order, freed blocks reused by size (last freed first).
        The addresses end up in the game's memory (file handles, sound buffers); with the system choosing them they
        differed from run to run, and so did the game's state. This way they depend only on the order of the
@@ -665,7 +794,7 @@ void *Port_LowAlloc(size_t size) {
 }
 
 void Port_LowFree(void *addr) {
-#if defined(__x86_64__)
+#if PORT_LOW_REGION
     if (addr != NULL) {
         uint64_t *p = (uint64_t *)addr - 2, total = p[0];
         int i;

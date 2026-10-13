@@ -695,7 +695,9 @@ void TeamSel_Init(s32 section) {
            in the save or written to it. Not in an online session: both players must have the same list. */
         extern int Port_NetSession(void); /* port/src/gs/net.c */
         extern void Port_NameFontSheets(int stage, int song, int songLit);
-        s32 added = Port_NetSession() ? 0 : gPortSongCount;
+        s32 added;
+        PortSongs_Refresh(); /* songs converted from MP3 since the start join the list here (port/src/plat_songs.c) */
+        added = Port_NetSession() ? 0 : gPortSongCount;
         sPortSongsAdded = 0;
         Port_NameFontSheets((int)(u32)gTeamSel->tex[39], (int)(u32)gTeamSel->tex[19], (int)(u32)gTeamSel->tex[20]);
         if (added > 0) {

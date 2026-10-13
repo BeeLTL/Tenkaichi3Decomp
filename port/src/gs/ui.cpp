@@ -13,6 +13,7 @@
 #include "ui.h"
 #include "namefont.h"
 #include "../port_release.h"
+#include "menu_text.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -428,9 +429,25 @@ int Ui_QuitAsk(void) {
     return 1;
 }
 
+// The screen reader (a11y.c): it cannot see this window's question, which is drawn and not one of the game's screens,
+// so the question, the button under the keyboard's focus and the keys are said here. Nothing while it is off.
+extern "C" {
+void PortA11y_Say(const char *text, int flags); // flags 1: cuts what is being said
+const char *PortA11y_Label(const char *label);  // the label in the reader's language
+}
+
+static void say_quit_button(int which, int flags) {
+    char text[128], pos[32];
+    snprintf(pos, sizeof(pos), PortA11y_Label(", %d of %d"), which + 1, 2);
+    snprintf(text, sizeof(text), "%s%s", PortA11y_Label(which == 0 ? "Exit" : "Cancel"), pos);
+    PortA11y_Say(text, flags);
+}
+
 static void build_quit(void) {
+    static int said = -1; // the button last said: 0 Exit, 1 Cancel
     ImGuiIO &io = ImGui::GetIO();
     bool stay = sQuitNo;
+    int focus = -1;
 
     sQuitNo = false;
     if (!ImGui::IsPopupOpen("Exit game")) {
@@ -449,12 +466,21 @@ static void build_quit(void) {
         if (ImGui::Button("Exit", ImVec2(140.0f, 0.0f))) {
             exit(0);
         }
+        focus = ImGui::IsItemFocused() ? 0 : focus;
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(140.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
             stay = true;
         }
+        focus = ImGui::IsItemFocused() ? 1 : focus;
         if (ImGui::IsWindowAppearing()) {
             ImGui::SetItemDefaultFocus(); // (on Cancel: a second press of the same button does not close the game)
+            PortA11y_Say(PortA11y_Label(kAsk), 1);
+            say_quit_button(1, 0);
+            PortA11y_Say(PortA11y_Label("Left and right choose, Enter confirms, Escape goes back to the game"), 0);
+            said = 1;
+        } else if (focus >= 0 && focus != said) {
+            say_quit_button(focus, 1);
+            said = focus;
         }
         if (stay) {
             ImGui::CloseCurrentPopup();
@@ -464,6 +490,7 @@ static void build_quit(void) {
     if (stay) {
         sQuit = false;
         input_owner();
+        PortA11y_Say(PortA11y_Label("Back to the game"), 1);
     }
 }
 
@@ -1130,6 +1157,29 @@ static void misc_tab(void) {
 }
 
 static void ui_tab(PortVideo &v) {
+    if (ImGui::BeginCombo("Menu font", MenuText_FontName(v.menuFont))) {
+        for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, 0)) { continue; }
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), v.menuFont == i)) { v.menuFont = i; }
+            if (v.menuFont == i) { ImGui::SetItemDefaultFocus(); }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Original uses the game's sprites. Other fonts replace matching menu labels immediately.\nDecorative lettering keeps its original artwork.");
+    if (ImGui::BeginCombo("Dialogue / UI font", MenuText_FontName(v.textFont))) {
+        for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, 1)) { continue; }
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), v.textFont == i)) { v.textFont = i; }
+            if (v.textFont == i) { ImGui::SetItemDefaultFocus(); }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Replace the shared font used by dialogue, subtitles and ordinary UI text.\n"
+                          "Original keeps the game's glyphs. Text placement, colors, shadows and icons are preserved.");
     static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
     ImGui::Combo("HUD Style", &v.hudLayout, kHud, 3);
     ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
@@ -1239,6 +1289,114 @@ static void cheats_tab(void) {
     }
 }
 
+// The Controls tab's part for the sticks: each stick of the player's controller as it is now (the dot), its deadzone
+// (the shaded middle: a circle, or the game's own square), what the game is given for it (the ring, and in numbers),
+// the triggers, and the settings for these and for vibration. For seeing a stick that drifts and choosing a deadzone
+// that covers it.
+static void sticks_panel(int player) {
+    static const char *const kStick[2] = {"Left stick", "Right stick"}, *const kTrigger[2] = {"Left trigger", "Right trigger"};
+    static const char *const kDir[5] = {"", "up", "down", "left", "right"};
+    const float R = 42.0f, box = 2.0f * R + 8.0f;
+    const ImU32 colZone = ImGui::GetColorU32(ImGuiCol_Text, 0.22f);
+    const ImU32 colRaw = ImGui::GetColorU32(ImGuiCol_Text), colGame = ImGui::GetColorU32(ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
+    int *dead = PortInput_Deadzone(player), *vib = PortInput_Vibration(player);
+    PortStickView view;
+    char label[64];
+
+    PortInput_StickView(player, &view);
+    if (!ImGui::BeginTable("sticks", 2)) {
+        return;
+    }
+    float top = 0.0f;
+    for (int s = 0; s < 2; s++) {
+        ImGui::TableNextColumn();
+        if (s == 0) {
+            top = ImGui::GetCursorScreenPos().y;
+        } else { // (the second cell would start lower by the text offset of the first one's last line)
+            ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, top));
+        }
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        ImVec2 at = ImGui::GetCursorScreenPos(), c(at.x + box * 0.5f, at.y + box * 0.5f);
+        ImGui::Dummy(ImVec2(box, box));
+        dl->AddCircleFilled(c, R, ImGui::GetColorU32(ImGuiCol_FrameBg), 48);
+        if (dead[s] < 0) { // the game's own: each axis by itself, 50 of 127.5
+            float h = R * 50.0f / 127.5f;
+            dl->AddRectFilled(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), colZone);
+        } else if (dead[s] > 0) {
+            dl->AddCircleFilled(c, R * (float)dead[s] / 100.0f, colZone, 48);
+        }
+        dl->AddLine(ImVec2(c.x - R, c.y), ImVec2(c.x + R, c.y), ImGui::GetColorU32(ImGuiCol_Border));
+        dl->AddLine(ImVec2(c.x, c.y - R), ImVec2(c.x, c.y + R), ImGui::GetColorU32(ImGuiCol_Border));
+        dl->AddCircle(c, R, ImGui::GetColorU32(ImGuiCol_Border), 48);
+        if (view.connected) {
+            dl->AddCircle(ImVec2(c.x + view.game[s][0] * R, c.y + view.game[s][1] * R), 5.5f, colGame, 16, 1.5f);
+            dl->AddCircleFilled(ImVec2(c.x + view.raw[s][0] * R, c.y + view.raw[s][1] * R), 3.0f, colRaw, 12);
+        }
+        ImGui::SameLine();
+        ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, top));
+        ImGui::BeginGroup();
+        ImGui::AlignTextToFramePadding(); // (in both cells: the second one's lines start that much lower anyway)
+        if (view.connected) {
+            ImGui::Text(view.dir[s] != 0 ? "%s: %s" : "%s", kStick[s], kDir[view.dir[s]]);
+            ImGui::Text("stick  %+.2f %+.2f", view.raw[s][0], view.raw[s][1]);
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colGame), "game   %+.2f %+.2f", view.game[s][0], view.game[s][1]);
+        } else {
+            ImGui::TextUnformatted(kStick[s]);
+            ImGui::TextDisabled("no controller");
+            ImGui::TextDisabled(" ");
+        }
+        ImGui::SetNextItemWidth(100.0f);
+        snprintf(label, sizeof(label), "Deadzone##%d", s);
+        ImGui::SliderInt(label, &dead[s], -1, PORT_DEADZONE_MAX, dead[s] < 0 ? "Original" : "%d%%", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            PortInput_Save();
+        }
+        ImGui::SetItemTooltip("How far the stick has to be moved before the game is told anything (the shaded middle).\n"
+                              "Original: the game's own, 39%% for left / right and for up / down separately, a square.\n"
+                              "0%% to 90%%: a round one of that size instead; from its edge the value grows evenly\n"
+                              "to full at full tilt, and the stick counts as a direction half way between the two.\n"
+                              "The white dot is the stick, the ring what the game is given; after the stick's name,\n"
+                              "the direction the game takes it for. Choose a size that covers where the dot rests\n"
+                              "when the stick is let go.");
+        ImGui::EndGroup();
+    }
+    for (int s = 0; s < 2; s++) {
+        ImGui::TableNextColumn();
+        snprintf(label, sizeof(label), "%d%%%s", (int)(view.trigger[s] * 100.0f + 0.5f), view.triggerHeld[s] ? " pressed" : "");
+        ImGui::ProgressBar(view.trigger[s], ImVec2(144.0f, 0.0f), label);
+        ImGui::SetItemTooltip("A trigger counts as pressed from %d%% on. The game is told pressed or not, nothing between.",
+                              (PORT_TRIGGER_AT * 100 + 16383) / 32767);
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::TextUnformatted(kTrigger[s]);
+    }
+    ImGui::EndTable();
+    bool on = vib[0] != 0;
+    if (ImGui::Checkbox("Vibration", &on)) {
+        vib[0] = on;
+        PortInput_Save();
+    }
+    ImGui::SetItemTooltip("The game's own vibration (hits, clashes, charging), on this player's controller.\n"
+                          "The game's Options > Controller > Vibration has to be on as well: it is, unless you turned it off.\n"
+                          "The game gives none in a replay or for a side the computer plays.");
+    ImGui::BeginDisabled(!on);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::SliderInt("Strength", &vib[1], 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        PortInput_Save();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Test")) {
+        PortInput_VibrationTest(player);
+    }
+    ImGui::SetItemTooltip("Half a second of both motors at this strength.");
+    ImGui::EndDisabled();
+    if (view.connected && !view.canVibrate) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(this controller has none)");
+    }
+}
+
 static void controls_tab(void) {
     static int player;
     char label[96];
@@ -1275,10 +1433,14 @@ static void controls_tab(void) {
         PortInput_ResetDefaults(player);
         PortInput_Save();
     }
+    if (ImGui::CollapsingHeader("Sticks, triggers and vibration", ImGuiTreeNodeFlags_DefaultOpen)) {
+        sticks_panel(player);
+    }
     ImGui::TextDisabled("Choose a binding, then press the new key or button. Esc keeps it, Delete clears it;");
     ImGui::TextDisabled("with a controller, press nothing for five seconds to keep it.");
+    // (never lower than a few rows: in a small window the tab scrolls as a whole instead)
     if (ImGui::BeginTable("bindings", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV,
-                          ImVec2(0.0f, ImGui::GetContentRegionAvail().y))) {
+                          ImVec2(0.0f, ImGui::GetContentRegionAvail().y > 140.0f ? ImGui::GetContentRegionAvail().y : 140.0f))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Action");
         ImGui::TableSetupColumn("Keyboard");
@@ -1349,7 +1511,8 @@ static void build(void) {
         sPadTab = true;
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640.0f, 600.0f), ImGuiCond_Appearing);
+    // (760 high where the picture has the room: the Controls tab's sticks and its list of bindings together)
+    ImGui::SetNextWindowSize(ImVec2(640.0f, io.DisplaySize.y >= 800.0f ? 760.0f : 600.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Settings", &open, ImGuiWindowFlags_NoCollapse)) {
         {
             int latest = update_latest();
@@ -1537,7 +1700,7 @@ static void name_text(ImDrawList *dl, const char *text, float x, float y, float 
    and down a list). */
 struct FontName {
     SDL_GPUTexture *tex; // NULL: this name cannot be drawn that way (a character the disc's names do not have)
-    int style, w, h;
+    int style, w, h, choice, resolution;
     char text[64];
     bool used;
 };
@@ -1545,11 +1708,13 @@ static FontName sFontNames[12];
 static unsigned sFontNext;
 
 static const FontName *font_name(int style, const char *text) {
-    if (text == NULL || text[0] == '\0' || !NameFont_Ready()) { // (not ready: asked again next frame)
+    int choice = MenuText_GetFont();
+    int resolution = choice ? 4 : 1; // (a font's strip: 4 times the disc's, for a window larger than the game's picture)
+    if (text == NULL || text[0] == '\0' || (choice == 0 && !NameFont_Ready())) { // (not ready: asked again next frame)
         return NULL;
     }
     for (FontName &n : sFontNames) {
-        if (n.used && n.style == style && strncmp(n.text, text, sizeof(n.text) - 1) == 0) {
+        if (n.used && n.style == style && n.choice == choice && n.resolution == resolution && strncmp(n.text, text, sizeof(n.text) - 1) == 0) {
             return n.tex != NULL ? &n : NULL;
         }
     }
@@ -1562,13 +1727,22 @@ static const FontName *font_name(int style, const char *text) {
         }
     }
     n.tex = NULL;
+    n.w = n.h = 0;
     n.used = true;
     n.style = style;
+    n.choice = choice; n.resolution = resolution;
     SDL_strlcpy(n.text, text, sizeof(n.text));
-    unsigned char *pix = NameFont_Compose(style, n.text, &n.w, &n.h);
+    unsigned char *pix;
+    if (choice) {
+        pix = style == NF_STAGE ? MenuText_RenderStage(n.text, resolution, &n.w, &n.h) :
+                                  MenuText_RenderSong(n.text, style == NF_SONG_LIT, resolution, &n.w, &n.h);
+    } else {
+        pix = NameFont_Compose(style, n.text, &n.w, &n.h);
+    }
     if (pix != NULL) {
         n.tex = make_strip(pix, (size_t)n.w * n.h * 4, (uint32_t)n.w, (uint32_t)n.h, 1); // (frees pix)
     }
+    if (choice) { n.w /= resolution; n.h /= resolution; }
     return n.tex != NULL ? &n : NULL;
 }
 
@@ -1706,9 +1880,20 @@ static bool frame_build(void) {
            window (the letterbox gs_gpu.c just blitted into). */
         float sx = (float)gUiPresentW / 512.0f;
         float sy = (float)gUiPresentH / 448.0f;
-        ImDrawList *dl = ImGui::GetForegroundDrawList();
+        // With a menu font every name is drawn here, so the names belong to the game picture, behind the settings
+        // and other windows. With "Original" only an added stage or song is, in front of everything as before.
+        ImDrawList *dl = MenuText_GetFont() != 0 ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
 
-        if (nameOn && gUiNameIdx >= (int)sNameCount) { // no pre-rendered name for this one
+        if (nameOn && MenuText_GetFont() != 0) {
+            const FontName *fn = font_name(NF_STAGE, PortStages_Name(gUiNameIdx));
+            float x = (float)gUiPresentX + (float)gUiNameX * sx, y = (float)gUiPresentY + (float)gUiNameY * sy;
+            if (fn != NULL) {
+                float kx = (float)gUiNameW * sx / 384.0f, ky = (float)gUiNameH * sy / 48.0f;
+                font_draw(dl, fn, x - 64.0f * kx, y + (1.5f - 14.0f) * ky, kx, ky, true);
+            } else {
+                name_text(dl, PortStages_Name(gUiNameIdx), x, y, (float)gUiNameW * sx, (float)gUiNameH * sy, true);
+            }
+        } else if (nameOn && gUiNameIdx >= (int)sNameCount) { // no pre-rendered name for this one
             /* In the game's lettering if the disc's names have all its characters, else as plain text. The menu's
                rectangle is the strip image's (384x48, set 64 right and 14 down in the 512x64 row of the disc's own
                name picture); the lettering goes where that row is. The menu's movie draws the row a little below
@@ -1731,7 +1916,15 @@ static bool frame_build(void) {
                          ImVec2(0.0f, (float)gUiNameIdx / (float)sNameCount),
                          ImVec2(1.0f, (float)(gUiNameIdx + 1) / (float)sNameCount));
         }
-        if (songOn && gUiSongIdx >= (int)sSongCount) {
+        if (songOn && MenuText_GetFont() != 0) {
+            const FontName *fn = font_name(gUiSongLit ? NF_SONG_LIT : NF_SONG, PortSongs_Name(gUiSongIdx));
+            float x = (float)gUiPresentX + (float)gUiSongX * sx, y = (float)gUiPresentY + (float)gUiSongY * sy;
+            if (fn != NULL) {
+                font_draw(dl, fn, x, y, (float)gUiSongW * sx / 512.0f, (float)gUiSongH * sy / 32.0f, false);
+            } else {
+                name_text(dl, PortSongs_Name(gUiSongIdx), x, y, (float)gUiSongW * sx, (float)gUiSongH * sy, false);
+            }
+        } else if (songOn && gUiSongIdx >= (int)sSongCount) {
             // (the rectangle is the 512x32 row of the disc's song-name picture itself)
             const FontName *fn = font_name(gUiSongLit ? NF_SONG_LIT : NF_SONG, PortSongs_Name(gUiSongIdx));
             if (fn != NULL) {

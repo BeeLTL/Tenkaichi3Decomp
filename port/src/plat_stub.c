@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <time.h>
+#include "port_addr.h"
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -28,7 +29,7 @@ int sceSifFreeIopHeap(void *addr) { Port_LowFree(addr); return 0; }
 int sceSifQueryTotalFreeMemSize() { return 0x100000; }
 int sceSifQueryMaxFreeMemSize() { return 0x100000; }
 /* The bind is answered at once: sceSifClientData.serve (offset 0x24) becomes non-NULL. */
-int sceSifBindRpc(void *client, int id, int mode) { (void)id; (void)mode; *(uint32_t *)((uint8_t *)client + 0x24) = (uint32_t)(uintptr_t)client; /* a 4-byte pointer field of the game */ return 0; }
+int sceSifBindRpc(void *client, int id, int mode) { (void)id; (void)mode; *(uint32_t *)((uint8_t *)client + 0x24) = Port_Addr(client); /* a 4-byte pointer field of the game */ return 0; }
 int func_002B4AF0() { return 0; }      /* sceSifCheckStatRpc: never busy */
 /* sceSifCallRpc, sceSifSetDma, sceSdRemote: the sound effects, port/src/gs/snd_se.c */
 int sceSifDmaStat() { return -1; }     /* transfer finished */
@@ -253,6 +254,10 @@ void Port_VBlank(void) {
             }
         }
     }
+    {
+        extern void PortA11y_GameTick(void); /* a11y_game.c: what the screen reader says (off without its library) */
+        PortA11y_GameTick();
+    }
     {   /* BT3_PAD_TABLE=<file>: what each pad read during the blank that ends here, 36 bytes per blank (the input
            of a session by blank and by pad: gs/net.c plays one player's column of it for its tests) */
         PORT_HOST static FILE *table = NULL;
@@ -384,7 +389,17 @@ static int pad_read(int socket, unsigned char *data) {
     return 18;
 }
 int sceVibGetProfile() { return 0; }
-int sceVibSetActParam() { return 0; }
+/* The game's motor command for a port, sent every frame (Pad_SendActuator, src/sys/pad.c): two bytes, bit 0 = the
+   small motor, bits 1..7 = the large motor's power. To the player's controller (gs/gs_input.c). Only read here:
+   nothing of it goes back into the game. */
+int sceVibSetActParam(int socket, int profileSize, unsigned char *profile, int dataSize, unsigned char *data) {
+    extern void Port_PadVibrate(int socket, int small, int large);
+    (void)profileSize; (void)profile;
+    if (dataSize >= 1 && data != NULL) {
+        Port_PadVibrate(socket, data[0] & 1, data[0] >> 1);
+    }
+    return 0;
+}
 
 /* ---- MPEG movies: port/src/plat_movie.c ---- */
 
