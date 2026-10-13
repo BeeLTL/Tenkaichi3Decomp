@@ -11,12 +11,17 @@
  * failing those the `curl` program (BT3_MATCH_CURL=1 asks for the program). No game data goes that way.
  *
  * BT3_MATCH_URL=<address> names another Worker (one's own; see port/matchmaking/README.md).
+ *
+ * A program built with a build key (net_sign.c) signs every request to the Worker: three headers, X-BT3-Release,
+ * X-BT3-Time and X-BT3-Sign. One built without sends none of them. The request to GitHub (the update check) is
+ * never signed.
  */
 #include <SDL3/SDL.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -32,6 +37,7 @@
 #include "net_match.h"
 #include "../port_release.h"
 #include "net_relay.h"
+#include "net_sign.h"
 
 static struct {
     SDL_Mutex *lock;
@@ -80,20 +86,30 @@ static void set_state(int state, const char *error) {
 }
 
 /* ---- the Worker, through curl ---- */
-/* (http_post_native: `json` NULL makes it a GET of `url`, for the update check further down.) */
+/* (http_post_native: `json` NULL makes it a GET of `url`, for the update check further down. `headers`: lines
+   "Name: value" to send as well, ended by a NULL, or NULL for none.) */
 
 #ifdef _WIN32
 /* Windows: its own HTTPS (WinHTTP), so nothing has to be installed and no other program is started. */
 #include <winhttp.h>
 
-static int http_post_native(const char *url, const char *json, char *out, size_t size) {
-    wchar_t wurl[512], host[256], path[256];
+static int http_post_native(const char *url, const char *json, const char *const *headers, char *out, size_t size) {
+    wchar_t wurl[512], host[256], path[256], whead[512];
+    char head[512];
     URL_COMPONENTS uc;
     HINTERNET ses = NULL, con = NULL, req = NULL;
     DWORD got = 0, used = 0, status = 0, len = sizeof(status);
     int ok = 0;
 
     if (MultiByteToWideChar(CP_UTF8, 0, url, -1, wurl, 512) == 0) {
+        return 0;
+    }
+    SDL_strlcpy(head, "Content-Type: application/json\r\n", sizeof(head));
+    for (; headers != NULL && *headers != NULL; headers++) {
+        SDL_strlcat(head, *headers, sizeof(head));
+        SDL_strlcat(head, "\r\n", sizeof(head));
+    }
+    if (MultiByteToWideChar(CP_UTF8, 0, head, -1, whead, 512) == 0) {
         return 0;
     }
     memset(&uc, 0, sizeof(uc));
@@ -114,7 +130,7 @@ static int http_post_native(const char *url, const char *json, char *out, size_t
         req = WinHttpOpenRequest(con, json != NULL ? L"POST" : L"GET", path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
     }
     if (req != NULL &&
-        (json != NULL ? WinHttpSendRequest(req, L"Content-Type: application/json\r\n", (DWORD)-1, (LPVOID)json, (DWORD)strlen(json), (DWORD)strlen(json), 0)
+        (json != NULL ? WinHttpSendRequest(req, whead, (DWORD)-1, (LPVOID)json, (DWORD)strlen(json), (DWORD)strlen(json), 0)
                       : WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) &&
         WinHttpReceiveResponse(req, NULL)) {
         WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &len, WINHTTP_NO_HEADER_INDEX);
@@ -131,8 +147,10 @@ static int http_post_native(const char *url, const char *json, char *out, size_t
 }
 #else
 /* Linux: the system's curl library, if it is there (it nearly always is), loaded when first needed. */
-static int http_post_native(const char *url, const char *json, char *out, size_t size) {
+static int http_post_native(const char *url, const char *json, const char *const *headers, char *out, size_t size) {
     typedef void *(*init_fn)(void);
+    typedef void *(*append_fn)(void *, const char *);
+    typedef void (*freeall_fn)(void *);
     typedef int (*setopt_fn)(void *, int, ...);
     typedef int (*perform_fn)(void *);
     typedef void (*cleanup_fn)(void *);
@@ -142,7 +160,9 @@ static int http_post_native(const char *url, const char *json, char *out, size_t
     static setopt_fn setopt;
     static perform_fn perform;
     static cleanup_fn cleanup;
-    void *h;
+    static append_fn append;
+    static freeall_fn freeall;
+    void *h, *list = NULL;
     SDL_IOStream *mem;
     FILE *fp;
     int rc;
@@ -160,10 +180,12 @@ static int http_post_native(const char *url, const char *json, char *out, size_t
             setopt = (setopt_fn)SDL_LoadFunction(lib, "curl_easy_setopt");
             perform = (perform_fn)SDL_LoadFunction(lib, "curl_easy_perform");
             cleanup = (cleanup_fn)SDL_LoadFunction(lib, "curl_easy_cleanup");
+            append = (append_fn)SDL_LoadFunction(lib, "curl_slist_append");
+            freeall = (freeall_fn)SDL_LoadFunction(lib, "curl_slist_free_all");
         }
     }
     (void)mem;
-    if (init == NULL || setopt == NULL || perform == NULL || cleanup == NULL || (h = init()) == NULL) {
+    if (init == NULL || setopt == NULL || perform == NULL || cleanup == NULL || (headers != NULL && (append == NULL || freeall == NULL)) || (h = init()) == NULL) {
         return 0;
     }
     fp = tmpfile(); /* (the library writes the answer with fwrite by default: into a file that is never on disk by name) */
@@ -178,11 +200,20 @@ static int http_post_native(const char *url, const char *json, char *out, size_t
         setopt(h, 10018 /* CURLOPT_USERAGENT */, "Tenkaichi3Decomp");
         setopt(h, 52 /* CURLOPT_FOLLOWLOCATION */, 1L);
     }
+    for (; headers != NULL && *headers != NULL; headers++) {
+        list = append(list, *headers);
+    }
+    if (list != NULL) {
+        setopt(h, 10023 /* CURLOPT_HTTPHEADER */, list);
+    }
     setopt(h, 10001 /* CURLOPT_WRITEDATA */, fp);
     setopt(h, 13 /* CURLOPT_TIMEOUT */, 12L);
     setopt(h, 99 /* CURLOPT_NOSIGNAL */, 1L);
     rc = perform(h);
     cleanup(h);
+    if (list != NULL) {
+        freeall(list);
+    }
     n = 0;
     if (rc == 0) {
         rewind(fp);
@@ -194,18 +225,42 @@ static int http_post_native(const char *url, const char *json, char *out, size_t
 }
 #endif
 
+/* The build key (net_sign.c). The service checks the time a request is signed for against its own clock (five
+   minutes either way), and a player's clock can be wrong by more: so the game keeps how far the service's clock is
+   ahead of this computer's. It learns that from the answer to "hello" (asked when the online screen opens), and
+   from a request refused for its time, which is then sent once more. */
+static SDL_AtomicInt sClockAhead;
+
+static void clock_learn(const char *answer) {
+    const char *p = SDL_strstr(answer, "\"now\":");
+    long long now = p != NULL ? SDL_strtoll(p + 6, NULL, 10) : 0;
+    if (now > 1000000000LL) {
+        SDL_SetAtomicInt(&sClockAhead, (int)(now - (long long)time(NULL)));
+    }
+}
+
 /* POSTs `json` to <url>/v1/<what>; the answer's text in out. 0 = no answer. The system's own HTTPS first (above); if
    that is not to be had, the `curl` program. */
-static int http_post(const char *what, const char *json, char *out, size_t size) {
-    char url[256];
-    const char *args[12];
+static int http_post_once(const char *what, const char *json, char *out, size_t size) {
+    char url[256], path[64], sig[65], head[3][96];
+    const char *args[20], *headers[4] = {NULL, NULL, NULL, NULL};
     SDL_Process *p;
     size_t got = 0;
-    int code = 0, n = 0;
+    int code = 0, n = 0, i;
     void *data;
+    long long when = (long long)time(NULL) + SDL_GetAtomicInt(&sClockAhead);
 
     SDL_snprintf(url, sizeof(url), "%s/v1/%s", match_url(), what);
-    if (SDL_getenv("BT3_MATCH_CURL") == NULL && http_post_native(url, json, out, size)) {
+    SDL_snprintf(path, sizeof(path), "/v1/%s", what);
+    if (Sign_Request("POST", path, PORT_RELEASE, when, json, sig)) { /* (a program without a key: no headers) */
+        SDL_snprintf(head[0], sizeof(head[0]), "X-BT3-Release: %d", PORT_RELEASE);
+        SDL_snprintf(head[1], sizeof(head[1]), "X-BT3-Time: %lld", when);
+        SDL_snprintf(head[2], sizeof(head[2]), "X-BT3-Sign: %s", sig);
+        for (i = 0; i < 3; i++) {
+            headers[i] = head[i];
+        }
+    }
+    if (SDL_getenv("BT3_MATCH_CURL") == NULL && http_post_native(url, json, headers[0] != NULL ? headers : NULL, out, size)) {
         return 1;
     }
 #ifdef _WIN32
@@ -221,6 +276,10 @@ static int http_post(const char *what, const char *json, char *out, size_t size)
     args[n++] = url;
     args[n++] = "-d";
     args[n++] = json;
+    for (i = 0; headers[i] != NULL; i++) {
+        args[n++] = "-H";
+        args[n++] = headers[i];
+    }
     args[n] = NULL;
     p = SDL_CreateProcess(args, true);
     if (p == NULL) {
@@ -235,6 +294,23 @@ static int http_post(const char *what, const char *json, char *out, size_t size)
     SDL_free(data);
     return got > 0;
 }
+
+static int http_post(const char *what, const char *json, char *out, size_t size) {
+    int ok = http_post_once(what, json, out, size);
+    /* refused for the time it was signed for: the answer says the service's time; once more by that */
+    if (ok && Sign_HasKey() && SDL_strstr(out, "\"build key\"") != NULL && SDL_strstr(out, "\"why\":\"time\"") != NULL && SDL_strstr(out, "\"now\":") != NULL) {
+        clock_learn(out);
+        ok = http_post_once(what, json, out, size);
+    }
+    return ok;
+}
+
+/* What the window says when the service lets only official releases in (its REQUIRE_KEY) and refused this program:
+   `plain` for a program without a key, or with one the service does not know. */
+static const char *key_refused(const char *answer, const char *plain) {
+    return Sign_HasKey() && SDL_strstr(answer, "\"why\":\"time\"") != NULL ? "This computer's clock is wrong: set its date and time, then try again." : plain;
+}
+#define KEY_REFUSED(answer) (SDL_strstr(answer, "\"build key\"") != NULL)
 
 /* The text of "key":"..." in a flat JSON answer. 0 = not there. */
 static int json_str(const char *json, const char *key, char *out, size_t size) {
@@ -433,6 +509,7 @@ again:
         }
         if (SDL_strstr(answer, "\"role\":\"host\"") == NULL) {
             set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "Update available. Online servers are unreachable until you update." :
+                          KEY_REFUSED(answer) ? key_refused(answer, "Quick match needs an official release of the game.") :
                           SDL_strstr(answer, "busy") != NULL ? "Too many searches from this address; try again in a few minutes." :
                           SDL_strstr(answer, "bad request") != NULL || SDL_strstr(answer, "error") != NULL ? "The matchmaking service does not know quick match yet." :
                           "The matchmaking service gave no answer.");
@@ -453,6 +530,7 @@ again:
         }
         if (!json_str(answer, "code", sM.code, sizeof(sM.code)) || !json_str(answer, "key", key, sizeof(key))) {
             set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "Update available. Online servers are unreachable until you update." :
+                          KEY_REFUSED(answer) ? key_refused(answer, "Room codes need an official release of the game. Playing by address still works.") :
                           SDL_strstr(answer, "busy") != NULL ? "Too many rooms from this address; try again in a few minutes." : "The matchmaking service gave no room.");
             return 0;
         }
@@ -580,6 +658,7 @@ again:
         SDL_memset(&st, 0, sizeof(st));
         if (!json_peer(answer, &st)) {
             set_state(-1, SDL_strstr(answer, "\"old\"") != NULL ? "Update available. Online servers are unreachable until you update." :
+                          KEY_REFUSED(answer) ? key_refused(answer, "Room codes need an official release of the game. Playing by address still works.") :
                           SDL_strstr(answer, "version") != NULL ? "The host's game is a different version: both players need the same release." :
                           SDL_strstr(answer, "full") != NULL ? "Someone has already joined that room." :
                           SDL_strstr(answer, "no room") != NULL ? "No room with that code (codes last ten minutes)." :
@@ -710,7 +789,7 @@ static int SDLCALL update_thread(void *arg) {
     int ok;
 
     (void)arg;
-    ok = SDL_getenv("BT3_MATCH_CURL") == NULL && http_post_native(url, NULL, answer, sizeof(answer));
+    ok = SDL_getenv("BT3_MATCH_CURL") == NULL && http_post_native(url, NULL, NULL, answer, sizeof(answer));
     if (!ok) { /* the `curl` program, as for the service */
 #ifdef _WIN32
         const char *args[] = {"curl.exe", "-s", "-L", "-m", "12", "-A", "Tenkaichi3Decomp", url, NULL};
@@ -776,6 +855,7 @@ static int SDLCALL hello_thread(void *arg) {
         SDL_SetAtomicInt(&sRelMin, SDL_atoi(p + 6));
         p = SDL_strstr(answer, "\"latest\":");
         SDL_SetAtomicInt(&sRelLatest, p != NULL ? SDL_atoi(p + 9) : 0);
+        clock_learn(answer); /* (a service that knows the build key says its time) */
     }
     SDL_SetAtomicInt(&sRelBusy, 0);
     return 0;
@@ -852,4 +932,25 @@ void Match_Cancel(void) {
         sM.st.state = 0;
         SDL_UnlockMutex(sM.lock);
     }
+}
+
+/* BT3_SIGN_TEST (called before the game starts, plat_mem.c; the program ends after it): the build key's signature
+   for a fixed request, for port/matchmaking/test_sign.py. BT3_SIGN_TEST=post also sends one "hello" the way every
+   request to the service goes (so the headers can be looked at), and only to this computer: BT3_MATCH_URL has to
+   name http://127.0.0.1 or http://localhost. */
+int Match_SignTest(void) {
+    const char *mode = SDL_getenv("BT3_SIGN_TEST"), *url = match_url();
+    char body[64], answer[512] = "";
+
+    Sign_SelfTest();
+    if (mode != NULL && SDL_strcmp(mode, "post") == 0) {
+        if (SDL_strncmp(url, "http://127.0.0.1", 16) != 0 && SDL_strncmp(url, "http://localhost", 16) != 0) {
+            printf("sign: post: BT3_MATCH_URL does not name this computer, nothing sent\n");
+            return 1;
+        }
+        SDL_snprintf(body, sizeof(body), "{\"rel\":%d}", PORT_RELEASE);
+        printf("sign: post %s\n", http_post("hello", body, answer, sizeof(answer)) ? answer : "no answer");
+    }
+    fflush(stdout);
+    return 0;
 }

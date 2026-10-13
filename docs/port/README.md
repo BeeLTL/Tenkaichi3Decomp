@@ -2420,3 +2420,85 @@ ImGui's ordinary header, sliders, checkbox and button, which the window's contro
 Vibration stopping when the settings window is opened in the middle of an effect, or when the window loses the
 focus, was not run (only: opened from the start, no call). No online match was played with it. The Windows
 program was built (`BT3_CC=win64`) and not run. The window in a picture lower than 800 lines was not looked at.
+
+## The build key: only official releases at the matchmaking service (2026-10-13)
+
+Asked by the user: the project is open source, so anyone can build the game and point it at the same matchmaking
+service, which spends the keeper's Cloudflare allowance (relay logins above all) and lets a changed build into
+quick match. This is the code for closing that, and nothing is closed by it yet: everything is off until the keeper
+sets the secrets. The keeper's steps, the table of stages and the format are in `port/matchmaking/README.md`
+("The build key"); this is what was built and what was checked.
+
+**What it is and is not.** A release is built with a secret of its own, the build key; the game signs each request
+to the service with it; the service, told the keys, can refuse what is not signed. The key is in every copy of the
+release, scrambled only so that `strings` does not list it. It can be taken out by anyone who takes the program
+apart. So it is per release (a key that got out dies with its release), and it is not anti-cheat: it tells a
+release from a build of the source, nothing more.
+
+**In the game.**
+- `port/src/gs/net_sign.c` (new): SHA-256 and HMAC (small textbook versions; the port had MD5 and SHA-1 in
+  `net_relay.c` and a SHA-1 in the setup program, no SHA-256), the key's unscrambling, `Sign_Request`.
+- The signed text is six lines joined by a line feed: `BT3-SIGN-1`, `POST`, the path (`/v1/quick`), the release
+  (`PORT_RELEASE`), the time in seconds since 1970, and the SHA-256 of the body in hex. The signature is
+  HMAC-SHA256 of that with the key, in hex. Sent as `X-BT3-Release`, `X-BT3-Time`, `X-BT3-Sign`.
+- `net_match.c`: `http_post` adds the three headers on all three ways out (WinHTTP: in the header text beside
+  Content-Type; the curl library: `CURLOPT_HTTPHEADER` with `curl_slist_append`; the `curl` program: `-H`). A
+  program without a key adds nothing. The request to GitHub (the update check) is never signed.
+- The clock: the service allows five minutes either way, and players' clocks are worse than that. The game keeps
+  how far the service's clock is ahead of its own (`sClockAhead`): learnt from `/v1/hello`, whose answer now has
+  `now`, and from a refusal for the time, after which the request is sent once more.
+- A refusal (`{"error":"build key",...}`, status 403) is reported where the other refusals are, as the search's
+  failure in the online window: "Quick match needs an official release of the game."; for a room code "Room codes
+  need an official release of the game. Playing by address still works."; if the time was still refused after the
+  second try, "This computer's clock is wrong: set its date and time, then try again."
+
+**The key's way into the program.** `BT3_BUILD_KEY` in the build's environment. `port/tools/buildkey.py` (new)
+checks its form (16 to 128 characters of letters, digits and `. _ - + / =`; anything else stops the build, without
+showing it), scrambles it and gives it to the compilation of `net_sign.c` alone as two macros. It is written to no
+file and printed nowhere. `port/release/build.sh` and the workflow hand the variable to the container by name
+(`-e BT3_BUILD_KEY`: the value is on no command line); `inside.sh` prints `build key: given` or `build key: none`.
+The workflow takes it from the repository secret `BT3_BUILD_KEY` **for a tag's build only**; a push to main, and
+any fork, builds without.
+
+**In the Worker** (`port/matchmaking/worker.js`): the secret `BUILD_KEYS`, JSON of release -> key; the variable
+`REQUIRE_KEY`: not set / `off` (checked, logged and counted, nothing refused), `quick` (`/v1/quick` needs a
+signature), `all` (everything but `/v1/hello`). Without `BUILD_KEYS` nothing is checked at all. The signature is
+compared whole (no early exit), and checked before the time, so only a holder of the key learns that its time is
+off. A key of a release below `MIN_RELEASE` is not accepted, and the header's release must be the body's `rel`
+(else a retired release's key could be used under a newer number). `/v1/status` gains `buildKey`: the releases
+that have a key, the stage, today's counts, and what is wrong with the settings if something is. No key and no
+signature is logged or reported.
+
+**Known limits.** A signed request can be repeated unchanged for five minutes (no record of signatures is kept).
+Releases up to 0.1.33 have no key: when `REQUIRE_KEY` goes to `quick`, `MIN_RELEASE` should go to the first keyed
+release with it, or those players read "The matchmaking service does not know quick match yet." instead of being
+told to update.
+
+**For testing:** `BT3_SIGN_TEST=1` prints the signed text and the signature of one fixed request (with a fixed
+dummy key that is in the source, and with the program's own key if it has one; the key itself is never printed)
+and ends before the game starts. `BT3_SIGN_TEST=post` also sends one `hello` the ordinary way, and only to this
+computer: `BT3_MATCH_URL` must name `http://127.0.0.1` or `http://localhost`.
+`port/matchmaking/test_sign.py <program>` uses both.
+
+**Verified** (every key a made-up test value; nothing was sent beyond 127.0.0.1, and the deployed service was not
+contacted):
+- Linux, built without `BT3_BUILD_KEY`: `test_sign.py` 8 of 8: the text and the signature equal Python's `hmac` /
+  `hashlib`; one request each through the curl library and the `curl` program, with none of the three headers.
+  The whole request as the listener got it (request line, every header, body) is the same as from the keyed
+  build but for the three headers.
+- Linux, built with a dummy key: 17 of 17: the same, the signature with the built-in key equals Python's; the key
+  is not in the program in the clear; on both ways the three headers arrive and verify, another key and a changed
+  body do not; a listener whose clock is 100000 seconds ahead refuses once and gets the request again, signed for
+  its clock.
+- Windows (`BT3_CC=win64`, cross-built, with the dummy key), run under Wine with no display: the fixed request's
+  lines are the same, and the WinHTTP way passes the same checks (headers, signature, the second try). Wine has no
+  `curl.exe`, so the program way was not run there.
+- A key of the wrong form stops the build with a message that does not show it.
+- The regression line (`tick 2111 ... hp 23050 0`) is the same without and with a key.
+
+**Not verified:** `port/matchmaking/test.mjs` was extended (the stages, wrong key, wrong release, stale time,
+changed body, another path, `MIN_RELEASE`, an unreadable `BUILD_KEYS`, the status, the log, and the game's fixed
+request given to the Worker) but **not run**: there is no Node on the machine this was written on, so the Worker's
+new code has not been executed at all. Run `node port/matchmaking/test.mjs` before the Worker is deployed. Not run
+either: the release build in its container and the workflow (so the secret's way through GitHub and docker is
+written, not seen), a real Windows machine, and anything against Cloudflare.

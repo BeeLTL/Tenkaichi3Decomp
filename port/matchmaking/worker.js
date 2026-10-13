@@ -22,7 +22,8 @@
 //       does (poll, addrs, leave as for any room). `who` names the caller's game (a random text it made up), so that
 //       a room it left behind is not the one it is given. relay: false = it holds a relay address already.
 //   /v1/queues {v}                     -> {waiting: {S: n, T: n, D10: n, D15: n, D20: n}}
-//   /v1/hello  {rel}                   -> {min, latest}   (the variables MIN_RELEASE and LATEST_RELEASE, 0 if not set)
+//   /v1/hello  {rel}                   -> {min, latest, now}   (the variables MIN_RELEASE and LATEST_RELEASE, 0 if not
+//       set; `now` is this Worker's clock, seconds since 1970, for the build key's time below)
 // `turn` (only if the Worker has a TURN key: the secrets TURN_KEY_ID and TURN_KEY_TOKEN) is what the host needs to
 // get a relay address from Cloudflare's TURN service: {server, username, credential}, good for three hours. The
 // host publishes that address as "relay=ip:port" among its addresses; the other player's addresses carry
@@ -30,7 +31,27 @@
 // `v` is the game's netcode version, `addrs` a list of "ip:port" strings (what the game found out about itself),
 // `you` the caller's address as seen here (the game uses it when it could not find out its own). Errors come back
 // as {error: "..."} with a 4xx status: "version" (the two games differ), "no room", "full", "busy", "bad request",
-// "old" (the Worker's keeper lets only newer releases in: `rel` in the request, the variable MIN_RELEASE here).
+// "old" (the Worker's keeper lets only newer releases in: `rel` in the request, the variable MIN_RELEASE here),
+// "build key" (status 403, with `why` and `now`: only official releases are let in, see below).
+//
+// The build key. An official release of the game is built with a key of its own and signs every request with it,
+// in three headers:
+//   X-BT3-Release: 134             the release (as `rel`)
+//   X-BT3-Time:    1791900000      seconds since 1970
+//   X-BT3-Sign:    <64 hex digits> HMAC-SHA256(key, text), text being these six lines joined by "\n":
+//                                      BT3-SIGN-1 / POST / the path ("/v1/quick") / the release / the time /
+//                                      SHA-256 of the body exactly as sent, in hex
+// The secret BUILD_KEYS holds the keys this Worker knows, as JSON: {"134":"<key of 0.1.34>","135":"<key of 0.1.35>"}.
+// Without it nothing is checked and every request is answered as it always was. With it, each request is checked
+// (hello and status apart), and the variable REQUIRE_KEY says what a failed check means:
+//   unset, "off"   nothing is refused: the result is only logged and counted (see /v1/status)
+//   "quick"        /v1/quick is refused; rooms with codes and the relay stay open to everyone
+//   "all"          every request is refused (but hello, which tells an old game to update)
+// A check fails for: "none" (no signature sent), "release" (no key for that release, or the release is below
+// MIN_RELEASE, or is not the body's `rel`), "sign" (the signature is not the key's for this request), "time" (the
+// time is more than KEY_SECONDS from this Worker's clock; the answer says the Worker's `now`, and the game asks
+// once more by it: players' clocks are often wrong). A request can be sent again unchanged within that time (no
+// record of signatures is kept); it cannot be changed. Keys and signatures are never logged.
 
 const ROOM_SECONDS = 600;       // a room nobody joined disappears after ten minutes
 const ROOMS_PER_ADDRESS = 4;    // rooms one address may have open at a time
@@ -49,6 +70,7 @@ const RELAY_MONTH_GB = 500;     // bytes through the relay in a calendar month a
 const RELAY_LOGIN_GB = 1;       // one login that has passed this much in three hours is ended (a match is about
                                 // 0.05 GB an hour; the variable TURN_LOGIN_GB overrides it)
 const CHECK_STALE = 2 * 3600;   // with measuring set up: no logins when no measurement has succeeded for this long
+const KEY_SECONDS = 300;        // the build key: how far a request's time may be from this Worker's clock, either way
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no I, L, O, 0, 1: they are misread
 
 function reply(body, status = 200) {
@@ -341,6 +363,92 @@ async function makeRoom(env, ip, now, v, name, addrs, queue, who, wantRelay) {
     return null;
 }
 
+// The build keys this Worker knows: null if the secret BUILD_KEYS is not set (nothing is checked), else {keys: a Map
+// of release -> key, problem: what is wrong with the secret or null}. A secret that cannot be read gives no keys, so
+// that every check fails: with REQUIRE_KEY at "quick" or "all" that refuses everyone, which is why the first stage
+// is "off" (and /v1/status says what is wrong, never a key).
+function buildKeys(env) {
+    if (env.BUILD_KEYS === undefined || env.BUILD_KEYS === null || String(env.BUILD_KEYS).trim() === "") {
+        return null;
+    }
+    const keys = new Map();
+    let problem = null;
+    try {
+        const j = JSON.parse(String(env.BUILD_KEYS));
+        if (j === null || typeof j !== "object" || Array.isArray(j)) {
+            throw new Error("not a map");
+        }
+        for (const [release, key] of Object.entries(j)) {
+            if (/^[1-9]\d{0,5}$/.test(release) && typeof key === "string" && key.length >= 16) {
+                keys.set(release, key);
+            } else {
+                problem = "BUILD_KEYS: an entry was left out (a release is a number like 134, a key a text of 16 characters or more)";
+            }
+        }
+    } catch (e) {
+        problem = 'BUILD_KEYS is not JSON of the form {"134":"<key>","135":"<key>"}';
+    }
+    return { keys, problem };
+}
+
+// What REQUIRE_KEY says: "off", "quick" or "all" (anything else is taken as "off").
+function requireKey(env) {
+    const mode = String(env.REQUIRE_KEY ?? "off").trim().toLowerCase();
+    return mode === "quick" || mode === "all" ? mode : "off";
+}
+
+function toHex(bytes) {
+    return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Checks a request's signature: null if it is right, else why not ("none", "release", "sign", "time"). `raw` is the
+// body as it came (an ArrayBuffer), `rel` the release the body names (if it names one).
+async function keyCheck(request, keys, path, raw, rel, now, minRelease) {
+    const release = request.headers.get("x-bt3-release") ?? "", time = request.headers.get("x-bt3-time") ?? "", sign = request.headers.get("x-bt3-sign") ?? "";
+    if (sign === "") {
+        return "none";
+    }
+    const key = keys.get(release);
+    if (key === undefined || Number(release) < minRelease || (rel !== undefined && rel !== Number(release))) {
+        return "release";
+    }
+    if (!/^\d{1,12}$/.test(time) || !/^[0-9a-f]{64}$/.test(sign)) {
+        return "sign";
+    }
+    const enc = new TextEncoder();
+    const text = ["BT3-SIGN-1", request.method, path, release, time, toHex(await crypto.subtle.digest("SHA-256", raw))].join("\n");
+    const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const want = new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(text)));
+    let differ = 0; // compared whole, whatever differs: the time taken says nothing about where
+    for (let i = 0; i < 32; i++) {
+        differ |= want[i] ^ parseInt(sign.slice(i * 2, i * 2 + 2), 16);
+    }
+    if (differ !== 0) {
+        return "sign";
+    }
+    return Math.abs(now - Number(time)) > KEY_SECONDS ? "time" : null; // (last: only a holder of the key is told the time is off)
+}
+
+// For /v1/status: what the Worker knows of build keys (never a key), and today's checks of new rooms, joins and searches.
+async function keyStatus(env, now) {
+    const known = buildKeys(env);
+    if (known === null) {
+        return { keys: "BUILD_KEYS is not set: nothing is checked" };
+    }
+    const day = now - (now % 86400), today = {};
+    for (const r of ["ok", "none", "release", "sign", "time"]) {
+        today[r] = (await getValue(env, "key:" + r, day)) ?? 0;
+    }
+    const out = { releases: [...known.keys.keys()].map(Number).sort((a, b) => a - b), require: requireKey(env), today };
+    if (known.problem) {
+        out.problem = known.problem;
+    }
+    if (String(env.REQUIRE_KEY ?? "off").trim().toLowerCase() !== out.require) {
+        out.problem = (out.problem ? out.problem + "; " : "") + 'REQUIRE_KEY is not "off", "quick" or "all": taken as "off"';
+    }
+    return out;
+}
+
 // A game of 0.1.29 or later asks for a relay login only when a match turns out to need one (/v1/relay), so it is
 // not given one with its room. (Given with every room, a day's logins were used up by searches that never played
 // through the relay: found on the first day of quick match, and the relay was off for everyone until midnight.)
@@ -357,9 +465,10 @@ export default {
         if (request.method !== "POST" || !url.pathname.startsWith("/v1/")) {
             return reply({ error: "bad request" }, 404);
         }
-        let body;
+        let body, raw; // (raw: the body's bytes as they came, for the build key's signature)
         try {
-            body = await request.json();
+            raw = await request.arrayBuffer();
+            body = JSON.parse(new TextDecoder().decode(raw));
         } catch (e) {
             return reply({ error: "bad request" }, 400);
         }
@@ -372,7 +481,7 @@ export default {
                 return reply({ error: "bad request" }, 404);
             }
             const day = now - (now % 86400);
-            return reply({ ...(await relayCheck(env, now)), loginsToday: (await getValue(env, "relay", day)) ?? 0, lastMeasured: await getValue(env, "checked", 0) });
+            return reply({ ...(await relayCheck(env, now)), loginsToday: (await getValue(env, "relay", day)) ?? 0, lastMeasured: await getValue(env, "checked", 0), buildKey: await keyStatus(env, now) });
         }
         // Only the newest release, if the Worker's keeper says so: the variable MIN_RELEASE (a number: 129 is release
         // 0.1.29) refuses a new room, a join or a search from a game that says it is older, or that does not say
@@ -380,10 +489,27 @@ export default {
         // for an answer it does not know ("gave no room", "gave no answer"); a newer one says to get the new release.
         const minRelease = Number(env.MIN_RELEASE ?? 0) || 0;
         if (what === "hello") { // a game asks, when its online screen opens, whether it is new enough (and what the newest is)
-            return reply({ min: minRelease, latest: Number(env.LATEST_RELEASE ?? 0) || 0 });
+            return reply({ min: minRelease, latest: Number(env.LATEST_RELEASE ?? 0) || 0, now });
         }
-        if (minRelease > 0 && (what === "host" || what === "join" || what === "quick") && !(Number.isInteger(body.rel) && body.rel >= minRelease)) {
+        const entry = what === "host" || what === "join" || what === "quick";
+        if (minRelease > 0 && entry && !(Number.isInteger(body.rel) && body.rel >= minRelease)) {
             return reply({ error: "old", need: minRelease }, 426);
+        }
+        // Only official releases, if the Worker's keeper says so: the build key (see the top of this file). After the
+        // check above, so that an official release that is too old is told to update, not that it is no release.
+        const known = buildKeys(env);
+        if (known !== null) {
+            const mode = requireKey(env), needed = mode === "all" || (mode === "quick" && what === "quick");
+            const why = await keyCheck(request, known.keys, url.pathname, raw, Number.isInteger(body.rel) ? body.rel : undefined, now, minRelease);
+            if (entry) { // (counted for new rooms, joins and searches only: a room under way asks every two seconds)
+                await countUse(env, "key:" + (why ?? "ok"), now - (now % 86400));
+            }
+            if (why !== null && (needed || entry)) {
+                console.log(`build key: ${what} from release ${String(request.headers.get("x-bt3-release") ?? body.rel ?? "?").replace(/[^0-9?]/g, "").slice(0, 8)}: ${why}, ${needed ? "refused" : "let in"}`);
+            }
+            if (why !== null && needed) {
+                return reply({ error: "build key", why, now }, 403);
+            }
         }
         if (what === "host") {
             const addrs = cleanAddrs(body.addrs);
