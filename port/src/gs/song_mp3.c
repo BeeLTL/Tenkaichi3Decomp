@@ -89,64 +89,102 @@ static void encode_frame(const int16_t *in, int step, int c1, int c2, int h[2], 
 }
 
 /* `mp3` into the ADX file `adx`. Returns 0 if it worked; `why` gets the reason if not. */
+static void header(uint8_t *head, unsigned channels, uint32_t rate, uint32_t frames) {
+    memset(head, 0, HEADER);
+    put16(head, 0x8000);
+    put16(head + 2, HEADER - 4);
+    head[4] = 3;
+    head[5] = FRAME;
+    head[6] = 4;
+    head[7] = (uint8_t)channels;
+    put32(head + 8, rate);
+    put32(head + 12, frames);
+    put16(head + 16, HIGHPASS);
+    head[18] = 3; /* version 3: no loop points */
+    memcpy(head + HEADER - 6, "(c)CRI", 6);
+}
+
+#define CHUNK (32 * 256) /* sample frames decoded and encoded at a time: whole ADX frames */
+
+/* `mp3` into the ADX file `adx`. Returns 0 if it worked; `why` gets the reason if not. The MP3 is decoded and
+   written a piece at a time (CHUNK): the memory used is the decoder and 32 KB of samples however long the song is
+   (decoded whole, an hour of music was 635 MB). The number of samples, which the header holds, is known at the end
+   and written then. */
 static int convert(const char *mp3, const char *adx, const char **why) {
-    drmp3_config cfg;
-    drmp3_uint64 frames = 0;
-    int16_t *pcm = drmp3_open_file_and_read_pcm_frames_s16(mp3, &cfg, &frames, NULL);
+    static int16_t pcm[CHUNK * 2];
+    drmp3 *dec = malloc(sizeof(*dec));
     char tmp[600];
     uint8_t head[HEADER], buf[FRAME * 2];
-    int16_t pad[64];
-    int ch, c1, c2, h[2][2] = {{0, 0}, {0, 0}};
-    uint64_t f, blocks;
+    int ch, channels, c1, c2, h[2][2] = {{0, 0}, {0, 0}}, last = 0;
+    uint64_t frames = 0;
+    uint32_t rate;
     FILE *fp;
 
-    if (pcm == NULL || frames == 0 || cfg.channels < 1 || cfg.sampleRate == 0) {
+    if (dec == NULL || !drmp3_init_file(dec, mp3, NULL)) {
         *why = "not an MP3 that can be read";
-        drmp3_free(pcm, NULL);
+        free(dec);
         return -1;
     }
-    if (cfg.channels > 2 || frames > 0xFFFFFFF0u) {
-        *why = cfg.channels > 2 ? "more than two channels" : "too long";
-        drmp3_free(pcm, NULL);
+    channels = (int)dec->channels;
+    if (channels < 1 || channels > 2 || dec->sampleRate == 0) {
+        *why = channels > 2 ? "more than two channels" : "not an MP3 that can be read";
+        drmp3_uninit(dec);
+        free(dec);
         return -1;
     }
     snprintf(tmp, sizeof(tmp), "%s.part", adx);
     fp = fopen(tmp, "wb");
     if (fp == NULL) {
         *why = "the songs folder cannot be written to";
-        drmp3_free(pcm, NULL);
+        drmp3_uninit(dec);
+        free(dec);
         return -1;
     }
-    memset(head, 0, sizeof(head));
-    put16(head, 0x8000);
-    put16(head + 2, HEADER - 4);
-    head[4] = 3;
-    head[5] = FRAME;
-    head[6] = 4;
-    head[7] = (uint8_t)cfg.channels;
-    put32(head + 8, cfg.sampleRate);
-    put32(head + 12, (uint32_t)frames);
-    put16(head + 16, HIGHPASS);
-    head[18] = 3; /* version 3: no loop points */
-    memcpy(head + HEADER - 6, "(c)CRI", 6);
+    rate = dec->sampleRate;
+    header(head, (unsigned)channels, rate, 0);
     fwrite(head, 1, sizeof(head), fp);
 
-    coefs(cfg.sampleRate, &c1, &c2);
-    blocks = (frames + 31) / 32;
-    for (f = 0; f < blocks; f++) {
-        const int16_t *src = pcm + f * 32 * cfg.channels;
-        if ((f + 1) * 32 > frames) { /* the last frame: the rest of it silent */
-            uint64_t left = frames - f * 32;
-            memset(pad, 0, sizeof(pad));
-            memcpy(pad, src, (size_t)(left * cfg.channels * sizeof(int16_t)));
-            src = pad;
+    coefs(rate, &c1, &c2);
+    *why = NULL;
+    while (!last && *why == NULL) {
+        uint64_t got = 0, f;
+        while (got < CHUNK) { /* (a read may give less than asked for before the end) */
+            uint64_t n = drmp3_read_pcm_frames_s16(dec, CHUNK - got, pcm + got * channels);
+            if (n == 0) {
+                break;
+            }
+            got += n;
         }
-        for (ch = 0; ch < (int)cfg.channels; ch++) {
-            encode_frame(src + ch, (int)cfg.channels, c1, c2, h[ch], buf + ch * FRAME);
+        if (got < CHUNK) { /* the end: the rest of the last frame silent */
+            last = 1;
+            memset(pcm + got * channels, 0, (size_t)(CHUNK - got) * channels * sizeof(int16_t));
         }
-        fwrite(buf, 1, (size_t)FRAME * cfg.channels, fp);
+        for (f = 0; f * 32 < got; f++) {
+            for (ch = 0; ch < channels; ch++) {
+                encode_frame(pcm + f * 32 * channels + ch, channels, c1, c2, h[ch], buf + ch * FRAME);
+            }
+            fwrite(buf, 1, (size_t)FRAME * channels, fp);
+        }
+        frames += got;
+        if (frames > 0xFFFFFFF0u) {
+            *why = "too long";
+        } else if (ferror(fp)) {
+            *why = "the songs folder cannot be written to";
+        }
     }
-    drmp3_free(pcm, NULL);
+    drmp3_uninit(dec);
+    free(dec);
+    if (*why == NULL && frames == 0) {
+        *why = "not an MP3 that can be read";
+    }
+    if (*why != NULL) {
+        fclose(fp);
+        remove(tmp);
+        return -1;
+    }
+    header(head, (unsigned)channels, rate, (uint32_t)frames);
+    fseek(fp, 0, SEEK_SET);
+    fwrite(head, 1, sizeof(head), fp);
     if (ferror(fp) | fclose(fp)) {
         *why = "the songs folder cannot be written to";
         remove(tmp);
