@@ -34,6 +34,17 @@
  * The screen reader is chosen by trying them: NVDA, then JAWS, then the others in Prism's order. A screen reader
  * is used only when it starts (prism_backend_initialize), not because it is installed: Prism's own "best" choice
  * took NVDA while NVDA was not running (0.16.5).
+ *
+ * Prism's version: written against release 0.18.3, the one to put beside the program. Its header is not in the
+ * repository; the eleven functions used are declared below by hand and found by name, and a library without one of
+ * them is not used. What a later release could change, and what is done about it:
+ *   - PrismConfig growing (it is returned by value, into memory of the caller's): the memory given is
+ *     PRISM_CONFIG_ROOM bytes, several times the struct of 0.18.3, and none of its fields is read or written here
+ *     but the first byte, its `version`, which goes to the log. It is handed back to prism_init as it came.
+ *   - not guarded: a change in the parameters of one of the eleven functions, in the feature bits or in the ids of
+ *     NVDA and JAWS; a PrismConfig beyond PRISM_CONFIG_ROOM; prism_config_init no longer returning the struct by
+ *     value. None of the functions declared here tells the library's version, so there is no check of it at load
+ *     time: with another release than 0.18.3 the line "a11y: prism config version" in the output is the only sign.
  */
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -81,13 +92,21 @@ static FILE *open_utf8(const char *path, const char *mode) {
 
 typedef struct PrismContext PrismContext;
 typedef struct PrismBackend PrismBackend;
-typedef struct {
-    uint8_t version;
-    void *registry;
-    void *availability_callback, *availability_userdata;
-    uint32_t availability_poll_interval_ms, availability_debounce_samples, availability_backoff_max_ms;
-    bool availability_auto_power_manage;
-    void *availability_baseline_callback;
+#define PRISM_CONFIG_ROOM 512
+/* PrismConfig as 0.18.3 has it, inside the room a later and larger one may take. A struct of this size is returned
+   through a pointer the caller passes, in the Windows and the System V conventions alike, so the library writes as
+   many bytes as its own PrismConfig has into this memory, whatever is declared here. */
+typedef union {
+    struct {
+        uint8_t version;
+        void *registry;
+        void *availability_callback, *availability_userdata;
+        uint32_t availability_poll_interval_ms, availability_debounce_samples, availability_backoff_max_ms;
+        bool availability_auto_power_manage;
+        void *availability_baseline_callback;
+    } v0_18_3;
+    unsigned char room[PRISM_CONFIG_ROOM];
+    uint64_t align;
 } PrismConfig;
 
 #define PRISM_OK 0
@@ -228,6 +247,7 @@ static int SDLCALL speaker(void *unused) {
     (void)unused;
     if (sLib != NULL) {
         cfg = P.config_init();
+        fprintf(stderr, "a11y: prism config version %u (written against Prism 0.18.3)\n", (unsigned)cfg.v0_18_3.version);
         ctx = P.init(&cfg);
         b = ctx != NULL ? choose_backend(ctx) : NULL;
     }
