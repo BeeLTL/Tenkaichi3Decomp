@@ -25,6 +25,8 @@
  *   $BT3_A11Y_LOG=<file>                writes what is said, one line each with the blank (tests without a screen
  *                                       reader: the headless build has no library), and notes on what changed on
  *                                       the screen, marked "#"
+ *   $BT3_A11Y_ASK=<n>                   asks for the gauges every n blanks, player 1's and player 2's in turn, as
+ *                                       their keys would (tests: without a window no key can be pressed)
  *   $BT3_A11Y_LANG=<code>               the language, over a11y_lang
  *   a11y_<code>.txt                     the lines to say instead of the English ones (see "translations" below)
  *   $BT3_A11Y_MISSING=<file>            the lines without a translation into this file instead, a new one each run
@@ -638,8 +640,18 @@ void PortA11y_Event(const SDL_Event *ev) {
 /* For a11y_game.c, once per blank: whether a fight is on with no menu over it (the touchpad click asks for the gauges
    then), and the gauges asked for since the last call (1 + the player's side, 0 none). */
 int PortA11y_GaugesAsked(int fight) {
+    static int every = -1;
+    int ask;
+
+    if (every < 0) {
+        every = getenv("BT3_A11Y_ASK") != NULL ? atoi(getenv("BT3_A11Y_ASK")) : 0;
+    }
     SDL_SetAtomicInt(&sFight, fight);
-    return SDL_SetAtomicInt(&sAsk, 0);
+    ask = SDL_SetAtomicInt(&sAsk, 0);
+    if (ask == 0 && every > 0 && sFrame % every == 0) {
+        ask = 1 + (sFrame / every & 1);
+    }
+    return ask;
 }
 
 /* ---- the fight's cues ---- */

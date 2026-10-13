@@ -3024,8 +3024,40 @@ static void btl_menu(void) {
 
 /* ---- the voices, and the text on screens without a reader of their own ---- */
 
-/* include/battle/battle.h: BattleWork; `running` is 1 between Battle_Main's entry and exit (src/battle/battle.c). */
+/* include/battle/battle.h: BattleWork; `running` is set to 1 at Battle_Main's entry and to 0 at its exit
+   (src/battle/battle.c), but it does not stay 1 in between in every mode: a battle that a script sets up (the
+   story's) has the whole work zeroed a few blanks in, while the battle still loads (BtlScriptCmd_SetRule ->
+   Battle_ClearWork, src/battle/btl_script_cmd.c). The fighters' roster and the battle's sequence are there from
+   Battle_Init, after the loading, to Battle_Term in every mode, and NULL outside (src/battle/btl_char_mgr.c:
+   BtlChar_AllocAll / BtlChar_FreeAll; src/battle/btl_seq.c: BtlSeq_Init / BtlSeq_Term). Only compared with NULL
+   here. */
 extern struct { char unk0[0x19F8]; int running; } gBattleWork;
+extern void GAME_PTR gBtlChars;
+extern void GAME_PTR gBtlSeq;
+
+static int sInBattle;   /* the game is in Battle_Main, as far as it can be told (battle_watch) */
+static int sRosterSeen; /* this battle has had its roster */
+
+/* Once per blank: whether the game is in a battle, from Battle_Main's entry (the loading before the fight too) to
+   its end. It starts with `running` (or the roster); from there `running` is not asked again until the roster has
+   come, and it is over when the roster is gone and `running` is 0, which is Battle_Main's exit, or the freeing of
+   the fighters at the start of Battle_Term where a script had zeroed `running`. */
+static void battle_watch(void) {
+    int running = gBattleWork.running != 0, roster = gBtlChars != NULL;
+
+    if (!sInBattle) {
+        sInBattle = running || roster;
+        sRosterSeen = roster;
+    } else if (roster) {
+        sRosterSeen = 1;
+    } else if (sRosterSeen && !running) {
+        sInBattle = 0;
+    }
+}
+
+static int in_battle(void) {
+    return sInBattle;
+}
 
 /* include/battle/hud_a.h: Hud, only its visibility bits. The fight shows the gauges from its "ready" state to the
    finish (src/battle/btl_seq.c, BtlSeqReady_Enter and the finish's Hud_ShowGauges(0)). */
@@ -3033,14 +3065,17 @@ typedef struct {
     char unk0[0x30];
     uint32_t flags; /* 0x30: HUD_SHOW_* */
 } A11yHud;
-extern A11yHud GAME_PTR gHud; /* allocated by each battle and never set back to NULL */
+extern A11yHud GAME_PTR gHud; /* allocated by each battle and never set back to NULL: see fighting() */
 #define HUD_SHOW_GAUGES 0x01
 
-/* 1: a fight is on, with its gauges on screen. */
+/* 1: a fight is on, with its gauges on screen. gHud keeps the address of the last battle's HUD after it is freed,
+   so it is read only while this battle's is there: it is made before the sequence (BtlGame_Init: Hud_Init, then
+   BtlSeq_Init) and freed after the roster (Battle_Term: BtlChar_FreeAll, then BtlGame_Term), so with both of those
+   not NULL it is this battle's. */
 static int fighting(void) {
-    A11yHud GAME_PTR h = gHud;
+    A11yHud GAME_PTR h = gBtlChars != NULL && gBtlSeq != NULL ? gHud : NULL;
 
-    return gBattleWork.running && h != NULL && (h->flags & HUD_SHOW_GAUGES);
+    return h != NULL && (h->flags & HUD_SHOW_GAUGES);
 }
 
 /* include/sys/file.h: AdxPlayer, one per channel (include/sys/adx.h); `adxt` is the port's player
@@ -3100,7 +3135,7 @@ int PortA11y_VoicePercent(const void *player) {
     }
     if (player == (const void *)gAdxPlayerTbl[ADX_CH_VOICE0].adxt ||
         player == (const void *)gAdxPlayerTbl[ADX_CH_VOICE1].adxt) {
-        return gBattleWork.running ? sFightVoices : sMenuVoices;
+        return in_battle() ? sFightVoices : sMenuVoices;
     }
     return -1;
 }
@@ -3213,7 +3248,7 @@ static int mode_text(char *out, int cap, int mode) {
 static void screen_change(void) {
     static int mode = -1, fight = -1;
     char text[256];
-    int m = gProgress != NULL ? gProgress->mode : -1, f = gBattleWork.running != 0;
+    int m = gProgress != NULL ? gProgress->mode : -1, f = in_battle();
 
     if (f != fight) {
         if (fight != -1) {
@@ -3246,7 +3281,7 @@ static int own_screen(void) {
     if (btl != NULL) {
         return !btl_menu_page(btl);
     }
-    if (gBattleWork.running || gProgress == NULL) {
+    if (in_battle() || gProgress == NULL) {
         return 0;
     }
     if (gSoloSel != NULL || gEntrySel != NULL || gUbMenu != NULL || gMisSel != NULL || gTourMenu != NULL ||
@@ -3557,6 +3592,7 @@ void PortA11y_GameTick(void) {
     }
     sBlank++;
     sEs = PortA11y_Spanish();
+    battle_watch();
     screen_change();
     dialog();
     if (gProgress != NULL) {
