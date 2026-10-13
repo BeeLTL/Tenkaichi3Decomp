@@ -95,6 +95,46 @@ The release archives for Linux and Windows are built from the repository alone, 
 repository carries the shape of the game's built-in data tables without their values (`port/data`); the
 finished program fetches the values from your disc when it starts.
 
+## Playing in the browser (branch `browser-port`)
+
+The same game, compiled to WebAssembly, runs in a web page served from your own computer. The page holds no game
+data: it reads your extracted disc from a local folder, and nothing leaves the machine. The server listens on
+127.0.0.1 only.
+
+**You need:** a current Chrome or Edge (the page needs JavaScript Promise Integration and WebGL 2; Firefox and
+Safari are not tested yet), Python 3, `7z`, and your own disc image of the USA release (SLUS-21678).
+
+1. Unpack your disc once into a data folder (about 4 GB):
+
+   ```
+   python port/tools/extract_disc.py <your disc image> gamedata
+   ```
+
+2. Build the page (Emscripten 6.0.12 and the pinned tools in [docs/BROWSER_BUILD.md](docs/BROWSER_BUILD.md)):
+
+   ```
+   python port/tools/wasm_build.py game
+   python port/tools/wasm_build.py port
+   python port/tools/wasm_build.py data
+   python port/tools/wasm_build.py link
+   ```
+
+3. Serve it with your data folder:
+
+   ```
+   python port/web/devserver.py --port 8080 --mount gamedata=<path to gamedata>
+   ```
+
+4. Open `http://127.0.0.1:8080/index.html` and press Start.
+
+In the game, **F1** (or START + SELECT on a controller) opens the settings: video, sound, controls with a picture
+of the controller to remap any button, saves, touch controls for phones and tablets, and extras. Saves are kept in
+the browser's storage and can be exported. Never put the extracted data on a public server or share it.
+
+More: [docs/BROWSER_RELEASE.md](docs/BROWSER_RELEASE.md) (running a release package),
+[docs/BROWSER_BUILD.md](docs/BROWSER_BUILD.md) (build and tests),
+[docs/BROWSER_FEATURE_MATRIX.md](docs/BROWSER_FEATURE_MATRIX.md) (what works, what is verified).
+
 ## Layout
 
 | Path | Contents |
@@ -105,10 +145,30 @@ finished program fetches the values from your disc when it starts.
 | `port/data/` | The game's built-in data tables as shape only (labels, sizes, pointer slots), no values |
 | `port/release/` | The container and scripts that build the release archives |
 | `port/setup/` | The setup window |
+| `port/web/`, `port/src/web/` | The browser version: the page (settings, controllers, touch, saves) and its engine side |
+| `port/tests/web/` | The browser tests (headless Chrome) |
 | `port/third_party/` | Dear ImGui (MIT), the maths library of newlib |
 | `docs/` | Notes on the game (from the decompilation) and `docs/port/` on the port |
 
 This project was made with the help of AI.
+
+## Thanks
+
+This port stands on other people's work:
+
+- **BT3-Decompiled** and everyone who worked on the matching decompilation the game's code comes from.
+- **[z3xox](https://github.com/z3xox)**, for Tenkaichi3Decomp, the native PC port this browser version is built on,
+  and **[RexxColder](https://github.com/RexxColder)** for the OpenGL renderer and the added-content work (see below).
+- **[Emscripten](https://emscripten.org/)** (MIT / UIUC), which compiles the game for the web.
+- **[SDL3](https://www.libsdl.org/)** (zlib): window, input, controllers and sound.
+- **[Dawn / emdawnwebgpu](https://dawn.googlesource.com/dawn)** (BSD-3-Clause), for the WebGPU renderer.
+- **[naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga)** (MIT / Apache-2.0), which turns the shaders into WGSL.
+- **[LLVM / Clang and libclang](https://llvm.org/)** (Apache-2.0 with LLVM exception).
+- **[Dear ImGui](https://github.com/ocornut/imgui)** (MIT): the native build's settings window.
+- **[newlib](https://sourceware.org/newlib/)**'s maths library (BSD-style) and **[xxHash](https://github.com/Cyan4973/xxHash)** (BSD-2-Clause).
+- **[Python](https://www.python.org/)**, **[Node.js](https://nodejs.org/)**, **[Chromium](https://www.chromium.org/)** and
+  **[7-Zip](https://www.7-zip.org/)**, for the tools, the tests and unpacking the disc.
+- The original game's developers, Spike, and its publishers. This project exists out of love for their game.
 
 ## Contributors
 
@@ -122,7 +182,8 @@ This project was made with the help of AI.
 
 The port's own code (everything under `port/` except `port/third_party/`, the setup, the build tools, and the
 PC changes inside `#ifdef PORT`) is under the [MIT licence](LICENSE). The libraries in `port/third_party/`
-keep their own licences (Dear ImGui: MIT; newlib's maths library: its BSD-style terms, in that folder).
+keep their own licences (Dear ImGui: MIT; newlib's maths library: its BSD-style terms, in that folder;
+xxHash: BSD-2-Clause).
 The game's code in `src/` and `include/` comes from the decompilation and is not ours to license: it belongs
 to the game's rights holders.
 
