@@ -88,9 +88,7 @@ def main():
     print(f"{len(need)} stubs; link {'OK -> ' + str(EXE.relative_to(ROOT)) if r.returncode == 0 else 'FAILED'}; {len(errs)} error lines")
     for l in errs[:12]:
         print("  " + l[-160:])
-    if r.returncode == 0 and MAC:
-        print("macOS: make_state.py and make_dat.py do not read Mach-O maps yet: no saved states (online play) and no release data list")
-    elif r.returncode == 0:
+    if r.returncode == 0:
         # where the game's own variables lie in this program (for the state checksum; port/src/gs/state.c)
         d = subprocess.run([sys.executable, str(ROOT / "port/tools/make_state.py")], capture_output=True, text=True)
         if d.returncode:

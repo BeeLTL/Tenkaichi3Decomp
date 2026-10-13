@@ -1091,6 +1091,9 @@ static void relaunch(int role, const char *join, int port) {
     PROCESS_INFORMATION pi;
 #define SETENV(n, v) SetEnvironmentVariableA(n, v)
 #else
+#ifdef __APPLE__
+    char exe[1024];
+#endif
 #define SETENV(n, v) ((v) != NULL ? setenv(n, v, 1) : unsetenv(n))
 #endif
     SETENV("BT3_NET_HOST", NULL);
@@ -1148,6 +1151,15 @@ static void relaunch(int role, const char *join, int port) {
     si.cb = sizeof(si);
     if (CreateProcessA(exe, NULL, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
         ExitProcess(0);
+    }
+#elif defined(__APPLE__)
+    {
+        extern int _NSGetExecutablePath(char *buf, uint32_t *size); /* <mach-o/dyld.h> */
+        uint32_t cap = sizeof(exe) - 1;
+        if (_NSGetExecutablePath(exe, &cap) == 0) {
+            char *argv[2] = {exe, NULL};
+            execv(exe, argv);
+        }
     }
 #else
     {

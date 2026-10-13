@@ -18,6 +18,9 @@
  * addresses of functions and variables, which differ from build to build.
  */
 #include <SDL3/SDL.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h> /* _NSGetExecutablePath */
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +50,9 @@ static void regions_init(void) {
     FILE *fp;
 #ifdef _WIN32
     long n = (long)GetModuleFileNameA(NULL, exe, sizeof(exe) - 1);
+#elif defined(__APPLE__)
+    uint32_t cap = sizeof(exe) - 1;
+    long n = _NSGetExecutablePath(exe, &cap) == 0 ? (long)strlen(exe) : -1;
 #else
     long n = (long)readlink("/proc/self/exe", exe, sizeof(exe) - 1);
 #endif
@@ -192,8 +198,13 @@ void Port_StateLog(unsigned vblank, const void *fight, unsigned fightSize) {
  *                    one's checksum, restore, run the n again and compare each. What online play does when an
  *                    input arrives late: several frames are undone and replayed.
  * ------------------------------------------------------------------------------------------------------------- */
-#if defined(__x86_64__)
-#ifdef _WIN32
+#if defined(__x86_64__) || defined(__APPLE__)
+#ifdef __APPLE__
+/* macOS: as on Windows, the registers are kept with a setjmp (the C library's, without the signal mask: macOS has
+   no ucontext functions on arm64) and the copy back runs on another stack through the port's stack switch. */
+#include <setjmp.h>
+extern void Port_CallOnStack(void (*fn)(void), void *top);
+#elif defined(_WIN32)
 /* Windows: the registers are kept with the compiler's own minimal setjmp (frame, stack pointer and the place to
    continue; everything else counts as lost over it, which is what a restore is), and the copy back runs on another
    stack through the port's stack switch (plat_mem.c). */
@@ -211,7 +222,9 @@ extern void Port_PadPlaySeek(long pos);
 typedef struct Snapshot {
     struct { uint8_t *at; size_t n; uint8_t *copy; size_t cap; } part[MAX_PARTS];
     int parts;
-#ifdef _WIN32
+#ifdef __APPLE__
+    jmp_buf jb;
+#elif defined(_WIN32)
     void *jb[5];
 #else
     ucontext_t ctx;
@@ -260,7 +273,12 @@ static int __attribute__((noinline)) state_save(Snapshot *s) {
     s->padPos = Port_PadPlayPos();
     s->loaded = 0;
     part_save(s, sp, (size_t)(top - sp)); /* the stack last: this frame's own contents as they are now */
-#ifdef _WIN32
+#ifdef __APPLE__
+    if (_setjmp(s->jb) != 0) {
+        return 1;
+    }
+    return 0;
+#elif defined(_WIN32)
     if (__builtin_setjmp(s->jb) != 0) {
         return 1;
     }
@@ -272,7 +290,7 @@ static int __attribute__((noinline)) state_save(Snapshot *s) {
 }
 
 static Snapshot *sLoading;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
 static ucontext_t sLoaderCtx;
 #endif
 
@@ -284,7 +302,9 @@ static void loader(void) {
     }
     Port_PadPlaySeek(s->padPos);
     s->loaded = 1;
-#ifdef _WIN32
+#ifdef __APPLE__
+    _longjmp(s->jb, 1);
+#elif defined(_WIN32)
     __builtin_longjmp(s->jb, 1);
 #else
     setcontext(&s->ctx);
@@ -300,7 +320,7 @@ static void state_load(Snapshot *s) {
     }
     roll_forget();
     sLoading = s;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     Port_CallOnStack(loader, stack + (1 << 20) - 64); /* (does not come back: the loader continues at the save) */
 #else
     getcontext(&sLoaderCtx);
@@ -343,7 +363,11 @@ static uint64_t parts_hash(void) {
  * A read() into a read-only page does not fault, it fails: whatever lets the system write file data straight
  * into the game's memory calls Port_StateTouch first.
  * ------------------------------------------------------------------------------------------------------------- */
+#ifdef __APPLE__
+#define PG 16384u /* the page size of Apple Silicon: what mprotect works in */
+#else
 #define PG 4096u
+#endif
 #define ROLL_MAX 64
 
 typedef struct Track { uint8_t *base, *shadow; uint32_t pages, first; } Track; /* first: its first global page number */
@@ -369,7 +393,11 @@ static uint32_t sRollId;
 static int tracked_part(const uint8_t *p) {
     int t;
     for (t = 0; t < sTracks; t++) {
+#ifdef __APPLE__
+        if (p >= sTrack[t].base && p < sTrack[t].base + PG) { /* (the heap starts inside its first tracked page) */
+#else
         if (p == sTrack[t].base) {
+#endif
             return 1;
         }
     }
@@ -392,6 +420,9 @@ static inline void dirty_note(uint32_t g) {
 #include <signal.h>
 #include <sys/mman.h>
 static struct sigaction sOldSegv;
+#ifdef __APPLE__
+static struct sigaction sOldBus; /* macOS reports a write to a read-only page as SIGBUS */
+#endif
 
 static void on_write_fault(int sig, siginfo_t *si, void *uc) {
     uintptr_t a = (uintptr_t)si->si_addr;
@@ -406,12 +437,17 @@ static void on_write_fault(int sig, siginfo_t *si, void *uc) {
         }
     }
     /* not ours: to whoever handled it before, or to the default (the write is tried again and ends the program) */
-    if (sOldSegv.sa_flags & SA_SIGINFO) {
-        sOldSegv.sa_sigaction(sig, si, uc);
-    } else if (sOldSegv.sa_handler != SIG_DFL && sOldSegv.sa_handler != SIG_IGN) {
-        sOldSegv.sa_handler(sig);
+#ifdef __APPLE__
+    struct sigaction *old = sig == SIGBUS ? &sOldBus : &sOldSegv;
+#else
+    struct sigaction *old = &sOldSegv;
+#endif
+    if (old->sa_flags & SA_SIGINFO) {
+        old->sa_sigaction(sig, si, uc);
+    } else if (old->sa_handler != SIG_DFL && old->sa_handler != SIG_IGN) {
+        old->sa_handler(sig);
     } else {
-        sigaction(SIGSEGV, &sOldSegv, NULL);
+        sigaction(sig, old, NULL);
     }
 }
 
@@ -464,6 +500,11 @@ static void track_start(void) {
         regions_init();
     }
     Port_HeapRegion(&heap, &heapSize);
+#ifdef __APPLE__
+    /* the heap starts inside a 16 KB page (0x003BE000); the mapping starts on that page, and so does the tracking */
+    heapSize += (uint32_t)((uintptr_t)heap & (PG - 1));
+    heap -= (uintptr_t)heap & (PG - 1);
+#endif
     sTrack[0].base = heap;
     sTrack[0].pages = heapSize / PG;
     sTrack[0].first = 0;
@@ -499,6 +540,9 @@ static void track_start(void) {
         sa.sa_flags = SA_SIGINFO | SA_NODEFER;
         sigemptyset(&sa.sa_mask);
         sigaction(SIGSEGV, &sa, &sOldSegv);
+#ifdef __APPLE__
+        sigaction(SIGBUS, &sa, &sOldBus);
+#endif
         mprotect(sTrack[0].base, (size_t)sTrack[0].pages * PG, PROT_READ);
         if (sTracks > 1 && sArenaPages != 0) {
             mprotect(sTrack[1].base, (size_t)sArenaPages * PG, PROT_READ);

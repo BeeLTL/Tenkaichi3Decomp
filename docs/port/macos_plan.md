@@ -3,8 +3,9 @@
 Status 2026-10-12: native arm64 build (`BT3_CC=mac64`) links and runs the attract-demo fight headless to the end
 ("battle finished"), and its fight state (`BT3_HASH`: health, positions, clock, random generator, and their
 checksum) equals the Linux clang64 build's on all 4428 vertical blanks (the whole-memory checksum differs, as between
-any two builds: it holds addresses). It draws through SDL_GPU's Metal back end, with sound (CoreAudio); no rollback
-yet. This file is the
+any two builds: it holds addresses). It draws through SDL_GPU's Metal back end, with sound (CoreAudio). Rollback works: `BT3_SYNCTEST=1` (depth 1, and
+depth 8 with the roll ring, `BT3_SYNCTEST_ROLL=1`) runs the whole demo fight with 0 differences; per blank about
+1 ms of game, 0.45 ms to save, 0.3 ms to restore. This file is the
 plan and the record of what was checked; update it as phases land.
 
 ## Ground rule
@@ -145,7 +146,8 @@ Needs Homebrew `llvm` (22.x), `sdl3`, and the repository's `.venv` (`libclang` 1
   (no game-address rules); the renderer and the C++ (`port/src/gs`, ImGui) are ordinary Apple clang arm64.
 - **Data tables** (`.s`): `port/tools/macho.py` (Mach-O names, `.long _g - __mh_execute_header + 0x20000000`).
 - **Link** (`link.py`, `link_mac`): ld64, entry `__wrap_main`, every segment moved with `-segaddr` so that
-  `__TEXT` starts at 1 TB + 0x20000000. `make_state.py` / `make_dat.py` are skipped (no Mach-O support yet).
+  `__TEXT` starts at 1 TB + 0x20000000. `make_state.py` reads ld64's map (symbols, not input sections; game addresses); `make_dat.py` is skipped (no
+  Mach-O support yet).
 
 Memory model: W = `&__mh_execute_header - 0x20000000` = 1 TB. A game pointer (4 bytes) is an offset from W; the PS2
 regions are mapped at W + their address (`plat_mem.c`, Apple branch); the program's own globals are in the window
@@ -173,6 +175,10 @@ Lessons (each was a crash; keep them):
 - `BT3_MACWIN_REPORT=1` during the build lists, in `port/build/macwin_report.txt`, every host pointer made into an
   integer outside the window arithmetic (pointer differences are expected there).
 
-Still to do: `state.c` rollback (ucontext does not exist on macOS arm64); `make_state.py` / `make_dat.py` for
-Mach-O; sound, input, netplay checks; `.app` package. Calls from hard-float port code (Apple clang) to game
+State saving on macOS (`state.c`): `_setjmp`/`_longjmp` and the port's stack switch instead of ucontext, 16 KB pages
+for the written-page tracking, and SIGBUS as well as SIGSEGV (macOS reports a write to a read-only page as SIGBUS).
+The program's path comes from `_NSGetExecutablePath` (there is no /proc).
+
+Still to do: an online match Mac against Linux (the attract demo with `BT3_NET_HOST` crashes on Linux too: not a
+test; needs a pad recording, `BT3_PAD_TABLE`, played with `BT3_NET_SCRIPT`); `make_dat.py` for Mach-O; sound, input, netplay checks; `.app` package. Calls from hard-float port code (Apple clang) to game
 functions are not covered by the signature list.
