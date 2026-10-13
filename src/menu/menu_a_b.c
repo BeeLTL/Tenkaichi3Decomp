@@ -94,6 +94,19 @@ s32 Progress_Main(s32 arg) {
             gProgress->mode = 56;
             gProgress->unk68C |= 1;
         }
+#ifdef PORT
+        {   /* Tenkaichi Budokai Online's sparring fight (Train While Waiting): its "Back to Budokai Online" goes back
+               to the search (menu/port_tbo.c) */
+            extern s32 gPortTboSpar;
+            extern s32 gPortDuelRole;
+
+            if (gPortTboSpar && (reason & 0x10)) {
+                gPortDuelRole = 6;
+                gProgress->mode = 38;
+            }
+            gPortTboSpar = 0;
+        }
+#endif
     }
     if (gProgress->mode == 1 || gProgress->mode == 4) {
         if (gMenuArc1 == NULL) {

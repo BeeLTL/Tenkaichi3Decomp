@@ -170,7 +170,11 @@ extern MenuProgress *gProgress;
 
 /* ---- MainMenu (menu_a.c) ---- */
 
+#ifdef PORT
+#define MAINMENU_ITEM_MAX 12 /* PC: "Tenkaichi Budokai Online" (11) is listed too */
+#else
 #define MAINMENU_ITEM_MAX 11
+#endif
 #define MAINMENU_FLASH_NUM 1    /* the code loops over the movies although there is one: see menu_a.c */
 #define MAINMENU_ROWS 4        /* plates the cursor can be on */
 
