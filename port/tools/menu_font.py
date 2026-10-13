@@ -208,6 +208,10 @@ def catalog(data):
     for index, style in ((0,'normal'),(1,'selected')):
         add(f'evolution-{style}',452,1,5,index,['Character Customize','Item Shop','Evolution Z Explanation'],
             text_from='evolution-normal' if index else None)
+        add(f'customize-menu-{style}',452,3,4,index,['Equip Item','Password','Distribute Z Points'],width=256,
+            text_from='customize-menu-normal' if index else None)
+        add(f'customize-slots-{style}',452,3,4,index+2,['','','','Distribute Z Points'],
+            centered=True,text_from='customize-slots-normal' if index else None)
         add(f'item-shop-{style}',452,2,3,index,['Item Exchange','Item List'],
             text_from='item-shop-normal' if index else None)
         add(f'data-center-{style}',459,1,8,index,['Password Input Screen','Replay','Fighter Catalog'],
@@ -605,7 +609,7 @@ def export(args,groups):
     uniform_families=('history-action','ultimate-battle','sim-dragon-actions','world-tour-list',
                       'world-tour-custom','versus-settings','versus-dp','versus-onoff','versus-time','versus-com-level',
                       'versus-referee','versus-transform','save-confirm','item-shop-confirm','battle-training','sound-digits','character-color',
-                      'character-reference','character-preview-color')
+                      'character-reference','character-preview-color','customize-menu','customize-slots')
     for family in uniform_families:
         entries=[r for r in rows if r['id'].split('/')[0] == family or r['id'].startswith(family+'-')]
         if entries:
@@ -633,7 +637,10 @@ def export(args,groups):
     else:
         config=json.loads(path.read_text())
         config.pop('font',None)
-        config['labels']=[r for r in config['labels'] if not r['id'].startswith('submenu-')]
+        config['labels']=[r for r in config['labels'] if not r['id'].startswith(
+            ('submenu-','customize-equipment/','customize-ability-limit-up/',
+             'customize-type/','customize-ability-limit/','customize-character-z-points/'))
+            and not (r['id'].startswith('customize-slots-') and not r['id'].endswith('/0/3'))]
         known={row['id'] for row in config['labels']}
         fresh={row['id']:row for row in rows}
         for row in config['labels']:
