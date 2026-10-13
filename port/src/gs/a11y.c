@@ -16,6 +16,8 @@
  *                     a11y_key_gauges1  the keys that say player 1's and player 2's gauges in a fight (default F3
  *                     a11y_key_gauges2  and F4); the touchpad click says them too, by the half it is clicked on
  *                     a11y_log=1        the log below, into a11y_log.txt in the program's folder (for a report)
+ *                     a11y_cue_volume   the fight's cues (a11y_game.c: a transformation or the Ultimate Blast within
+ *                                       reach), in percent: default 60, 0 turns them off
  *   $BT3_A11Y_LOG=<file>                writes what is said, one line each with the blank (tests without a screen
  *                                       reader: the headless build has no library), and notes on what changed on
  *                                       the screen, marked "#"
@@ -30,6 +32,7 @@
  * took NVDA while NVDA was not running (0.16.5).
  */
 #include <SDL3/SDL.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -154,7 +157,7 @@ static PrismBackend *choose_backend(PrismContext *ctx) {
 /* ---- the speaker ---- */
 
 static volatile int sOn; /* set once by the game's thread before the speaker starts; read by the render thread */
-static int sSpanish, sRepeatKey, sGaugeKey[2];
+static int sSpanish, sRepeatKey, sGaugeKey[2], sCueVolume;
 static int sFrame; /* blanks since the start (only for the log) */
 static SDL_AtomicInt sAsk;   /* the gauges asked for and not said yet: 1 + the player's side, 0 none */
 static SDL_AtomicInt sFight; /* 1 while a fight is on with no menu over it (a11y_game.c says so every blank) */
@@ -420,6 +423,8 @@ static void start(void) {
     sRepeatKey = Port_Setting("a11y_key_repeat", SDL_SCANCODE_F2);
     sGaugeKey[0] = Port_Setting("a11y_key_gauges1", SDL_SCANCODE_F3);
     sGaugeKey[1] = Port_Setting("a11y_key_gauges2", SDL_SCANCODE_F4);
+    sCueVolume = Port_Setting("a11y_cue_volume", 60);
+    sCueVolume = sCueVolume < 0 ? 0 : sCueVolume > 100 ? 100 : sCueVolume;
     sLock = SDL_CreateMutex();
     sWake = SDL_CreateCondition();
     if (sLock == NULL || sWake == NULL || SDL_CreateThread(speaker, "a11y", NULL) == NULL) {
@@ -532,6 +537,95 @@ void PortA11y_Event(const SDL_Event *ev) {
 int PortA11y_GaugesAsked(int fight) {
     SDL_SetAtomicInt(&sFight, fight);
     return SDL_SetAtomicInt(&sAsk, 0);
+}
+
+/* ---- the fight's cues ---- */
+
+#define CUE_RATE 48000
+#define CUE_MAX (CUE_RATE * 450 / 1000) /* the longest cue */
+#define CUE_EDGE (CUE_RATE * 5 / 1000)  /* (no cue starts at full strength: no click) */
+#define CUE_TAU 6.2831853f
+
+extern SDL_AudioDeviceID Port_AudioDevice(void); /* snd_adx.c */
+
+static SDL_AudioStream *sCue;
+static int sCueTried;
+
+/* The sound of a cue, -1..1, into out (CUE_MAX samples); returns how many. Two that cannot be taken for each other:
+   kind 0 (a transformation) a tone that slides up from E4 to B5 and holds a moment, like powering up; kind 1 (the
+   Ultimate Blast) a small bell struck twice on the same note, A5. */
+static int cue_wave(int kind, float *out) {
+    int len = kind == 0 ? CUE_RATE * 320 / 1000 : CUE_RATE * 420 / 1000, glide = CUE_RATE * 240 / 1000, i, k, t;
+    float phase = 0.0f, s, x, f;
+
+    for (i = 0; i < len; i++) {
+        if (kind == 0) {
+            /* three times the pitch over the glide, then held; the phase is summed since the pitch moves */
+            f = 329.63f * powf(3.0f, (float)(i < glide ? i : glide) / glide);
+            phase += CUE_TAU * f / CUE_RATE;
+            phase -= phase > CUE_TAU ? CUE_TAU : 0.0f;
+            s = 0.5f * (sinf(phase) + 0.3f * sinf(2.0f * phase) + 0.1f * sinf(3.0f * phase));
+        } else {
+            /* a bell: its partials (1, 2.76 and 5.40 times the note) fall away, the high ones faster */
+            s = 0.0f;
+            for (k = 0; k < 2; k++) {
+                if ((t = i - k * (CUE_RATE * 120 / 1000)) < 0) {
+                    continue;
+                }
+                x = (float)t / CUE_RATE;
+                s += (t < CUE_EDGE ? (float)t / CUE_EDGE : 1.0f) *
+                     (expf(-9.0f * x) * sinf(CUE_TAU * 880.0f * x) + 0.35f * expf(-18.0f * x) * sinf(CUE_TAU * 2428.8f * x) +
+                      0.15f * expf(-30.0f * x) * sinf(CUE_TAU * 4752.0f * x));
+            }
+            s *= 0.7f;
+        }
+        /* in over the first 5 ms and out over the last 50 */
+        s *= (i < CUE_EDGE ? (float)i / CUE_EDGE : 1.0f) * (len - i < CUE_EDGE * 10 ? (float)(len - i) / (CUE_EDGE * 10) : 1.0f);
+        out[i] = s > 1.0f ? 1.0f : s < -1.0f ? -1.0f : s;
+    }
+    return len;
+}
+
+/* The cue as it is played: 16-bit stereo at CUE_RATE, on the left for player 1 (side 0) and on the right for player
+   2, the other side at a fifth; into out (CUE_MAX frames). Returns the frames. */
+static int cue_pcm(int side, int kind, int16_t *out) {
+    static float wave[CUE_MAX];
+    float loud = 0.25f * (float)sCueVolume / 100.0f, soft = loud * 0.2f;
+    int len = cue_wave(kind, wave), i;
+
+    for (i = 0; i < len; i++) {
+        out[i * 2] = (int16_t)(wave[i] * (side == 0 ? loud : soft) * 32767.0f);
+        out[i * 2 + 1] = (int16_t)(wave[i] * (side == 0 ? soft : loud) * 32767.0f);
+    }
+    return len;
+}
+
+/* A cue for a11y_game.c (the game's thread), made here, not one of the game's sounds: kind 0, one transformation
+   more can be taken; kind 1, the Ultimate Blast can be fired. Two at the same time sound one after the other. */
+void PortA11y_Cue(int side, int kind) {
+    static int16_t buf[CUE_MAX * 2];
+    SDL_AudioDeviceID dev;
+    SDL_AudioSpec spec;
+
+    if (!sOn || sCueVolume <= 0 || (unsigned)kind > 1) {
+        return;
+    }
+    if (sCue == NULL && !sCueTried) {
+        if ((dev = Port_AudioDevice()) == 0) {
+            return; /* (no sound device, or none yet) */
+        }
+        sCueTried = 1;
+        spec.format = SDL_AUDIO_S16;
+        spec.channels = 2;
+        spec.freq = CUE_RATE;
+        if ((sCue = SDL_CreateAudioStream(&spec, NULL)) != NULL && !SDL_BindAudioStream(dev, sCue)) {
+            SDL_DestroyAudioStream(sCue);
+            sCue = NULL;
+        }
+    }
+    if (sCue != NULL) {
+        SDL_PutAudioStreamData(sCue, buf, cue_pcm(side, kind, buf) * 4);
+    }
 }
 
 /* One of the game's strings (UTF-16 in the machine's order, U+FEFF first, '\n' between lines) as UTF-8 on one

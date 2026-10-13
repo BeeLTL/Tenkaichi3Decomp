@@ -3444,6 +3444,92 @@ static void fight_gauges(void) {
     PortA11y_Say(text, A11Y_INTERRUPT);
 }
 
+/* ---- the fight's cues: a transformation or the Ultimate Blast within reach ---- */
+
+/* src/battle: the checks the game makes when the buttons are pressed (btl_act_j.c: BtlAct_CheckTransformInput and
+   BtlAct_CanUseTechnique), and what they need. All of them only read; the fighter goes through here by address. */
+extern void GAME_PTR BtlChar_FindBySide(int side);
+extern int BtlChar_GetFrame(void), BtlCharApi_GetChara(int objId), BtlCharApi_GetActiveMember(int objId);
+extern int BtlAct_CanTransform(void GAME_PTR chr, unsigned index, int needBlast, int needAllowed);
+extern int BtlChar_TestFlag(void GAME_PTR chr, unsigned n), BtlChar_TestMemberUnk70(void GAME_PTR chr);
+extern int BtlMember_HasKi(void GAME_PTR chr, int amount), BtlSuper_GetKiCost(void GAME_PTR chr, int slot);
+extern void PortA11y_Cue(int side, int kind); /* gs/a11y.c */
+
+#define CUE_TRANSFORM 0
+#define CUE_ULTIMATE 1
+#define CUE_STEADY 15          /* blanks a change must hold before it counts: a quarter of a second */
+#define CHR_POWERED_UP 6       /* fighter flag: the powered-up mode, which the Ultimate Blast needs */
+#define CHR_ANY_FORM 0x10F     /* fighter flag: transforms even where the side's rule refuses it */
+#define CHR_FOE_TECHNIQUE 0xAF /* fighter flag: the rival is firing a technique (btl_char_flag_opp.c), no transforming */
+#define TECH_ULTIMATE 4        /* include/battle/btl_tech_b.h: BTL_SLOT_ULTIMATE */
+#define TRANSFORMS 4
+
+/* How many of its transformations side's fighter could take, or whether it could fire its Ultimate Blast (1 or 0),
+   by the game's own checks; left out is what comes and goes from one moment to the next: whether the fighter is
+   free to act, the lock-on the Ultimate Blast also needs, and (in fight_cues) the rival's technique under way. */
+static int cue_ready(void GAME_PTR chr, int kind) {
+    unsigned i;
+    int n = 0;
+
+    if (kind == CUE_ULTIMATE) {
+        return BtlChar_TestFlag(chr, CHR_POWERED_UP) && !BtlChar_TestMemberUnk70(chr) &&
+               BtlMember_HasKi(chr, BtlSuper_GetKiCost(chr, TECH_ULTIMATE));
+    }
+    for (i = 0; i < TRANSFORMS; i++) {
+        n += BtlAct_CanTransform(chr, i, 1, !BtlChar_TestFlag(chr, CHR_ANY_FORM)) != 0;
+    }
+    return n;
+}
+
+/* The cues, a sound on the player's side (gs/a11y.c): one sounds when what it tells has grown (one transformation
+   more within reach, the Ultimate Blast within reach) and held a quarter of a second; a change back must hold as
+   long too. It all starts again when the fighter changes (another member, a transformation, the next fight).
+   Nothing while the gauges are hidden or a menu is over the fight. */
+static void fight_cues(void) {
+    static int said[2][2], run[2][2], who[2], frame;
+    void GAME_PTR chr;
+    char note[80];
+    int side, kind, now, was;
+
+    if (!fighting() || btl_menu_shown() != NULL || BtlChar_FindBySide(0) == NULL) {
+        return;
+    }
+    if ((now = BtlChar_GetFrame()) < frame) {
+        memset(who, 0, sizeof(who));
+    }
+    frame = now;
+    for (side = 0; side < 2; side++) {
+        if ((chr = BtlChar_FindBySide(side)) == NULL) {
+            continue;
+        }
+        now = (BtlCharApi_GetActiveMember(side) << 16) | (BtlCharApi_GetChara(side) + 1);
+        if (now != who[side]) {
+            who[side] = now;
+            memset(said[side], 0, sizeof(said[side]));
+            memset(run[side], 0, sizeof(run[side]));
+        }
+        for (kind = CUE_TRANSFORM; kind <= CUE_ULTIMATE; kind++) {
+            if (kind == CUE_TRANSFORM && BtlChar_TestFlag(chr, CHR_FOE_TECHNIQUE)) {
+                run[side][kind] = 0; /* the count holds until the rival's technique is over */
+                continue;
+            }
+            if ((now = cue_ready(chr, kind)) == (was = said[side][kind])) {
+                run[side][kind] = 0;
+            } else if (++run[side][kind] >= CUE_STEADY) {
+                said[side][kind] = now;
+                run[side][kind] = 0;
+                if (now > was) {
+                    snprintf(note, sizeof(note), kind == CUE_TRANSFORM ? "cue: player %d can take %d transformations"
+                                                                       : "cue: player %d can fire the Ultimate Blast",
+                             side + 1, now);
+                    PortA11y_Note(note);
+                    PortA11y_Cue(side, kind);
+                }
+            }
+        }
+    }
+}
+
 /* Once per blank (plat_stub.c: Port_VBlank). */
 void PortA11y_GameTick(void) {
     int v;
@@ -3489,4 +3575,5 @@ void PortA11y_GameTick(void) {
     msg_window();
     shown_text();
     fight_gauges();
+    fight_cues();
 }
