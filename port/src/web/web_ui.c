@@ -141,6 +141,20 @@ static void set_music_follows(int x) {
     Port_SettingSave("music_follows_speed", gPortMusicFollows);
     Port_SettingsWrite();
 }
+/* The start of the game and the menus' shape (upstream 0.1.32; ui.cpp's Misc and UI tabs set them the same way).
+   skip_logos / skip_intro are read once at the start (FirstRun_Main, src/menu/menu_i_c.c): from the next start, which
+   in the browser is the next load of the page (the settings file is kept by the page). skip_copyright is read by
+   the title screen each time it runs (Title_Run, src/menu/menu_a_c.c). */
+extern int Port_Menus43(void);
+extern void Port_Menus43Set(int on);
+static int get_skip_logos(void) { return Port_Setting("skip_logos", 0) != 0; }
+static void set_skip_logos(int x) { Port_SettingSave("skip_logos", x != 0); Port_SettingsWrite(); }
+static int get_skip_intro(void) { return Port_Setting("skip_intro", 0) != 0; }
+static void set_skip_intro(int x) { Port_SettingSave("skip_intro", x != 0); Port_SettingsWrite(); }
+static int get_skip_copyright(void) { return Port_Setting("skip_copyright", 0) != 0; }
+static void set_skip_copyright(int x) { Port_SettingSave("skip_copyright", x != 0); Port_SettingsWrite(); }
+static int get_menus43(void) { return Port_Menus43(); }
+static void set_menus43(int x) { Port_Menus43Set(x != 0); Port_SettingSave("menus_43", x != 0); Port_SettingsWrite(); }
 static void set_game_speed(int x) {
     Port_GameSpeedSet(x);
     Port_AudioRefresh();
@@ -180,6 +194,10 @@ static const struct {
     {"music_follows_speed", get_music_follows, set_music_follows},
     {"hud_layout", get_hudLayout, set_hudLayout},
     {"frame_skip", get_frameSkip, set_frameSkip},
+    {"menus_43", get_menus43, set_menus43},
+    {"skip_logos", get_skip_logos, set_skip_logos},
+    {"skip_intro", get_skip_intro, set_skip_intro},
+    {"skip_copyright", get_skip_copyright, set_skip_copyright},
     {"game_speed", Port_GameSpeed, set_game_speed},
     {"texture_pack", get_texPack, set_texPack},
     {"texture_pack_count", get_texPackCount, NULL},

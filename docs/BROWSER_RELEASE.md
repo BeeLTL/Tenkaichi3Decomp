@@ -79,7 +79,7 @@ The output goes to `port/build/web/`. The toolchain and tests are in [BROWSER_BU
 ## What works
 
 - **Game:** boot, intro movie, menus and battles. The game's own simulation gives a trace identical, line for line, to the native PC build's.
-- **Settings panel in the page:** resolution, aspect ratio, HUD layout, effects, audio levels, controls, game speed, Unlock everything.
+- **Settings panel in the page:** resolution, aspect ratio, HUD layout, menus in 4:3, effects, audio levels, controls, game speed, skip logos / intro / copyright page, Unlock everything.
 - **Controllers:** set-up, presets, a live view and a test.
 - **Saves:** kept in the browser (IndexedDB), with a backup version, recovery, and export and import as a `.zip`.
 - **Performance dashboard** and a diagnostics export.
@@ -89,7 +89,7 @@ The output goes to `port/build/web/`. The toolchain and tests are in [BROWSER_BU
 
 - **Not available in the browser:**
   - online play;
-  - the native settings window (ImGui) and the options only it offers: side bars, "Check for updates", and since 0.1.32 skip logos / intro / copyright and menus in 4:3, which have no page setting yet;
+  - the native settings window (ImGui) and the options only it offers: side bars and "Check for updates". (Skip logos / intro / copyright and menus in 4:3 are in the page's panel since after `browser-0.1.33.1`, commit "Page settings for the start and menu options".)
   - the Vulkan renderer.
 - **The game-data check is not run** (it would read all 3 GB). The log, the crash report and the dashboard say so.
 - **Smooth motion** is off with WebGL 2 (measured: uneven), and up to 60 pictures a second with WebGPU.
