@@ -317,13 +317,14 @@ static void PauseMenu_PortRemove(BtlMenu *menu, s32 id) {
 void PauseMenu_Init(void) {
 #ifdef PORT
     {
-        /* Online the menu at the end of a battle does without two of its six entries (asked for by the user):
-           "Return to Vs Menu" (id 0xE; a session has no versus menu, the host sets the rules in the lobby window)
-           and "Save Replay Data" (id 0x17). Done on both copies at every battle start (the first time takes them
+        /* Online the menu at the end of a battle does without three of its six entries (asked for by the user):
+           "Return to Vs Menu" (id 0xE; a session has no versus menu, the host sets the rules in the lobby window),
+           "View Replay Data" (id 0x18) and "Save Replay Data" (id 0x17). Done on both copies at every battle start (the first time takes them
            out, later ones find nothing); the program is started afresh after a session, so offline has them. */
         extern int Port_NetActive(void);
         if (Port_NetActive()) {
             PauseMenu_PortRemove(&gPauseMenuResultVersus, 0xE);
+            PauseMenu_PortRemove(&gPauseMenuResultVersus, 0x18);
             PauseMenu_PortRemove(&gPauseMenuResultVersus, 0x17);
         }
     }

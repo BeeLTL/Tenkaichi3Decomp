@@ -2847,16 +2847,17 @@ each agree in the whole state; with lag and loss too; with `BT3_NET_SEED=0` the 
 was before the change. Not done: the Random cell itself was not driven (the tables do not go to it); what was
 checked is that the generator it draws from differs from session to session.
 
-## Online: two entries less in the menu at the end of a battle (2026-10-13)
+## Online: three entries less in the menu at the end of a battle (2026-10-13)
 
 Asked for by the user. The menu after a versus battle (`gPauseMenuResultVersus`, 0x2C5408) has six entries: Fight
 Again (id 0x13), Return to Character Select (0xD), Return to Vs Menu (0xE), Return to Main Menu (0xF), View Replay
-Data (0x18), Save Replay Data (0x17). Online, "Return to Vs Menu" and "Save Replay Data" are taken out
+Data (0x18), Save Replay Data (0x17). Online, "Return to Vs Menu", "View Replay Data" and "Save Replay Data" are
+taken out
 (`src/battle/hud_0.c` `PauseMenu_Init`, `PauseMenu_PortRemove`): the entries behind move up and the count goes
 down. The menus are data (a `BtlMenu` with its `BtlMenuItem`s); the engine finds entries by id and sizes the box by
 the count, so any menu of any mode can be shortened this way, or an entry stepped over with its `disabled` word.
 Done on both copies at every battle start; a session ends with a fresh start of the program, so offline has all six.
 
-Test: two copies as above. The picture of both players' screens shows the four entries left; with random presses
+Test: two copies as above. The picture of both players' screens shows the three entries left; with random presses
 through four battle ends (Fight Again, the character select) the two copies agree in the whole state.
 
