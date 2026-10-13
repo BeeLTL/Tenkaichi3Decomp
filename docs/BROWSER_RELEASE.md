@@ -81,6 +81,7 @@ The output goes to `port/build/web/`. The toolchain and tests are in [BROWSER_BU
 - **Game:** boot, intro movie, menus and battles. The game's own simulation gives a trace identical, line for line, to the native PC build's.
 - **Settings panel in the page:** resolution, aspect ratio, HUD layout, menus in 4:3, effects, audio levels, controls, game speed, skip logos / intro / copyright page, Unlock everything.
 - **Controllers:** set-up, presets, a live view and a test.
+- **Touch controls** (since after `browser-0.1.33.1`): an on-screen d-pad, analog stick and buttons over the game, played as player 1, shown on touch screens. They have size, opacity, left- or right-handed layouts, and a layout editor. Their preferences are kept apart from settings and saves.
 - **Saves:** kept in the browser (IndexedDB), with a backup version, recovery, and export and import as a `.zip`.
 - **Performance dashboard** and a diagnostics export.
 - **Added stages, songs and texture packs:** in the data folder's `stages`, `songs` and `textures` folders, read over HTTP.
@@ -96,6 +97,7 @@ The output goes to `port/build/web/`. The toolchain and tests are in [BROWSER_BU
 - **Not verified in the browser:**
   - playing an added song;
   - physical controllers (simulated ones are tested);
+  - touch controls on a real phone or tablet: tested only with simulated touch input on a desktop browser.
   - the sound's quality: the automated test (`port/tests/web/audio.js`) checks that music, effects and voices come out, and that the volume settings reach them, not how they sound.
 - **Saves** live in the browser's storage: clearing site data or a private window loses them. Export a copy.
 - **Not tested at all:** Firefox and Safari, mobile browsers, and the 32-bit native builds, rendering on a real GPU and the PS2 matching build. The last three are native, outside this release.

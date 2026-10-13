@@ -19,6 +19,7 @@ Environment:
 | Settings kept | Yes (localStorage) | settings file | status doc |
 | Controllers: set-up, presets, live view, test | Yes | ImGui | `controllers.js` |
 | Keyboard | Yes | Yes | `controllers.js` |
+| Touch controls (on-screen, player 1) | Yes: d-pad, analog stick, face / shoulder buttons, START, SELECT, L3, R3; size, opacity, hand, layout editor | — | `web/touch.js` (**simulated touch**; no real device tested) |
 | Game saves kept, with backup, export and import | Yes (IndexedDB) | host files | `saves.js` |
 | Performance dashboard, diagnostics export | Yes | — | `dashboard.js` |
 | Smooth motion | Limited per renderer (measured) | Yes | status doc |

@@ -83,3 +83,21 @@ The engine also gets nothing from touch while the settings window is open (the h
 - **Full screen:** iPhone browsers do not offer element full screen. The fixed play layout is the fallback.
 - **Haptics** (`navigator.vibrate`) are not used: they are not in the requirements, and the support varies.
 - **Player 1 only:** touch controls play as player 1 (socket 0). A second player on the same screen is out of scope.
+
+## 5. Result (2026-10-13)
+
+**Implemented as planned:**
+- **The hook:** `gs_input.c` gathers keyboard and on-screen actions into one mask, and `web_ui.c` provides `PortInput_VirtualActions` and `Bt3Ui_TouchSet`.
+- **The overlay and its settings:** `port/web/touch.js`, the Touch tab, and the styles in `index.html`.
+- **File lists:** `touch.js` is in `wasm_build.py`'s page files and in `browser_package.py`.
+
+**Corrections found while testing:**
+- The touch code may call the engine only after its `ready`. Calling it at `attach` (before the runtime is up) aborted the start, so `Bt3Settings.engineReady` was added.
+- The d-pad's touch area is square, so its corners (the diagonals) can be touched; it was round like the buttons.
+- The constants are prefixed `TOUCH_`, because classic scripts share one global scope (`controllers.js` has `STICK_DEAD`).
+
+**Native:** `port/tests/native/compare.sh v0.1.33 7635ad6` (the hook commit) gave headless 70, OpenGL 12 + 4 screenshots, Vulkan 67 + 15, win64 70 lines: **all identical**.
+
+**Test:** `port/tests/web/touch.js` (32 checks, PASS twice) uses **simulated touch input**: Chrome's touch emulation on a phone-sized viewport (915 × 412, then portrait). It reads what the game received from the engine. The emulated device has a quirk: after multi-finger sequences, touches are not delivered to the next page loaded (bisected; the controls are not involved). The reload checks therefore run first.
+
+**Not done here:** a real phone or tablet. There is no device on this machine, so behaviour on real touch hardware, a real phone's memory, and its browser are **unverified**.
