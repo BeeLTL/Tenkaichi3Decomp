@@ -2772,3 +2772,55 @@ request given to the Worker) but **not run**: there is no Node on the machine th
 new code has not been executed at all. Run `node port/matchmaking/test.mjs` before the Worker is deployed. Not run
 either: the release build in its container and the workflow (so the secret's way through GitHub and docker is
 written, not seen), a real Windows machine, and anything against Cloudflare.
+
+## Online: the pause menu no longer stops the fight (2026-10-13)
+
+Asked for by the user, against players who hold the other in a pause. Until now START in an online match was the
+game's own pause: both copies run the same game from the same buttons, so the fight stopped for both for as long as
+the one who pressed it liked.
+
+The game keeps two flags: `BATTLE_FLAG_PAUSE_MENU` (the menu is open and run by the fight state,
+`BtlSeqFight_Update`) and `BATTLE_FLAG_PAUSE` (everything that moves checks it). In an online match
+(`Port_NetActive()`; offline nothing changes) only the first is set:
+
+- `src/battle/btl_seq.c` `BtlSeqFight_Update`: START opens the menu without `BATTLE_FLAG_PAUSE` and without
+  pausing the streams and sound group 4; the fight, its clock and its sound go on. If the battle ends under an open
+  menu (knockout, time up), the menu is closed (`PauseMenu_Reset`); not when the menu itself ended the battle, where
+  it stays up through the fade as in the original.
+- `src/battle/btl_input.c` `BtlInput_Sample`: the fighter of the player whose menu it is takes no buttons and a
+  centred stick while it is open (the buttons are the menu's).
+- `src/battle/hud_0.c` `PauseMenu_Draw`: the pause menu is drawn only on the copy of the player who opened it
+  (`BtlPause_GetMenuPad() == Port_NetMe()`). The result menu after a battle is drawn for both, as before.
+- `src/sys/snd.c` `gPortSeSilent`: the menu's sounds are asked for on both copies, with volume 0 on the other
+  player's.
+- `src/battle/hud_e_d.c` `BtlPause_CheckOpen`: the pause for a pad pulled out is not taken online.
+
+The menu and its state are part of the game on both copies as before (one is open at a time; the other player's
+START does nothing while it is). Only drawing and volume differ between the two, which the game's state does not
+read back: with both copies showing the same view the checksum of the whole state differs from the blank the menu
+is first drawn, the fight's values do not, and the desync check (which notes the fight's values) stays quiet.
+
+The versus pause menu has four entries: Continue Battle, View Skill List, Return to Character Select, Return to
+Main Menu. There is no restart. The two "return" entries end the battle for both players as before (leaving a match
+cannot be prevented anyway).
+
+Tests: two copies without a window over 127.0.0.1, buttons from a table (as for the desync, above), START and the
+menu's buttons put into one player's part of the table; `BT3_HASH` logs compared blank by blank.
+
+| case | result |
+|---|---|
+| player 2 opens the menu for 300 blanks, closes it | clock 1832 -> 1982 while open (the build before: stays at 1833); player 2 is hit meanwhile; fight values the same on both copies to the end of the run |
+| the same, each copy with its own view, pictures taken (GPU renderer, offscreen) | the menu ("2P PAUSE") on player 2's picture only; the same clock on both |
+| Return to Character Select picked | the battle ends for both, the next battles run, values the same |
+| menu held open until the time is up | the battle ends, the menu is gone, the next battles run, values the same |
+| menu held open by the player who is then knocked out | the same |
+| skill list opened, paged and left, by player 1 and by player 2, with 8 ms lag and 5% loss | values the same |
+
+Not done / known:
+- the button that closes the menu reaches the fighter as a new press on the next blank (Continue Battle with X);
+- the title still says PAUSE;
+- only one menu at a time: while one player's is open the other's START does nothing;
+- not tried between two machines, nor with a transformation or a cut scene starting under an open menu by intent
+  (the random tables may have done so, unchecked).
+- Both players need this release: the fight is computed differently from before once START is pressed (it is in the
+  release that carries `NET_VERSION` 4).

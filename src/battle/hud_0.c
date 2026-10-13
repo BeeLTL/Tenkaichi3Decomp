@@ -381,5 +381,18 @@ s32 PauseMenu_Update(s32 pad, s32 which) {
 
 /* Draws the menu when it is shown. */
 void PauseMenu_Draw(void) {
+#ifdef PORT
+    {
+        /* Online the pause menu belongs to the one who opened it (the fight goes on under it, btl_seq.c): it is
+           not drawn on the other screen. The result menu (which = 1) is drawn for both as before. */
+        extern int Port_NetActive(void);
+        extern int Port_NetMe(void);
+        extern s32 BtlPause_GetMenuPad(void);
+        if (Port_NetActive() && gPauseMenuWhich == 0 && (Battle_GetWork()->flags & BATTLE_FLAG_PAUSE_MENU) &&
+            BtlPause_GetMenuPad() != Port_NetMe()) {
+            return;
+        }
+    }
+#endif
     BtlMenu_DrawAll();
 }
