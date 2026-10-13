@@ -176,6 +176,10 @@ Lessons (each was a crash; keep them):
 - **Pages are 16 KB**: regions are mapped from the 16 KB page holding their first address.
 - **lldb** needs Developer Mode (`sudo DevToolsSecurity -enable`), otherwise it waits for an authorization prompt.
   `plat_crash.c` prints registers (pc, lr, sp, x0-x28) and the game address of the fault instead.
+- **A stale `bt3_mac.dat` crashes at start** (SIGBUS in `Port_MapMemory`, a write into `__TEXT`): it is written
+  for a build from the blank data tables (install.py) and lists addresses of that link. A later build with the
+  data linked in (`gen_data.py --asm`, no `SKELETON`) does not remove it, and the program still applies it. Delete
+  it when changing between the two.
 - `BT3_MACWIN_REPORT=1` during the build lists, in `port/build/macwin_report.txt`, every host pointer made into an
   integer outside the window arithmetic (pointer differences are expected there).
 
