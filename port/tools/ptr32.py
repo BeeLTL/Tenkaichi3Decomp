@@ -26,7 +26,8 @@ def _known_kind(kind_id):
         return _kind_from_id(kind_id)
     except ValueError:
         return K.UNEXPOSED_ATTR
-K.from_id = staticmethod(_known_kind)
+if sys.platform == "darwin":  # (only there: on Linux and Windows an unknown kind stops the tool, as it always did)
+    K.from_id = staticmethod(_known_kind)
 
 ROOT_B = str(__import__("pathlib").Path(__file__).resolve().parents[2]).replace("\\", "/").encode() + b"/"
 P32 = "* __ptr32 __uptr "

@@ -97,7 +97,7 @@ def main():
             secs.append((int(m.group(3), 16), int(m.group(5), 16), int(m.group(2), 16)))
     flag = next((int(l.split()[0], 16) for l in subprocess.run([toolchain.llvm("llvm-nm") if toolchain.MAC else PREFIX + "nm", str(exe)],
                                                               capture_output=True, text=True).stdout.splitlines()
-                 if l.endswith((" gPortDataStripped", " _gPortDataStripped"))), None)
+                 if l.endswith(" _gPortDataStripped" if toolchain.MAC else " gPortDataStripped")), None)
     off = next((o + flag - va for va, o, size in secs if flag is not None and va <= flag < va + size), None)
     if off is None:
         raise SystemExit("gPortDataStripped not found in the program's data")

@@ -28,7 +28,7 @@ def main():
     out = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else "gamedata")
     disc = out / "disc"
     disc.mkdir(parents=True, exist_ok=True)
-    if shutil.which("7z") is None and shutil.which("bsdtar") is not None:  # (macOS: its own bsdtar reads disc images)
+    if sys.platform == "darwin" and shutil.which("7z") is None and shutil.which("bsdtar") is not None:  # (macOS: its own bsdtar reads disc images)
         subprocess.run(["bsdtar", "-xf", iso, "-C", str(disc), "DATA", "BIN", "SLUS_216.78"], check=True, stdout=subprocess.DEVNULL)
     else:
         subprocess.run(["7z", "x", "-y", f"-o{disc}", iso, "DATA", "BIN", "SLUS_216.78"], check=True,

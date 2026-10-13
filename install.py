@@ -246,12 +246,13 @@ def step_disc(args):
         return None
     iso = find_iso(args)
     s = Step("Disc image")
-    bsdtar = shutil.which("7z") is None and shutil.which("bsdtar") is not None  # (macOS: the system's own reader)
+    bsdtar = MAC and shutil.which("7z") is None and shutil.which("bsdtar") is not None  # (macOS only: the system's own reader)
     code, listing = run(["bsdtar", "-tf", iso] if bsdtar else ["7z", "l", iso])
     if code != 0 or "SLUS_216.78" not in listing:
         s.fail(f"{iso.name} is not a disc image of the USA release (no SLUS_216.78 on it).\n"
                "    Other regions and the Wii version have different programs and are not supported.")
-    disc.mkdir(exist_ok=True)
+    if bsdtar:
+        disc.mkdir(exist_ok=True)  # (7z makes its output folder itself)
     code, _ = run(["bsdtar", "-xf", iso, "-C", disc, "SLUS_216.78", "BIN"] if bsdtar else ["7z", "x", "-y", f"-o{disc}", iso, "SLUS_216.78", "BIN"])
     if code != 0 or not (disc / "SLUS_216.78").is_file() or not dbzp.is_file():
         s.fail("The disc image could not be read (see install.log).")
