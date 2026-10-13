@@ -531,6 +531,18 @@ static void vk_frame_end(void) {
         vsync_apply(sVsyncPending);
         sVsyncPending = -1;
     }
+    {   /* "Low input lag" (plat_stub.c): no more than one picture may be on its way to the screen at a time (the
+           library allows two by default, which is a picture more of delay whenever the graphics chip or V-sync
+           is what paces the game). BT3_FRAMES_IN_FLIGHT=<1..3> overrides. */
+        extern int Port_LateInput(void);
+        static int have = -1;
+        int want = getenv("BT3_FRAMES_IN_FLIGHT") != NULL ? atoi(getenv("BT3_FRAMES_IN_FLIGHT")) : Port_LateInput() ? 1 : 2;
+        want = want < 1 ? 1 : want > 3 ? 3 : want;
+        if (want != have) {
+            have = want;
+            SDL_SetGPUAllowedFramesInFlight(sDev, (Uint32)want);
+        }
+    }
     { extern void Port_LagMark(int what); Port_LagMark('E'); }
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) {
