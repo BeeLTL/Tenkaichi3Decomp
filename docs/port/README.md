@@ -2879,3 +2879,53 @@ lines already spoken: the fight starts over with its opening scene, both health 
 again at their places, and the fight goes on to its K.O. and the mode's result screen. Not tried: a fight in which
 a fighter is exchanged by the story before the restart, and the other modes that may run as battle mode 1.
 
+
+## macOS on Apple Silicon: pull request 68 merged (2026-10-13)
+
+By valenvivaldi (pull request 68, eight commits, kept as they are). A native arm64 build, `BT3_CC=mac64` ->
+`port/build/bt3_mac`, built on the Mac from source with Homebrew's LLVM (`install.py` does it; there is no macOS
+release archive). How it works is in `docs/port/macos_plan.md`. In short: macOS keeps the low 4 GB unmapped, so a
+game address is an offset in a 4 GB window that starts 0x20000000 below the program (an LLVM pass,
+`port/tools/macwin/macwin.cpp`, rewrites the game's code for it; the port's own code says `Port_Ptr` /
+`Port_Addr`, `port/src/port_addr.h`); software float is done by the code generator (`llc` without a floating-point
+unit); the shaders are translated to MSL for Metal. The author reports the demo fight with the same state as Linux
+on all 4428 frames and the rewind test without differences at depth 1 and 8.
+
+The merge with the local work had no conflicts. With it the Mac build has the desync check of online play
+(`Port_NetDigest`, `NET_VERSION` 4) like the other two: a Mac copy that computes another game than its opponent
+is noticed.
+
+Changed on top of the pull request, so that nothing of it reaches the Linux and Windows builds:
+
+- `AGENTS.md` (instructions to coding agents, written by the contributor) is not taken. What it said is in this
+  file, `docs/agent_rules.md` and `docs/port/macos_plan.md`.
+- The shared build tools: what was changed for every build now applies to the macOS build alone. `eeconst.py`
+  (a float after `introduced=`, `deprecated=`, `obsoleted=` left as text: only with `BT3_CC=mac64`),
+  `ptr32.py` (a cursor kind the Python bindings do not know taken for an attribute: only on macOS; elsewhere it
+  stops the tool as before), `link.py` (ld64's wording of a missing or doubled symbol: only for mac64),
+  `make_dat.py` (the name with Mach-O's underscore: only for mac64), `extract_disc.py` and `install.py` (the
+  disc read with `bsdtar` when there is no `7z`: only on macOS; Linux asks for `7z` as before).
+- `Port_Ptr` and `Port_Addr` are macros with the plain casts on Linux and Windows (they were inline functions),
+  so the compiler is given the code it was given before the names existed, at any optimisation level.
+- Left as the pull request has it: `make_state.py` joins the ranges with a binary search in place of a pass over
+  the whole list for each (the same condition, faster; the macOS map lists every symbol, so its list is long). It
+  runs for every build.
+
+Checked (on Linux, the two builds made from clean in the same folder before and after): the Linux program is the
+same file as before the merge but for its debug information and build id (compared with both removed); the Windows
+program is the same file with the debug information removed (the linker's time stamp aside); `bt3_64.mem`,
+`bt3.exe.mem` and both `.dat` lists are the same files; the state log (`BT3_HASH`) of `replay01` is the same on
+every vertical blank written (over 74000; tick 2111 is at 5431), and the replay ends as always (`hp 23050 0`).
+
+Not tested here:
+
+- The macOS build itself. No Mac was at hand: that part was read, not built or run. What the author measured was
+  measured before the merge; the code the local work added since (the signed matchmaking requests
+  `gs/net_sign.c`, the data fingerprint `plat_fprint.c`, the controller's rumble, the pause menu changes in
+  `src/battle/hud_0.c`) has never been compiled for macOS.
+- Online play between a Mac and Linux or Windows. A Mac build gives itself out as any other (`NET_VERSION`), and
+  an opponent cannot tell. The demo fight's equal state says the arithmetic is the same; a match on two machines
+  has not been played.
+- On macOS the start-up test switches `BT3_SIGN_TEST` and `BT3_CRASH_TEST` are not there (its `__wrap_main`
+  in `plat_mem.c` does not read them).
+- The 32-bit Linux build (`BT3_CC=gcc`) was not built for this.
