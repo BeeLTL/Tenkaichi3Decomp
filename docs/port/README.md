@@ -2879,3 +2879,76 @@ lines already spoken: the fight starts over with its opening scene, both health 
 again at their places, and the fight goes on to its K.O. and the mode's result screen. Not tried: a fight in which
 a fighter is exchanged by the story before the restart, and the other modes that may run as battle mode 1.
 
+## Added songs from MP3 files: pull request 70, and what was changed in it (2026-10-13)
+
+Merged: pull request 70 by valenvivaldi (his commit kept as it is). An `.mp3` in the `songs` folder is converted
+to the ADX the game plays (`port/src/gs/song_mp3.c`: dr_mp3 decodes, an encoder of the port's own writes ADX type 3
+at the MP3's rate and channels), the release's README texts, `docs/port/adding_songs.md`.
+
+A review had named seven things. Each was looked up in the code again; all seven are there. What was done:
+
+1. The start waited for the conversion (`PortSongs_Init` called it before listing the folder: in the test program
+   below it came back after 4.3 s for an MP3 of an hour, now at once). Now a thread converts
+   (`PortSongs_Mp3Start`); it only reads and writes files of the songs folder and counts what it finished. The song
+   list stays the game thread's: made at start from the ADX files there are, and added to, at its end only, when a
+   character select sets up its music list (`PortSongs_Refresh`, the two `#ifdef PORT` places in
+   `src/menu/menu_c_e.c` and `menu_e_b.c` that read the list). Not in an online session (added songs are not
+   offered there; the list is not touched). In a run with `BT3_PAD_REC`, `BT3_PAD_PLAY`, `BT3_PAD_TABLE` or
+   `BT3_SYNCTEST` the conversion is done at start as before, so that a recording's menus depend on the folder and
+   not on the conversion's speed. `BT3_REPLAY` and `BT3_DEMO` set up no select screen.
+2. "Converted already" was `the ADX's date >= the MP3's date`: an MP3 replaced by a file with an earlier date was
+   not converted again, and an ADX dated before its MP3 was converted at every start. Now the ADX written says in
+   its header which MP3 it was made from (a mark, the MP3's size and time of last change; header 0x60 bytes instead
+   of 0x28); another size or time: converted again. Dates are no longer compared.
+3. An ADX made by hand with the name of an MP3 was written over whenever the MP3 was the newer file. Now an ADX
+   without the mark is never written over (checked once more just before the new file takes the name); the log
+   says the MP3 was not converted.
+4. An MP3 that could not be decoded was tried, and the notice shown, at every start. Now it is written down in
+   `mp3-failed.txt` in the folder with its size and time, and neither tried nor reported until the file changes.
+   Failures to write are not written down (not the MP3's fault): tried and reported at every start.
+5. `dr_mp3.h` is not a release: it is dr_libs' master at commit 51e61d3 ("v0.7.4 - TBD"). Its git blob id is the
+   one GitHub reports for the file at that commit (asked from api.github.com for mackron/dr_libs, read only;
+   nothing else was fetched and the file was not replaced). The last tag is mp3-0.7.3; the snapshot was kept because
+   what it has more is an overflow fix in tag parsing, and the files read are whatever a player has. Written down
+   in `port/third_party/dr_libs/README.txt`. The header itself is unchanged.
+6. The whole MP3 was decoded into memory (an hour of music: 622 MB measured). Now 8192 samples at a time (14 MB
+   for the same file, the test program whole); the sample count is written into the header at the end. The ADX
+   data is byte for byte what the pull request wrote (three files compared, one of an hour).
+7. Names. `.Mp3` in `songs.txt` was listed as a song file itself (only `.mp3` and `.MP3` were known there): any
+   case now. `a.mp3` and `a.MP3` gave the same ADX, each start converting one over the other: the first by name
+   wins, the other is left out with a line. Names of 128 bytes and more were converted and then not listed: left
+   out. A song whose folder and name together are longer than the 192 bytes of the file layer's table was listed
+   and silent (cut short; there before the pull request): left out with a line. Names with dots were right
+   already. Windows: the port opens files by the system code page's names everywhere, so a name with characters
+   outside it cannot be opened, as MP3 or as ADX; such an MP3 is now left out with a line saying to rename it
+   (not changed: opening files by wide names, which would be a change to the whole file layer). The temporary
+   file carries the process number (two copies started together each write their own); one left over by a copy
+   closed mid-way is removed when a day old.
+
+Tests. With a small program of the port's `plat_songs.c`, `plat_extras.c` and `song_mp3.c` and nothing else (a sine
+tone made with ffmpeg as MP3, 44.1 kHz stereo and 22 kHz mono, in a folder of its own): first start converts;
+second start converts nothing and the ADX is the same file; MP3 replaced by one dated 2001: converted again; the
+ADX's date set after and before the MP3's: nothing; an ADX from ffmpeg with an MP3 of the same name and a later
+date: kept, same bytes; a file of random bytes, one of 0 bytes and a text file named `.MP3`: one line and one
+notice, then silence at the next start, the good file put in place of the bad one converted and its line gone;
+`My.Song.v2.MP3`, a name with spaces and a quote, non-ASCII names, `a.mp3` with `a.MP3`, `.mp3` alone, a folder
+named `dir.mp3`, 127 and 144 byte names, a folder name too long for the table; a folder without write permission
+(reported at every start, nothing written down); left-over temporary files, three days old (removed) and new
+(kept); a conversion made slow (the list at start without the song, with it after the refresh); the list in an
+online session
+(unchanged); the list with pad playback (whole at start). ffmpeg decodes the ADX written: the MP3's rate, channels
+and length, the tone at 15.6 and 33.7 dB against ffmpeg's own decoding of the MP3 (the pull request's numbers,
+with the same data). The same program built for Windows and run by wine without a display: converted, replaced
+over an ADX that was there, hand-made ADX kept, a name with accents converted, a name outside the code page left
+out with its line, `A.mp3` with `a.MP3` one left out.
+With the game itself, without a window (`BT3_GS=none`, replay01): four MP3 files of which two bad, every
+conversion made to wait 2 s (`BT3_TEST_SONGS_SLOW=2000`): the fight's tick 2111 is reached after 2.5 s as without
+songs, the conversions end at 4, 6 and 8 s, the health at tick 2111 is the reference's in every run; second start:
+"2 added", nothing converted, no line for the bad ones. Linux (`clang64`) and Windows (`win64`) link.
+
+Not tested: a converted song HEARD, or played by the game's own player at all (the runs without a window start no
+stream, and no recording of presses into a fight with the music select was at hand; what stands for it is that
+the header meets every check of `snd_adx.c` `start()` and that ffmpeg plays the file); the song joining the list
+in the real select screen (the list code was run by the test program, the two calls in the menus were compiled
+and not run); the notice over the picture; the Windows program itself and a real Windows (wine only, and only the
+test program); macOS, where the pull request was written; mp3-0.7.3 in place of the snapshot.
