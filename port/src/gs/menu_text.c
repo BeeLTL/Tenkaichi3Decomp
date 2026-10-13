@@ -20,6 +20,9 @@ typedef struct MenuLabel {
     uint64_t hash;
     int width, height, y, rowHeight, cap, baseline, center, margin, widthMilli, x, rowWidth, artWidth;
     unsigned top, bottom, outline;
+    int italic;
+    int outlineMilli, outerMilli, shadow;
+    unsigned outerColor;
     char text[256];
 } MenuLabel;
 
@@ -121,10 +124,11 @@ static void menu_text_name_styles(const char *dir) {
     for (selected = 0; selected < 3; selected++) {
         MenuLabel *label = &sNameStyles[selected];
         memset(label, 0, sizeof(*label));
+        label->outlineMilli = -1; label->shadow = 1;
         label->width = label->rowWidth = 512; label->height = label->rowHeight = selected == 2 ? 64 : 32;
         label->cap = selected == 2 ? 21 : 16; label->baseline = selected == 2 ? 44 : 22;
         label->center = selected == 2; label->margin = selected == 2 ? 8 : 4; label->widthMilli = 1000;
-        label->top = selected == 2 ? 0xEDD57E : selected ? 0xF1E484 : 0xCBCBCB;
+        label->top = selected ? 0xF4EF89 : 0xCBCBCB;
         label->bottom = selected ? 0xD2684B : 0xCBCBCB;
         label->outline = selected ? 0x2C151B : 0x460059;
     }
@@ -167,10 +171,22 @@ static void menu_text_load(void) {
         unsigned long long hash;
         int pos = 0, i;
         size_t n;
-        if (line[0] == '#') { if (strstr(line, "BT3 menu text v4:")) { version = 4; } else if (strstr(line, "BT3 menu text v3:")) { version = 3; } else if (strstr(line, "BT3 menu text v2:")) { version = 2; } continue; }
+        if (line[0] == '#') { if (strstr(line, "BT3 menu text v6:")) { version = 6; } else if (strstr(line, "BT3 menu text v5:")) { version = 5; } else if (strstr(line, "BT3 menu text v4:")) { version = 4; } else if (strstr(line, "BT3 menu text v3:")) { version = 3; } else if (strstr(line, "BT3 menu text v2:")) { version = 2; } continue; }
         memset(&label, 0, sizeof(label));
         label.widthMilli = 1000;
-        if (version == 4) {
+        label.outlineMilli = -1; label.shadow = 1;
+        if (version == 6) {
+            if (sscanf(line, "%llx\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%x\t%x\t%x\t%d\t%d\t%d\t%x\t%d\t%n",
+                       &hash, &label.width, &label.height, &label.y, &label.rowHeight, &label.cap,
+                       &label.baseline, &label.center, &label.margin, &label.widthMilli, &label.x, &label.rowWidth,
+                       &label.artWidth, &label.top, &label.bottom, &label.outline, &label.italic,
+                       &label.outlineMilli, &label.outerMilli, &label.outerColor, &label.shadow, &pos) != 21 || pos == 0) { continue; }
+        } else if (version == 5) {
+            if (sscanf(line, "%llx\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%x\t%x\t%x\t%d\t%n",
+                       &hash, &label.width, &label.height, &label.y, &label.rowHeight, &label.cap,
+                       &label.baseline, &label.center, &label.margin, &label.widthMilli, &label.x, &label.rowWidth,
+                       &label.artWidth, &label.top, &label.bottom, &label.outline, &label.italic, &pos) != 17 || pos == 0) { continue; }
+        } else if (version == 4) {
             if (sscanf(line, "%llx\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%x\t%x\t%x\t%n",
                        &hash, &label.width, &label.height, &label.y, &label.rowHeight, &label.cap,
                        &label.baseline, &label.center, &label.margin, &label.widthMilli, &label.x, &label.rowWidth,
@@ -192,12 +208,14 @@ static void menu_text_load(void) {
                        &label.outline, &pos) != 12 || pos == 0) { continue; }
         }
         if (version < 3) { label.rowWidth = label.width; }
+        if (label.outlineMilli < -1 || label.outlineMilli > 8000 || label.outerMilli < 0 || label.outerMilli > 8000 ||
+            label.outerColor > 0xFFFFFF || label.shadow < 0 || label.shadow > 1) { continue; }
         n = strcspn(line + pos, "\r\n");
         if (n == 0 || n >= sizeof(label.text) || (label.width < 8 || label.width > MENU_TEXT_WIDTH || (label.width & (label.width - 1))) || label.height < 1 || label.height > MENU_TEXT_HEIGHT ||
             label.y < 0 || label.rowHeight < 1 || label.rowHeight > 64 || label.y > label.height - label.rowHeight ||
             label.cap < 1 || label.cap > 64 || label.baseline < 0 || label.baseline > label.rowHeight ||
             label.widthMilli < 500 || label.widthMilli > 2000 || label.x < 0 || label.rowWidth < 1 || label.x > label.width - label.rowWidth ||
-            label.artWidth < 0 || label.artWidth > label.rowWidth || label.margin < 0 || label.margin * 2 >= label.rowWidth || label.top > 0xFFFFFF || label.bottom > 0xFFFFFF || label.outline > 0xFFFFFF) {
+            label.artWidth < 0 || label.artWidth > label.rowWidth || label.margin < 0 || label.margin * 2 >= label.rowWidth || label.top > 0xFFFFFF || label.bottom > 0xFFFFFF || label.outline > 0xFFFFFF || label.italic < 0 || label.italic > 1) {
             continue;
         }
         for (i = 0; i < (int)n; i++) {
@@ -259,20 +277,23 @@ static int menu_text_codes(const char *text, int *codes) {
 }
 
 static int menu_text_row(uint8_t *dst, const MenuLabel *label, int resolution) {
-    unsigned char *fill, *body, *blur;
+    unsigned char *fill, *body, *blur, *outer = NULL;
     float *distance;
     int codes[256], len = menu_text_codes(label->text, codes);
     int i, x, y, c, advance, bearing, previous = 0, width = 0;
     int w = label->rowWidth * resolution, h = label->rowHeight * resolution, count = w * h;
     int radius = resolution, window = radius * 2 + 1;
     int padding = label->rowWidth < 32 ? label->rowWidth / 8 : 4;
-    int border = label->rowWidth < 48 ? label->rowWidth / 16 : 3;
+    float border = label->rowWidth < 48 ? label->rowWidth / 16 : 3;
     if (border < 1) { border = 1; }
+    if (label->outlineMilli >= 0) { border = label->outlineMilli / 1000.0f; }
     float scaleY = label->cap * resolution / (float)sCapUnits;
     float scaleX = scaleY * label->widthMilli / 1000.0f;
     int inkLeft = 0, inkRight = 0, hasInk = 0;
     float pen, start, baseline = (float)label->baseline * resolution;
     float cap = label->cap * resolution;
+    float available = w - (2 * label->margin + 2 * padding) * resolution;
+    if (label->italic) { available -= cap * 0.22f; }
 
     if (!len) { return 0; }
     for (i = 0; i < len; i++) {
@@ -294,8 +315,8 @@ static int menu_text_row(uint8_t *dst, const MenuLabel *label, int resolution) {
         scaleX = label->artWidth * resolution / (float)width * label->widthMilli / 1000.0f;
     }
     if (width <= 0) { return 0; }
-    if (width * scaleX > w - (2 * label->margin + 2 * padding) * resolution) {
-        float ratio = (w - (2 * label->margin + 2 * padding) * resolution) / (width * scaleX);
+    if (width * scaleX > available) {
+        float ratio = available / (width * scaleX);
         scaleX *= ratio; scaleY *= ratio; cap *= ratio;
         baseline = h * 0.5f + (baseline - h * 0.5f) * ratio;
     }
@@ -309,10 +330,11 @@ static int menu_text_row(uint8_t *dst, const MenuLabel *label, int resolution) {
     }
     fill = calloc((size_t)count, 1);
     body = malloc((size_t)count);
+    if (label->outerMilli) { outer = malloc((size_t)count); }
     blur = malloc((size_t)count);
     distance = malloc((size_t)count * sizeof(float));
-    if (fill == NULL || body == NULL || blur == NULL || distance == NULL) {
-        free(fill); free(body); free(blur); free(distance); return 0;
+    if (fill == NULL || body == NULL || blur == NULL || distance == NULL || (label->outerMilli && outer == NULL)) {
+        free(fill); free(body); free(outer); free(blur); free(distance); return 0;
     }
     pen = start; previous = 0;
     for (i = 0; i < len; i++) {
@@ -326,6 +348,21 @@ static int menu_text_row(uint8_t *dst, const MenuLabel *label, int resolution) {
             for (y = 0; y < gh; y++) {
                 for (x = 0; x < bw; x++) {
                     int px = px0 + ox + x, py = py0 + oy + y;
+                    if (label->italic) {
+                        /* Shear around the cap midpoint, retaining baseline and antialiasing. */
+                        float shifted = px + (baseline - cap * 0.5f - py) * 0.22f;
+                        int left = (int)floorf(shifted), k;
+                        float fraction = shifted - left;
+                        for (k = 0; k < 2; k++) {
+                            int tx = left + k;
+                            unsigned char coverage = (unsigned char)(bitmap[y*bw+x] * (k ? fraction : 1-fraction) + 0.5f);
+                            if (tx >= 0 && tx < w && py >= 0 && py < h) {
+                                int at = py*w+tx;
+                                fill[at] = (unsigned char)fminf(255, fill[at] + coverage);
+                            }
+                        }
+                        continue;
+                    }
                     if (px >= 0 && px < w && py >= 0 && py < h && bitmap[y*bw+x] > fill[py*w+px]) {
                         fill[py*w+px] = bitmap[y*bw+x];
                     }
@@ -364,6 +401,10 @@ static int menu_text_row(uint8_t *dst, const MenuLabel *label, int resolution) {
             distance[at] = d;
             coverage = fminf(1, fmaxf(0, border*resolution + 0.5f - d));
             body[at] = (unsigned char)fmaxf(fill[at], coverage*255);
+            if (outer != NULL) {
+                coverage = fminf(1, fmaxf(0, (border + label->outerMilli/1000.0f)*resolution + 0.5f - d));
+                outer[at] = (unsigned char)fmaxf(body[at], coverage*255);
+            }
         }
     }
     /* Separable box blur for the offset shadow. */
@@ -391,18 +432,20 @@ static int menu_text_row(uint8_t *dst, const MenuLabel *label, int resolution) {
         for (x = 0; x < w; x++) {
             int at = y*w+x, sx = x-4*resolution, sy = y-3*resolution;
             float f = fill[at]/255.0f, b = body[at]/255.0f;
-            float shadow = sx >= 0 && sy >= 0 ? distance[sy*w+sx] : 0;
-            float alpha = b + shadow*(1-b);
+            float o = outer != NULL ? outer[at]/255.0f : b;
+            float shadow = label->shadow && sx >= 0 && sy >= 0 ? distance[sy*w+sx] : 0;
+            float alpha = o + shadow*(1-o);
             for (c = 0; c < 3; c++) {
                 int shift = 16-c*8;
                 float color = ((label->top >> shift)&255)*(1-ramp) + ((label->bottom >> shift)&255)*ramp;
                 float premult = color*f + ((label->outline >> shift)&255)*(b-f);
+                if (outer != NULL) { premult += ((label->outerColor >> shift)&255)*(o-b); }
                 dst[at*4+c] = alpha > 0 ? (unsigned char)(premult/alpha + 0.5f) : (unsigned char)(label->outline >> shift);
             }
             dst[at*4+3] = (unsigned char)(alpha*127.0f + 0.5f);
         }
     }
-    free(fill); free(body); free(blur); free(distance);
+    free(fill); free(body); free(outer); free(blur); free(distance);
     return 1;
 }
 

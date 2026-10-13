@@ -14,6 +14,25 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
+COLOR_STYLES = {
+    'title-prompt': {'top': [239,239,223],'bottom': [177,179,96],'outline': [63,21,17],
+                     'outline_width': 2,'outer_outline': [217,194,193],'outer_outline_width': 2,'shadow': False},
+    'main-menu': {'top': [203,203,203],'bottom': [203,203,203],'outline': [94,35,109]},
+    'purple': {'top': [255,255,255],'bottom': [255,255,255],'outline': [70,0,89]},
+    'orange': {'top': [244,239,137],'bottom': [210,104,75],'outline': [44,21,27]},
+}
+
+
+def color_style_for(group):
+    """Catalog selection states determine colors; texture pixels never select a palette."""
+    if group == 'main-5':
+        return 'main-menu'
+    if group == 'title-press-start':
+        return 'title-prompt'
+    orange = ('stage','song-highlighted','main-6','ultimate-battle','sim-dragon-actions',
+              'character-preview-color','song-random-highlighted')
+    return 'orange' if group.endswith('-selected') or group in orange else 'purple'
+
 
 def u32(data, offset=0):
     return struct.unpack_from('<I', data, offset)[0]
@@ -171,6 +190,9 @@ def catalog(data):
 
     add('title-normal',449,1,8,0,['New Game','Continue'],centered=True)
     add('title-selected',449,1,8,1,['New Game','Continue'],centered=True,text_from='title-normal')
+    add('title-press-start',449,1,6,0,['Press START button'],centered=True)
+    # Measure the inner letters rather than this prompt's bright outer border.
+    groups[-1].update(font_cap=17,font_baseline=25,font_art_width=264,outline=(63,21,17))
     versus = ['1P VS COM','1P VS 2P','COM VS COM','Battle Settings']
     battle = ['Single Battle','Team Battle','DP Battle']
     for index in range(4):
@@ -467,15 +489,41 @@ def row_style(rgba, height, centered, width=512, outline=None):
     full=[y for y,n in ys.items() if n >= max(ys.values())*0.35]
     # Sparse capital strokes still define the cap top; dense rows locate the baseline.
     y0,y1=min(y for x,y,c in fill),max(full)
-    def color(y):
-        return max((c for x,yy,c in fill if yy==y),key=sum)
     return dict(height=height, cap_height=y1-y0+1, baseline=y1+1, align='center' if centered else 'left',
-                margin=8 if centered else min(x for x,y,c in fill), art_width=max(x for x,y,c in fill)-min(x for x,y,c in fill)+1, top=list(color(y0)), bottom=list(color(y1)), outline=list(outline))
+                margin=8 if centered else min(x for x,y,c in fill), art_width=max(x for x,y,c in fill)-min(x for x,y,c in fill)+1)
 
 
 def apply_labels(out):
     """Turn user-editable JSON into the bounded TSV read by the native renderer."""
     config=json.loads((out/'labels.json').read_text())
+    palettes=config.get('color_styles',COLOR_STYLES)
+    def palette(row):
+        name=row.get('color_style',color_style_for(row['id'].split('/')[0]))
+        if name not in COLOR_STYLES or name not in palettes:
+            raise ValueError(f"{row['id']}: unknown color_style {name!r}")
+        colors={**COLOR_STYLES[name],**palettes[name]}
+        for key in ('top','bottom','outline'):
+            value=colors.get(key)
+            if not isinstance(value,list) or len(value)!=3 or any(type(c)!=int or not 0<=c<=255 for c in value):
+                raise ValueError(f'color_styles.{name}.{key}: expected three RGB values (0–255)')
+        return colors
+    def decorations(colors):
+        widths=[]
+        for key,default in (('outline_width',None),('outer_outline_width',0)):
+            value=colors.get(key,default)
+            if value is None and key=='outline_width':
+                widths.append(-1)
+            elif type(value) not in (int,float) or not 0<=value<=8:
+                raise ValueError(f'{key}: expected a width from 0 to 8')
+            else:
+                widths.append(round(value*1000))
+        outer=colors.get('outer_outline',[0,0,0])
+        if not isinstance(outer,list) or len(outer)!=3 or any(type(c)!=int or not 0<=c<=255 for c in outer):
+            raise ValueError('outer_outline: expected three RGB values (0–255)')
+        shadow=colors.get('shadow',True)
+        if type(shadow)!=bool:
+            raise ValueError('shadow must be true or false')
+        return [*widths,''.join(f'{c:02x}' for c in outer),int(shadow)]
     supported=set()
     from fontTools.ttLib import TTFont
     for line in (out/'fonts.tsv').read_text(encoding='utf-8').splitlines():
@@ -485,13 +533,14 @@ def apply_labels(out):
                 continue
             with TTFont(out/'fonts'/line.split('\t',1)[0]) as font:
                 supported.update(font.getBestCmap() or {})
-    lines=['# BT3 menu text v4: hash width height y row_height cap_height baseline center margin width_milli x row_width art_width top bottom outline text']
+    lines=['# BT3 menu text v6: hash width height y row_height cap_height baseline center margin width_milli x row_width art_width top bottom outline italic outline_milli outer_milli outer_rgb shadow text']
     # The overlay uses these same styles for names of external songs and stages.
     styles=['# kind (0 song, 1 selected song, 2 stage) cap_height baseline margin width_milli top bottom outline']
     for selected,id in ((0,'song/0/0'),(1,'song-highlighted/0/0'),(2,'stage/0/0')):
         template=next((r for r in config['labels'] if r['id']==id),None)
         if template:
-            colors=[''.join(f'{c:02x}' for c in template[key]) for key in ('top','bottom','outline')]
+            style=palette(template)
+            colors=[''.join(f'{c:02x}' for c in style[key]) for key in ('top','bottom','outline')]
             values=[selected,template['cap_height'],template['baseline'],template['margin'],round(template.get('width_scale',1)*1000),*colors]
             styles.append('\t'.join(map(str,values)))
     count=0
@@ -527,9 +576,12 @@ def apply_labels(out):
         if missing:
             print(f"{row['id']}: fonts will skip unsupported characters {''.join(missing)!r}")
         def rgb(name):
-            v=row[name]
-            if len(v)!=3 or any(type(c)!=int or not 0<=c<=255 for c in v):raise ValueError(name)
+            v=colors[name]
             return ''.join(f'{c:02x}' for c in v)
+        colors=palette(row)
+        italic=row.get('italic',False)
+        if type(italic)!=bool:
+            raise ValueError(f"{row['id']}: italic must be true or false")
         # Only the unchanged original label has a measured artwork width.
         target_width = art_width if text == row.get('original') else 0
         parts = text.split('\n')
@@ -540,7 +592,7 @@ def apply_labels(out):
             cap = min(row['cap_height'], height - 8) if len(parts) > 1 else row['cap_height']
             baseline = (height + cap) // 2 if len(parts) > 1 else row['baseline']
             fields=[row['hash'],texture_width,row['texture_height'],row['y'] + i * height,height,cap,baseline,
-                    int(row['align']=='center'),row['margin'],round(width_scale*1000),x,row_width,target_width if len(parts) == 1 else 0,rgb('top'),rgb('bottom'),rgb('outline'),part]
+                    int(row['align']=='center'),row['margin'],round(width_scale*1000),x,row_width,target_width if len(parts) == 1 else 0,rgb('top'),rgb('bottom'),rgb('outline'),int(italic),*decorations(colors),part]
             lines.append('\t'.join(map(str,fields)));count+=1
     if count > 512:
         raise ValueError('The renderer supports at most 512 label rows')
@@ -582,6 +634,8 @@ def export(args,groups):
                 if style:
                     if 'font_cap' in group:
                         style['cap_height'], style['baseline'] = group['font_cap'], group['font_baseline']
+                    if 'font_art_width' in group:
+                        style['art_width']=group['font_art_width']
                     row=dict(id=f"{group['id']}/{i}/{y//group['height']}",hash=hash_rgba(rgba),texture_height=texh,y=y,
                              original=original,text=original,enabled=True,**style)
                     if width != 512:
@@ -632,11 +686,18 @@ def export(args,groups):
             for row in digits:
                 row.update(cap_height=cap,baseline=baseline)
     path=args.out/'labels.json'
+    for row in rows:
+        row['color_style']=color_style_for(row['id'].split('/')[0])
+        if row['id'].startswith('title-press-start/'):
+            row['italic']=True
     if not path.exists():
-        path.write_text(json.dumps(dict(labels=rows),indent=2)+'\n')
+        path.write_text(json.dumps(dict(color_styles=COLOR_STYLES,labels=rows),indent=2)+'\n')
     else:
         config=json.loads(path.read_text())
         config.pop('font',None)
+        palettes=config.setdefault('color_styles',{})
+        for name,colors in COLOR_STYLES.items():
+            palettes.setdefault(name,colors)
         config['labels']=[r for r in config['labels'] if not r['id'].startswith(
             ('submenu-','customize-equipment/','customize-ability-limit-up/',
              'customize-type/','customize-ability-limit/','customize-character-z-points/'))
@@ -645,6 +706,13 @@ def export(args,groups):
         fresh={row['id']:row for row in rows}
         for row in config['labels']:
             if row['id'] in fresh:
+                row.setdefault('color_style',fresh[row['id']]['color_style'])
+                if 'italic' in fresh[row['id']]:
+                    row.setdefault('italic',fresh[row['id']]['italic'])
+                if row['id'].startswith('main-5/') and row['color_style']=='purple':
+                    row['color_style']='main-menu'
+                for key in ('top','bottom','outline'):
+                    row.pop(key,None)
                 for key in ('hash','texture_height','y','art_width'):
                     row[key]=fresh[row['id']][key]
                 family=row['id'].split('/')[0]
