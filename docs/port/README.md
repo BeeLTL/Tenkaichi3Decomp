@@ -3114,3 +3114,104 @@ Windows with NVDA); the keys and the touchpad (the requests were made by `BT3_A1
 buttons (only its coming up was run); the setup's keyboard navigation (read in Dear ImGui's tabbing rule and built,
 the window was not opened); anything on Windows itself (wine only); the Spanish of the three new lines of the exit
 question (not the author's). Online only between two copies on one machine.
+
+## Menu fonts: two settings that draw text from a TrueType font (pull request #64, 2026-10-13)
+
+By Victorgonl (pull request #64), merged with fixes on top. Notes for users: `docs/port/menu_font.md`.
+
+Two settings in F1 > UI, both "Original" unless chosen:
+
+- "Menu font": the labels of the menus are pictures on the disc. Each label keeps its row in its texture, so the
+  menus' animation, tint and layout go on working, and the row is drawn again from the font, several times the
+  size (`port/src/gs/menu_text.c`, called where the renderer decodes a texture, `gs_draw.c` `texture_get`). Which
+  texture has which label is found by a hash of the decoded texture in a list, `gamedata/game-text/labels.tsv`,
+  which `port/tools/menu_font.py` makes from the user's own disc (397 labels; `labels.json` beside it is for
+  editing them). The names of added stages and songs are drawn from the font too (`ui.cpp`).
+- "Dialogue / UI font": the glyph cells of the game's own font sheets (`Font_Print`: dialogue, subtitles,
+  ordinary text) are drawn again from the font. `Font_UploadTexture` (`src/battle/col_c.c`, under `#ifdef PORT`)
+  hands the renderer the game's glyph table; the renderer packs the new glyphs into an atlas of its own and moves
+  the sprite's texture coordinates there. The game's placement, line breaks, colours and shadows are untouched.
+
+The fonts (DejaVu Sans Condensed and Condensed Bold, Liberation Sans Bold, with their licences) are in
+`port/third_party/fonts`, with the list `fonts.tsv`; a release has them as `fonts/`.
+
+What was changed on top of the pull request:
+
+1. A damaged font file crashed the game at every start (reproduced: the pull request's build with a font cut to
+   200,000 bytes ends in a segmentation fault before the title; the choice is saved, so every start after it too).
+   stb_truetype reads what a file says without looking at the file's size. `menu_text.c` now checks a file before
+   anything of it is used (`face_check`): the table directory, the tables a TrueType font needs, the glyph index,
+   every glyph's outline the way stb walks it (composites to a depth of 4, no glyph inside itself), the widths, the
+   character map, the kerning pairs. The character lookup is the port's own (`face_glyph`), kerning comes from the
+   `kern` table only (`GPOS` is a tree of offsets stb follows unchecked), a glyph is drawn only if its box and its
+   outline have a sane size, and stb's asserts are off. A font that fails is not used: the setting is back on
+   "Original", and the log says once which file and why.
+   Test (`port/tests/menu_font/fuzz.c`, built with the address and undefined-behaviour sanitizers): 36,030 damaged
+   copies of the three fonts (cut short, flipped bits, fields set to 0 / 0x7FFF / 0x8000 / 0xFFFF, noise, tables
+   exchanged, one glyph damaged, empty, larger than the limit), each put through everything the game does with a
+   font; 18,211 were accepted, and all their glyphs drawn (88 million drawings); no report. All 232 `.ttf` files
+   of this machine are accepted; a program, a picture, a text, an empty file, an `.otf`, a `.ttc` and a file over
+   16 MB are turned down. (Built with `-fno-sanitize=shift`: stb builds 32-bit numbers as `p[0] << 24` in a
+   signed int, in every font.)
+2. The install step downloaded Pillow and fontTools and stopped the whole installation when anything failed.
+   Pillow was not used; what fontTools did (a font's name and characters) is now a list file and a few lines of
+   Python. The step needs Python and gcc, nothing from the network, and is skipped with one line saying why when
+   it cannot be done (tried: an archive missing, an archive with one bit changed, no gcc). The menu archives are
+   checked by size and CRC-32 before the USA disc's texture numbers are used. The unpacking and the hash moved
+   into the C helper: 14 s -> 2 s, the output byte for byte the same.
+3. The build no longer patches `src/battle/col_c.c` on the way (`portsrc.py` is what it was): the call is an
+   `#ifdef PORT` in the file. The file preprocessed without `PORT` is the same bytes as before.
+4. A release ships the fonts and licences (`package.py`), so "Dialogue / UI font" works there. "Menu font" needs
+   the list made from the disc by the Python tool, so it is a feature of the source installation; a release
+   offers only "Original" there. Nothing made from the disc is packaged.
+5. Speed. A label is drawn only in the box its letters, outline and shadow can reach instead of its whole row;
+   text is drawn at the internal resolution, at least 2x and at most 4x (it was at least 4x, up to 8x: one
+   512 x 512 sheet was 64 MB, now 16 MB at most and 4 MB at the default 2x); a texture is hashed only when a font
+   is chosen, it has a palette and its size is one a label has; drawn labels are kept (24 MB at most) for the
+   next time their texture is decoded.
+   Measured without a window (`BT3_FONT_LOG=1`: the time spent on text per decoded texture), a recording from the
+   start through the title, the main menu, Dragon History, into a fight and its pause menu, both settings on, 21
+   textures drawn:
+
+   | | pull request | now |
+   |---|---|---|
+   | 2x, the four worst frames | 73 / 49 / 35 / 22 ms | 8.6 / 5.5 / 4.7 / 4.2 ms |
+   | 2x, the whole recording | 304 ms (56 of it hashing textures that are no labels) | 56 ms (34) |
+   | 6x, the four worst frames | 157 / 110 / 74 / 48 ms | 18 / 14 / 10 / 7 ms |
+   | 6x, the whole recording | 602 ms | 104 ms |
+
+   Frames over 33.4 ms at 2x: the pull request 4 in each of two runs (92, 70, 56, 40 ms: the title, the main
+   menu, Dragon History, the pause menu); now 0, 3 and 5 in three runs, none of them long because of text (the
+   longest, 172 ms, had 1.8 ms of texture work and 125 ms in submitting the frame; the same build without fonts
+   and the `port` build have 0 or 1). The frame times of this set-up without a window scatter; at 6x a fight is
+   over the budget on it with or without fonts, so nothing can be said there beyond the table.
+6. "Original" is what it was. The texture cache's key had the internal resolution in it for every texture up to
+   512 x 512 (changing the resolution decoded them all again); a font setting now adds to the key only for the
+   textures it replaces, and nothing with "Original". The name of an added stage or song is in front of the
+   windows again with "Original" (behind them with a font, where every name is drawn that way).
+   Test: the same recording at 2x, a picture every 20 frames, the `port` build against this one with both
+   settings on "Original": 140 of 140 pictures the same bytes. With the fonts on at 4x, this against the pull
+   request's build: 112 of 113 the same bytes (the one, frame 1460, shows another hint line of the main menu in a
+   fade: the game was at another moment there, the lettering is the same; two runs of one build differ in that
+   frame too when several copies run at once).
+7. DejaVu Sans Condensed was in the repository twice (once per setting); it is there once and listed for both.
+   The dead font-building code in the tool is gone. The notes said the game's ordinary text is unaffected; the
+   second setting replaces exactly that, and they say so now.
+
+Online: nothing here is game state. The game is only read (`Font_UploadTexture` passes its glyph table); what
+`menu_text.c` keeps is in the renderer's object (`gs_menu_text.o`), which `make_state.py` leaves out of the list
+of game variables: its variables lie outside every range of `bt3_64.mem` (checked in the map of the 64-bit
+build), so a rollback neither saves nor restores them and the desync checksum does not cover them. Two players
+with different fonts play the same match. Not run: an online session with a font on.
+
+Left as it is: the regular DejaVu file is version 2.33 and the bold one 2.37 (the files of the pull request;
+replacing one needs a download). Kerning no longer uses `GPOS`; in the compared pictures that changed nothing. A
+label's texture stays in the renderer's cache like any texture. What the kept labels save was not measured on its
+own: the recording hardly decodes a label's texture twice; the test program draws every texture a second time from
+them.
+
+Not tested: widescreen and "Menus in 4:3" with a font; the settings window itself (choosing a font there, the
+lists); the OpenGL renderer; Windows at run time (the Windows build links); the menus the recording does not
+reach (versus, options, the shop, the character select with added stages and songs); a release package made with
+`package.py` (its font copy was run on its own, and the game was run with a `fonts/` folder beside it and no
+labels: the dialogue font is used, the menus keep their lettering).

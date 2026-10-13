@@ -31,11 +31,12 @@ struct Missing { std::string name, why, pkg; };
 
 // The steps of the two ways to install: from a source checkout (install.py does the work and needs build tools) and
 // in a release folder (Tenkaichi3Decomp and Tenkaichi3Decomp.dat next to this program: native.cpp unpacks the disc itself).
-static const char *kSourceSteps[] = {"Requirements", "Disc image", "Game data", "Executable data", "Build", "Self-test"};
+static const char *kSourceSteps[] = {"Requirements", "Disc image", "Game data", "Executable data", "Menu fonts", "Build", "Self-test"};
 static const char *kReleaseSteps[] = {"Disc image", "Game data", "Self-test"};
 static const struct { const char *title, *help; } kHelp[] = {
     {"Requirements", "Compilers and tools on this computer"}, {"Disc image", "Your disc image is read and checked"},
     {"Game data", "Models, sounds and text are unpacked"}, {"Executable data", "The data tables of the game's programs"},
+    {"Menu fonts", "The menus' lettering is measured, for the Menu font setting (optional)"},
     {"Build", "The port is compiled (a few minutes)"}, {"Self-test", "The game's demo fight, without a window"}};
 static bool sRelease;
 

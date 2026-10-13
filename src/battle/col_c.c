@@ -191,6 +191,14 @@ u64 Font_MakeTex0(FontSlot *slot, s32 clut) {
 
 /* Uploads a font's texture to its VRAM blocks. */
 void Font_UploadTexture(FontSlot *slot) {
+#ifdef PORT
+    {
+        /* PC build: the renderer is told which glyph lies where in this texture, for the "Dialogue / UI font"
+           setting (port/src/gs/menu_text.c keeps a copy on its own side; nothing of the game is changed). */
+        extern void MenuText_RegisterGlyphs(int tbp, int cbp, const void *glyphs, int count, int lineHeight);
+        MenuText_RegisterGlyphs(slot->tbp, slot->cbp, slot->data->glyphs, slot->data->glyphCount, slot->lineHeight);
+    }
+#endif
     Tex_Upload(slot->data->tex, slot->tbp, slot->cbp);
 }
 

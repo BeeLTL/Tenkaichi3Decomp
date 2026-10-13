@@ -11,6 +11,8 @@ Contents:  Tenkaichi3Decomp, Tenkaichi3Decomp.dat   the game without the data ta
            Tenkaichi3Decomp-setup       the setup window: reads the user's own disc image and unpacks it into gamedata/
            lib/            SDL3, so that it does not have to be installed
            a11y_<code>.txt the screen reader's lines in other languages (port/lang; its own labels, no game text)
+
+           fonts/          the fonts of F1 > UI with their licences (port/third_party/fonts as it is)
            README.txt, licenses/
 The user needs nothing but their disc image. Nothing from the disc is in the zip."""
 import os, pathlib, re, shutil, subprocess, sys, zipfile
@@ -32,6 +34,10 @@ In the game, F1 opens the settings: resolution, widescreen, controls and sound.
 Saves are kept in saves/. A file placed in gamedata/mods/<same path as the original> replaces the original.
 Texture packs (PCSX2 naming, .dds or .png) go into textures/, stages and music from outside the disc into
 stages/ and songs/: see the note in each folder.
+F1 > UI > "Dialogue / UI font" draws the game's text from a font in fonts/ instead of the game's own (the fonts
+and their licences are in that folder; fonts.tsv there is the list, to which a .ttf of your own can be added).
+The "Menu font" setting of the source version is not in this package: it needs a list of the menus' labels that
+is made from the disc by a tool of the source version (docs/port/menu_font.md there).
 
 Screen reader: with Prism's library (prism.dll, libprism.so; release 0.18.3) placed next to the program, the menus
 and the fight's gauges are spoken and shown in braille. a11y_es.txt is its Spanish; another language is a file
@@ -115,6 +121,17 @@ def take_lang(out):
         if not p.name.endswith("_own.txt"):
             shutil.copy2(p, out / p.name)
 
+def take_fonts(out, lic):
+    """The fonts the settings offer, and their licences next to them and in licenses/. Only what is in the
+    repository: the list of menu labels (gamedata/game-text) is made from the disc and never packaged."""
+    src = ROOT / "port/third_party/fonts"
+    for p in sorted(src.rglob("*")):
+        if p.is_file():
+            (out / "fonts" / p.relative_to(src)).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, out / "fonts" / p.relative_to(src))
+            if p.name == "LICENSE":
+                shutil.copy2(p, lic / f"{p.parent.name}-fonts.txt")
+
 def bundle_sdl_dependencies(dll, out, lic, prefix):
     """MSYS2 SDL can import libiconv; the official SDL archive is self-contained.
     Collect vendor DLLs from the SDL bin folder, never Windows system DLLs."""
@@ -167,6 +184,8 @@ def main_win():
     shutil.copy2(ROOT / "port/third_party/newlib_libm/COPYING.NEWLIB", lic / "newlib.txt")
     shutil.copy2(ROOT / "port/third_party/xxhash/LICENSE", lic / "xxhash.txt")
     shutil.copy2(ROOT / "port/third_party/dr_libs/LICENSE", lic / "dr_mp3.txt")
+
+    take_fonts(out, lic)
     (out / "textures").mkdir()
     (out / "textures/README.txt").write_text(TEXTURES_NOTE.replace("\n", "\r\n"))
     for kind, note in (("stages", STAGES_NOTE), ("songs", SONGS_NOTE)):
@@ -209,6 +228,8 @@ def main():
     shutil.copy2(ROOT / "port/third_party/newlib_libm/COPYING.NEWLIB", lic / "newlib.txt")
     shutil.copy2(ROOT / "port/third_party/xxhash/LICENSE", lic / "xxhash.txt")
     shutil.copy2(ROOT / "port/third_party/dr_libs/LICENSE", lic / "dr_mp3.txt")
+
+    take_fonts(OUT, lic)
     (OUT / "textures").mkdir()
     (OUT / "textures/README.txt").write_text(TEXTURES_NOTE)
     for kind, note in (("stages", STAGES_NOTE), ("songs", SONGS_NOTE)):
