@@ -22,7 +22,7 @@ Environment:
 | Game saves kept, with backup, export and import | Yes (IndexedDB) | host files | `saves.js` |
 | Performance dashboard, diagnostics export | Yes | — | `dashboard.js` |
 | Smooth motion | Limited per renderer (measured) | Yes | status doc |
-| Audio (ADX music, sound effects) | Yes | Yes | heard by hand; **no automated test** |
+| Audio (ADX music, sound effects) | Yes | Yes | `web/audio.js`: the page's audio output measured. Music on the title, effects and voices in a battle; silence with every volume at 0. Quality heard by hand only |
 | Replays (`BT3_REPLAY`) and demo (`BT3_DEMO`) | Yes (`?env=`) | Yes | bench runs use `BT3_DEMO` |
 | Unlock everything | Yes | Yes | `saves.js` step 3 |
 | Game-data verification | **No: not run, and said** (M1: log, crash report, dashboard) | Yes | `web/verify.js` |

@@ -100,6 +100,8 @@ Unless noted, every test runs against the server above. "Data" means the test ne
 | `node port/tests/web/saves.js` | IndexedDB saves with the game's own saves | data, Chrome |
 | `node port/tests/web/verify.js` | the data check is not run in the browser, and that is said (log, crash report, dashboard) | data, Chrome |
 | `node port/tests/web/extras.js --data <gamedata>` | added stages, songs, texture packs over HTTP; reported when the server does not list folders. It starts its own server on port 8090, with a temporary folder holding copies from your data, removed afterwards | data, Chrome |
+| `node port/tests/web/start_options.js` | skip logos / intro / copyright page and menus in 4:3, by their effects (the intro movie's fetch, picture brightness, black side columns on WebGL 2 and WebGPU) | data, Chrome |
+| `node port/tests/web/audio.js` | the page's audio output: battle sound, silence with every volume at 0, music on the title | data, Chrome |
 | `port/tests/ps2float` | native, against PCSX2 | **blocked here**: needs the native toolchain and PCSX2 data |
 
 The `devserver.py` used by the tests must be the current one: it serves the folder listings (`?list`) that added stages, songs and texture packs need. Without them they are reported as unavailable.

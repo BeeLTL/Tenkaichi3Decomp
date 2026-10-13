@@ -96,7 +96,7 @@ The output goes to `port/build/web/`. The toolchain and tests are in [BROWSER_BU
 - **Not verified in the browser:**
   - playing an added song;
   - physical controllers (simulated ones are tested);
-  - audio by an automated test (heard by hand).
+  - the sound's quality: the automated test (`port/tests/web/audio.js`) checks that music, effects and voices come out, and that the volume settings reach them, not how they sound.
 - **Saves** live in the browser's storage: clearing site data or a private window loses them. Export a copy.
 - **Not tested at all:** Firefox and Safari, mobile browsers, and the 32-bit native builds, rendering on a real GPU and the PS2 matching build. The last three are native, outside this release.
 
