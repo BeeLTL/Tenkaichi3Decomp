@@ -10,7 +10,7 @@ This is the browser version of the PC port of *Dragon Ball Z: Budokai Tenkaichi 
 
 | | |
 |---|---|
-| A browser with **JavaScript Promise Integration (JSPI)** and **WebGL 2** | A current **Chrome or Edge** (tested: Chrome 154.0.8037.98 on Windows 11; Edge 155 and the app's Chromium 152 ran earlier milestones). Firefox and Safari were **not tested**; the page checks for JSPI at start and says so if it is missing |
+| A browser with **JavaScript Promise Integration (JSPI)** and **WebGL 2** | A current **Chrome or Edge** (tested: Chrome 154.0.8037.98 on Windows 11; Edge 155 and the app's Chromium 152 ran earlier milestones). Firefox and Safari were **not tested**. Compatibility tables (caniuse, MDN; October 2026) list JSPI in Firefox 153 and later and in Safari 27; not confirmed from Mozilla's or Apple's own notes. The page checks for JSPI at start and says so if it is missing |
 | For the WebGPU renderer | A browser with WebGPU enabled and an adapter (tested on Chrome 154, NVIDIA RTX 5070 Ti) |
 | Your own disc image of the USA release (SLUS-21678) | Unpacked once with `port/tools/extract_disc.py` (needs `7z`) |
 | Python 3 | To run the local server `port/web/devserver.py`, and to unpack the disc |
