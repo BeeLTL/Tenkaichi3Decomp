@@ -414,6 +414,41 @@ struct Window {
         CI->eraseFromParent();
     }
 
+    // A function the game calls through a pointer may be called with a game address where it takes a pointer: the
+    // caller's pointer type says s32 (`McFlowCb` is `void (*)(s32)`, Title_OnCardDone takes `s32 *`, and
+    // McFlow_SetDoneCb keeps the `s32 *` as an s32). On Linux and Windows those are the same 4 bytes; here the
+    // callee would get the bare offset. So such a function's pointer parameters are taken as a game address when their
+    // high 32 bits are 0 (nothing in the window has them, W being at 1 TB; null stays null), and so are the pointer
+    // results of indirect calls, for the reverse case. The other way round (a pointer for an integer) needs nothing:
+    // W is on a 4 GB boundary, so a pointer's low 32 bits are its game address.
+    void offsetToHost(IRBuilder<> &B, Value *p) { // replaces p's uses
+        Value *w = B.CreatePtrToInt(windowIn(B), I64);
+        auto *v = cast<Instruction>(B.CreatePtrToInt(p, I64));
+        Value *bare = B.CreateAnd(B.CreateICmpEQ(B.CreateLShr(v, 32), ConstantInt::get(I64, 0)), B.CreateICmpNE(v, ConstantInt::get(I64, 0)));
+        Value *R = B.CreateIntToPtr(B.CreateSelect(bare, B.CreateAdd(w, v), v), p->getType(), "w.bare");
+        p->replaceUsesWithIf(R, [&](Use &U) { return U.getUser() != v; });
+    }
+    void fixCalledThroughPointer(Function &F) {
+        if (PortModule || !F.hasAddressTaken()) {
+            return;
+        }
+        IRBuilder<> B(&*F.getEntryBlock().getFirstInsertionPt());
+        B.SetInsertPoint(cast<Instruction>(windowIn(B))->getNextNode()); // (after W's load, which may be there already)
+        for (Argument &A : F.args()) {
+            if (A.getType()->isPointerTy() && A.getType()->getPointerAddressSpace() == 0 && !A.use_empty()) {
+                offsetToHost(B, &A);
+            }
+        }
+    }
+    void fixIndirectResult(CallInst *CI) {
+        if (PortModule || CI->getCalledFunction() || CI->isInlineAsm() || !CI->getType()->isPointerTy() ||
+            CI->getType()->getPointerAddressSpace() != 0 || CI->use_empty()) {
+            return;
+        }
+        IRBuilder<> B(CI->getNextNode());
+        offsetToHost(B, CI);
+    }
+
     static char kindOf(Type *T) { // KINDS: v(oid), p(ointer), i(nteger of 32 bits or less), x (anything else); then '.' if variadic
         if (T->isVoidTy()) {
             return 'v';
@@ -641,7 +676,19 @@ struct Window {
             if (F.isDeclaration()) {
                 continue;
             }
+            fixCalledThroughPointer(F);
             fixFunction(F);
+            {
+                std::vector<CallInst *> calls;
+                for (Instruction &I : instructions(F)) {
+                    if (auto *CI = dyn_cast<CallInst>(&I)) {
+                        calls.push_back(CI);
+                    }
+                }
+                for (CallInst *CI : calls) {
+                    fixIndirectResult(CI);
+                }
+            }
             if (!db.empty()) {
                 std::vector<CallInst *> calls;
                 for (Instruction &I : instructions(F)) {

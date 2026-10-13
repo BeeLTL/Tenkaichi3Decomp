@@ -164,6 +164,11 @@ Lessons (each was a crash; keep them):
   With W at 1 TB the low 32 bits of W + n are n, so these round-trip as on Linux. ASLR would slide W off the
   boundary: `window_aligned()` in `plat_mem.c` restarts the program in the same process with
   `_POSIX_SPAWN_DISABLE_ASLR` when it is not aligned.
+- **Integers for pointers through a function pointer.** The reverse case: `McFlowCb` is `void (*)(s32)`, the title
+  screen stores its `s32 *result` as that s32, and `Title_OnCardDone(s32 *)` got the bare offset (crash in the
+  memory card's new-save screen). A function whose address is taken takes a pointer parameter whose high 32 bits
+  are 0 as a game address (W + it; nothing in the window has them), and an indirect call's pointer result too
+  (`fixCalledThroughPointer`, `fixIndirectResult` in `macwin.cpp`).
 - **Load W, build pointers with inttoptr.** W as a constant expression of `__mh_execute_header` let alias analysis
   conclude that game memory is that one symbol (stores dropped in `Ot_Init`); a GEP on a W loaded at function
   entry has W's provenance, and LLVM concluded it could not reach a local whose address is taken later (the store
