@@ -694,6 +694,9 @@ int main(int argc, char **argv) {
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL;
+    // The keyboard reaches every control: Tab and the arrows move, Space or Enter presses. Without this, Tab stops at
+    // the text field only and no button can be pressed without a mouse.
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     style();
     for (size_t i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
         if (file_exists(fonts[i])) {
