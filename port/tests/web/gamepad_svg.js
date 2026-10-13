@@ -1,6 +1,5 @@
-// Validation of the controller artwork (port/web/gamepad.svg) in the real settings panel, in Chrome through the DevTools
-// protocol. The SVG is put inline at the top of the Controls tab for the test only (the page does not use it yet: the
-// configurator will). Checks:
+// Validation of the controller artwork (port/web/gamepad.svg) as the settings overlay's Controls tab shows it, in Chrome
+// through the DevTools protocol. Checks:
 //   - it is served as SVG; it has a title, 24 controls, each a group with a unique stable id, role="button",
 //     tabindex="0", an aria-label, and data-action naming one of the engine's 24 actions - every action exactly once
 //     (labels from the engine itself, Bt3Ui_ActionLabel); decoration is aria-hidden and takes no clicks;
@@ -30,11 +29,9 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 
   const type = await ev(`fetch('gamepad.svg').then((r) => r.headers.get('Content-Type'))`);
   check(type === 'image/svg+xml', `served as SVG (${type})`);
-  await ev(`(async () => { const t = await (await fetch('gamepad.svg')).text();
-    settings.open(); document.getElementById('tab-controls').click();
-    const box = document.createElement('div'); box.id = 'gp-test'; box.innerHTML = t;
-    document.getElementById('tab-controls-page').prepend(box); return 0; })()`);
-  await sleep(500);
+  await ev(`settings.open(), document.getElementById('tab-controls').click(), 0`);
+  await sleep(800);
+  await ev(`document.querySelector('.gp-picture').id = 'gp-test', 0`);  // the Controls tab's own picture
 
   // ---- structure and identifiers ----
   const s = JSON.parse(await ev(`(() => { const svg = document.querySelector('#gp-test svg'), c = [...svg.querySelectorAll('.gp-control')];
@@ -73,17 +70,18 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
       page = document.getElementById('tab-controls-page').getBoundingClientRect(), vb = svg.viewBox.baseVal, k = r.width / vb.width;
     const sizes = [...svg.querySelectorAll('text')].map((t) => parseFloat(getComputedStyle(t).fontSize) * k);
     return JSON.stringify({ w: r.width, h: r.height, page: page.width, ratio: r.width / r.height, vb: vb.width / vb.height, minText: Math.min(...sizes) }); })()`));
-  check(fit.w <= fit.page + 0.5 && fit.w > fit.page * 0.8, `fits the panel's width (${Math.round(fit.w)} of ${Math.round(fit.page)} px)`);
+  check(fit.w <= fit.page + 0.5 && fit.w >= 300, `fits the panel's width (${Math.round(fit.w)} of ${Math.round(fit.page)} px)`);
   check(Math.abs(fit.ratio - fit.vb) < 0.01, `keeps its shape (${fit.ratio.toFixed(3)} vs ${fit.vb.toFixed(3)})`);
   check(fit.minText >= MIN_TEXT_PX, `smallest text ${fit.minText.toFixed(1)} px at the panel's width (at least ${MIN_TEXT_PX})`);
   const scaled = JSON.parse(await ev(`(() => { const box = document.getElementById('gp-test'), svg = box.querySelector('svg'), out = [];
+    box.style.maxWidth = 'none';
     for (const w of [240, 900]) { box.style.width = w + 'px'; const r = svg.getBoundingClientRect(); out.push([w, r.width, r.height]); }
-    box.style.width = ''; return JSON.stringify(out); })()`));
+    box.style.width = ''; box.style.maxWidth = ''; return JSON.stringify(out); })()`));
   check(scaled.every(([w, rw, rh]) => Math.abs(rw - w) < 1 && Math.abs(rw / rh - fit.vb) < 0.01), `scales with its box, same shape (${scaled.map(([w, rw, rh]) => `${rw}x${Math.round(rh)}`).join(', ')})`);
 
   // ---- the states ----
   const fill = (id) => ev(`getComputedStyle(document.querySelector('#${id} .gp-face')).fill + ' ' + getComputedStyle(document.querySelector('#${id} .gp-face')).stroke + ' ' + getComputedStyle(document.querySelector('#${id} .gp-face')).strokeDasharray`);
-  const normal = await fill('gp-square');
+  const normal = await fill('gp-square');  // (Square: bound by default, not chosen)
   const sq = hits['gp-square'];
   await b.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: sq[0], y: sq[1] }); await sleep(250);
   const hover = await fill('gp-square');
@@ -102,6 +100,33 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
   check(new Set(all).size === all.length, `normal, hover, selected, pressed, remapping, unbound all look different:\n       ${['normal', 'hover', ...Object.keys(states)].map((k, i) => `${k}: ${all[i]}`).join('\n       ')}`);
   check(/^gp-square true/.test(focus) && !focus.endsWith(normal.split(' ').slice(3, 6).join(' ')), `keyboard focus shows (${focus})`);
 
+  // ---- the configurator: choosing a control shows its bindings; a capture marks it; Esc keeps the binding ----
+  await ev(`document.querySelector('details.more').open = true, 0`);  // (the list: its chosen row is checked too)
+  const tri = hits['gp-triangle'];
+  await b.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: tri[0], y: tri[1], button: 'left', clickCount: 1 });
+  await b.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: tri[0], y: tri[1], button: 'left', clickCount: 1 });
+  await sleep(300);
+  const pick = JSON.parse(await ev(`JSON.stringify({ sel: document.querySelector('#gp-triangle').classList.contains('is-selected'),
+    text: document.querySelector('.gp-chosen').textContent, row: (document.querySelector('tr.chosen th') || {}).textContent,
+    key: settings.bindingName(1, 7) })`));
+  check(pick.sel && pick.row === 'Triangle' && pick.text.includes('Triangle') && pick.text.includes(pick.key), `a click on Triangle chooses it: "${pick.text}"`);
+  await ev(`document.querySelector('.gp-chosen button.bind').click(), 0`); await sleep(200);
+  const cap = await ev(`document.querySelector('#gp-triangle').classList.contains('is-capturing')`);
+  await b.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await b.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await sleep(400);
+  const after = JSON.parse(await ev(`JSON.stringify({ cap: document.querySelector('#gp-triangle').classList.contains('is-capturing'),
+    key: settings.bindingName(1, 7), focus: document.activeElement.className, open: settings.dialog.open })`));
+  check(cap && !after.cap && after.key === pick.key && after.open && after.focus === 'bind pick',
+        `its key binding marks it as remapping; Esc keeps "${after.key}", the overlay stays open, focus back on its button`);
+  const unbound = await ev(`[...document.querySelectorAll('.gp-control.is-unbound')].map((g) => g.id).join(' ')`);
+  check(unbound === 'gp-rs-up gp-rs-right gp-rs-down gp-rs-left', `the unbound ones marked (the right stick by default): ${unbound}`);
+  const overlay = JSON.parse(await ev(`(() => { const r = settings.dialog.getBoundingClientRect(), bd = document.getElementById('settings-backdrop');
+    return JSON.stringify({ cx: r.x + r.width / 2, vw: document.documentElement.clientWidth, top: r.top, bottom: innerHeight - r.bottom, back: getComputedStyle(bd).display }); })()`));
+  check(Math.abs(overlay.cx - overlay.vw / 2) < 2 && overlay.top > 0 && overlay.bottom > 0 && overlay.back === 'block',
+        `an overlay: centred, over a backdrop (${JSON.stringify(overlay)})`);
+  await ev(`document.querySelector('#gp-triangle').classList.remove('is-selected'), 0`);
+
   // ---- screenshots to look at ----
   const shot = async (file) => {
     const r = JSON.parse(await ev(`JSON.stringify(document.getElementById('settings').getBoundingClientRect())`));
@@ -115,6 +140,11 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
   await sleep(200);
   await shot('gamepad_svg_states.png');
   console.log(`  screenshots: ${path.join(OUT, 'gamepad_svg_panel.png')}, gamepad_svg_states.png`);
+
+  await b.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 4, y: 4, button: 'left', clickCount: 1 });
+  await b.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 4, y: 4, button: 'left', clickCount: 1 });
+  await sleep(200);
+  check(!(await ev(`settings.dialog.open`)), 'a click on the backdrop closes it');
 
   await b.close();
   console.log(failed ? `RESULT: FAIL (${failed})` : 'RESULT: PASS');

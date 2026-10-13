@@ -35,7 +35,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
   };
   const text = (sel) => ev(`document.querySelector(${JSON.stringify(sel)}).textContent`);
   // a button of the controller part (the bindings table above has buttons named after controller buttons: "Back / Select")
-  const click = (label) => ev(`(() => { const b = [...document.querySelectorAll('#settings .controllers button')].find((x) => (x.textContent === ${JSON.stringify(label)} || x.textContent.startsWith(${JSON.stringify(label)} + ' ') || x.textContent.startsWith(${JSON.stringify(label)} + '…')) && !x.disabled && x.offsetParent); if (!b) throw new Error('no button ' + ${JSON.stringify(label)}); b.click(); return 0; })()`);
+  const click = (label) => ev(`(() => { const b = [...document.querySelectorAll('#tab-controls-page button')].find((x) => (x.textContent === ${JSON.stringify(label)} || x.textContent.startsWith(${JSON.stringify(label)} + ' ') || x.textContent.startsWith(${JSON.stringify(label)} + '…')) && !x.disabled && x.offsetParent); if (!b) throw new Error('no button ' + ${JSON.stringify(label)}); b.click(); return 0; })()`);
 
   await b.send('Page.enable');
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: fs.readFileSync(path.join(__dirname, 'fake_gamepads.js'), 'utf8') });
@@ -91,7 +91,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
 
   // ---- guided set-up: capture, duplicate (swap), back, skip, cancel ----
   const before = []; for (let a = 0; a < 16; a++) before.push(await binding(2, 0, a));
-  await click('Set up controller buttons');
+  await click('Set up all controller buttons');
   await sleep(STEP_MS);
   check((await text('#settings .wizard')).includes('D-pad up'), 'set-up: asks for D-pad up first');
   await tap(browserA, STD.guide);   // step 0 (D-pad up) <- guide (free)
@@ -111,7 +111,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
   check(JSON.stringify(after) === JSON.stringify(before), 'set-up: Cancel puts every binding back');
 
   // ---- a completed set-up is kept, also after a reload ----
-  await click('Set up controller buttons'); await sleep(STEP_MS);
+  await click('Set up all controller buttons'); await sleep(STEP_MS);
   for (let a = 0; a < 4; a++) await click('Skip');
   await tap(browserA, STD.north);   // Cross <- north (Triangle's): swap
   await click('Swap'); await sleep(STEP_MS);
@@ -120,7 +120,7 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
   check((await text('#settings .wizard')).includes('Set-up done: 1 of 16'), 'set-up: done, 1 changed');
 
   // ---- keys: the engine takes a key; presets; defaults ----
-  await click('Set up keys'); await sleep(STEP_MS);
+  await click('Set up all keys'); await sleep(STEP_MS);
   check(await ev(`document.activeElement.id`) === 'canvas', 'key set-up: the game area takes the key');
   await key('KeyG', 'g', 71);
   check(await binding(1, 0, 0) === await call('Bt3Ui_ScancodeFromName', 'number', ['string'], ['G']), 'key set-up: D-pad up = G');
@@ -137,10 +137,10 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
   // ---- nothing of the panel reaches the game; the test shows the bindings; back to the game ----
   await press(browserA, STD.north, true);
   check(await gameSaw() === 0, 'panel open: a held button does not reach the game');
-  await click('Test the bindings'); await sleep(STEP_MS);
+  await click('Test'); await sleep(STEP_MS);
   check((await call('Bt3Ui_PadButtons', 'number', ['number', 'number'], [1, 0]) & PAD_CROSS) !== 0 && await gameSaw() === 0,
         'test: the binding gives Cross (north, as set up), the game still gets nothing');
-  check(await ev(`[...document.querySelectorAll('#settings .padtest .cell.on')].map((c) => c.textContent).join()`) === 'Cross', 'test: shown as Cross');
+  check(await ev(`[...document.querySelectorAll('#settings .gp-control.is-pressed')].map((c) => c.id).join()`) === 'gp-cross', 'test: Cross lights on the controller picture');
   await ev(`document.getElementById('settings-close').click(); 0`);  // closed with the button still held
   await sleep(STEP_MS);
   check(await gameSaw() === 0, 'closed while held: the held button stays out of the game');

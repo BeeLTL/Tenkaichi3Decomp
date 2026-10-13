@@ -82,9 +82,9 @@ class Bt3Controllers {
     this.viewSelect = el('select', { id: 'pad-view', 'aria-label': 'Controller to show' });
     this.viewSelect.addEventListener('change', () => { this.viewIndex = Number(this.viewSelect.value); this.buildView(); });
     this.view = el('div', { class: 'padview' });
-    const padSetup = el('button', { type: 'button', class: 'secondary' }, 'Set up controller buttons…');
+    const padSetup = el('button', { type: 'button', class: 'secondary' }, 'Set up all controller buttons…');
     padSetup.addEventListener('click', () => this.wizardStart(CAPTURE.pad));
-    const keySetup = el('button', { type: 'button', class: 'secondary' }, 'Set up keys…');
+    const keySetup = el('button', { type: 'button', class: 'secondary' }, 'Set up all keys…');
     keySetup.addEventListener('click', () => this.wizardStart(CAPTURE.key));
     const padDefaults = el('button', { type: 'button', class: 'secondary' }, 'Controller buttons to defaults');
     padDefaults.addEventListener('click', () => this.s.action('reset_pads', this.player()));
@@ -94,28 +94,25 @@ class Bt3Controllers {
     KEY_PRESETS.forEach((p, i) => this.presetSelect.appendChild(el('option', { value: String(i) }, p.name)));
     const presetApply = el('button', { type: 'button', class: 'secondary' }, 'Use these keys');
     presetApply.addEventListener('click', () => this.applyPreset(KEY_PRESETS[Number(this.presetSelect.value)]));
-    this.testButton = el('button', { type: 'button', class: 'secondary', 'aria-pressed': 'false' }, 'Test the bindings');
+    this.testButton = el('button', { type: 'button', class: 'secondary', 'aria-pressed': 'false' }, 'Test');
     this.testButton.addEventListener('click', () => this.setTest(!this.testing));
-    this.testKeys = el('button', { type: 'button', class: 'secondary' }, 'Test keys (the game area takes them)');
+    this.testKeys = el('button', { type: 'button', class: 'secondary' }, 'Test keys too');
     this.testKeys.addEventListener('click', () => this.s.canvas.focus());
     this.testKeys.hidden = true;
     this.testView = el('div', { class: 'padtest', 'aria-live': 'off' });
     this.testView.hidden = true;
     this.testCells = [];  // (made with the engine's names on the first refresh: the engine is not there yet)
     this.testSticks = el('span', { class: 'dim' });
-    return el('div', { class: 'controllers' },
-      el('h3', {}, 'Controllers'),
-      el('p', { class: 'help' }, 'A browser shows a controller to a page only after one of its buttons is pressed. It tells little about it: ' +
-        'a name, whether its buttons follow the standard layout, how many buttons and axes. The game takes every controller; with the standard ' +
-        'layout its buttons are where they should be, otherwise SDL (the library the game reads controllers through) places them by its make, or guesses.'),
-      this.warning, this.list,
-      el('div', { class: 'row inline' }, el('label', { for: 'pad-view' }, 'Show'), this.viewSelect), this.view,
-      el('h3', {}, 'Set-up'),
-      el('div', { class: 'row inline' }, padSetup, keySetup, padDefaults), this.wizardBox,
+    // the Controls tab's main part takes these (settings.js buildBindings): the guided set-ups and the test
+    this.quick = { padSetup, keySetup, wizardBox: this.wizardBox, testButton: this.testButton, testKeys: this.testKeys };
+    // the rest, folded away
+    return el('details', { class: 'more controllers' },
+      el('summary', {}, 'Connected controllers and keyboard presets'),
+      el('p', { class: 'help' }, 'Not listed? Press any button on the controller: browsers show a controller only after that.'),
+      this.list,
+      el('div', { class: 'row inline' }, el('label', { for: 'pad-view' }, 'Live view'), this.viewSelect), this.view,
       el('div', { class: 'row inline' }, el('label', { for: 'key-preset' }, 'Keyboard preset'), this.presetSelect, presetApply),
-      el('h3', {}, 'Test'),
-      el('p', { class: 'help' }, 'Shows which game buttons this player’s bindings give, while nothing reaches the game.'),
-      el('div', { class: 'row inline' }, this.testButton, this.testKeys), this.testView);
+      el('div', { class: 'row inline' }, padDefaults));
   }
 
   // the lists, the warning (the panel's refresh, a connection event)
@@ -138,9 +135,9 @@ class Bt3Controllers {
     });
     this.list.replaceChildren(...(items.length ? items : [this.el('li', { class: 'dim' }, 'No controller visible: connect one and press any of its buttons.')]));
     const slot = this.call('Bt3Ui_PadSlot', 'number', [this.player()]);
-    this.warning.hidden = !(slot >= 0 && slot >= engine.length);
-    this.warning.textContent = `Player ${this.player() + 1} is set to controller ${slot + 1}, which is not connected` +
-      (engine.length ? ` (${engine.length} connected): choose one above.` : '.');
+    // (only when a controller is connected but not the chosen one: someone on the keyboard needs no warning)
+    this.warning.hidden = !(engine.length && slot >= 0 && slot >= engine.length);
+    this.warning.textContent = `Player ${this.player() + 1} uses controller ${slot + 1}, which is not connected: choose a connected one above.`;
     const keep = this.viewIndex;
     this.viewSelect.replaceChildren(...pads.map((p) => this.el('option', { value: String(p.index) }, `${p.index}: ${p.id.slice(0, 40)}`)));
     this.viewIndex = pads.some((p) => p.index === keep) ? keep : pads.length ? pads[0].index : -1;
@@ -172,6 +169,7 @@ class Bt3Controllers {
       if (this.testing) {
         const held = this.call('Bt3Ui_PadButtons', 'number', [1, this.player()]), sticks = this.call('Bt3Ui_PadSticks', 'number', [1, this.player()]) >>> 0;
         this.testCells.forEach((c, i) => c.classList.toggle('on', ((held >> i) & 1) === 1));
+        this.s.showHeld(held, sticks);
         const dir = (x, y) => [y < 0x80 - STICK_DEAD ? 'up' : y > 0x80 + STICK_DEAD ? 'down' : '', x < 0x80 - STICK_DEAD ? 'left' : x > 0x80 + STICK_DEAD ? 'right' : ''].filter(Boolean).join('-') || 'centre';
         this.testSticks.textContent = `left stick ${dir(sticks >>> 24, (sticks >> 16) & 0xFF)}, right stick ${dir((sticks >> 8) & 0xFF, sticks & 0xFF)}`;
       }
@@ -186,6 +184,7 @@ class Bt3Controllers {
     this.testButton.setAttribute('aria-pressed', String(on));
     this.testButton.textContent = on ? 'Stop the test' : 'Test the bindings';
     this.testView.hidden = !on;
+    if (!on) this.s.showHeld(null, 0);
     this.testKeys.hidden = !on;
     if (on) this.ensureLoop();
   }
@@ -247,11 +246,14 @@ class Bt3Controllers {
     w.value = this.call('Bt3Ui_Binding', 'number', [w.kind, w.player, w.at]);
     const [skip, back, cancel] = this.wizardButtons(['Skip', () => this.wizardSkip()], ['Back', () => this.wizardBack()], ['Cancel', () => this.wizardCancel()]);
     back.disabled = w.at === 0;
+    const onPicture = this.s.pad && this.s.pad.controls.has(w.at);  // (the settings key is not on the controller picture)
     this.wizardBox.replaceChildren(
-      this.el('p', { role: 'status' }, `Player ${w.player + 1}, ${w.at + 1} of ${w.count}: press the ${what} for `, this.el('strong', {}, label),
-              w.kind === CAPTURE.key ? ' (Esc keeps it as it is)' : ''),
+      this.el('p', { role: 'status' }, this.el('span', { class: 'dim' }, `${w.at + 1} / ${w.count} · `),
+              onPicture ? `Press the ${what} for the glowing button (` : `Press the ${what} for `, this.el('strong', {}, label), onPicture ? ')' : '',
+              w.kind === CAPTURE.key ? this.el('span', { class: 'dim' }, ' · Esc keeps it') : ''),
       this.el('div', { class: 'row inline' }, skip, back, cancel));
     this.s.capturing = { kind: w.kind, action: w.at, wizard: true };
+    this.s.showPicture(this.call('Bt3Ui_Get', 'number', ['actions']), this.call('Bt3Ui_Get', 'number', ['pad_buttons']));  // (it glows there)
     this.call('Bt3Ui_CaptureBegin', null, [w.kind, w.player, w.at]);
     if (w.kind === CAPTURE.key) this.s.canvas.focus(); else skip.focus();  // (keys reach the engine on the game area)
   }
@@ -260,6 +262,7 @@ class Bt3Controllers {
     const w = this.wizard;
     this.s.capturing = null;
     if (!w) return;
+    this.s.showPicture(this.call('Bt3Ui_Get', 'number', ['actions']), this.call('Bt3Ui_Get', 'number', ['pad_buttons']));
     if (w.ignoreDone) { w.ignoreDone = false; return; }  // (the engine's answer to a Skip or Back: already handled)
     const now = this.call('Bt3Ui_Binding', 'number', [w.kind, w.player, w.at]);
     if (now === w.value) { w.at++; this.wizardStep(); return; }  // (kept: Esc)
