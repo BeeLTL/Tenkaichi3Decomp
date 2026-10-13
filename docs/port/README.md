@@ -1386,7 +1386,8 @@ of the vertices into the transfer buffer could be saved by recording straight in
   made by `port/tools/make_verify.py <disc image>`; checksums only). A file in `<root>/mods/` counts as replaced.
   When something differs: a log line with the numbers and the first four names, the window title becomes
   `Tenkaichi3Decomp [modified game data]`, the notice line is shown once, and a crash report carries the line.
-- The result is kept in `<root>/.verified` with a signature of every file's size and time; a later start only
+- The result is kept in `<root>/.verified` with a signature of every file's size and time (since 2026-10-13 also
+  the time of its `mods/` twin: an edited mod of the same size used to keep the old result); a later start only
   looks at those. Measured here: under 4 s for the full pass (files in the system's cache), under 1 s after.
 - A quick pass first: sizes only, no reading. A replaced, missing or resized file is reported at once ("at least
   N files") and nothing is read; a romhack's data stopped the game in its first seconds, before the full pass
@@ -2159,3 +2160,272 @@ outline's copy of the ids 0.3 ms; the shadow buffer 1.1 ms. These are the effect
 tab already turns off. The driver's buffer compression is not the cost (`RADV_DEBUG=nodcc,nohiz` changes nothing
 or is slower). Two measurements were thrown away: skipping "every buffer but the first" and "buffer 070" doubled
 the speed only because the game shows buffers 000 and 070 in turn, so every other frame was not drawn at all.
+
+## The gameplay fingerprint (2026-10-13)
+
+Step 1 of matching online players by their data: the game now computes one number for the data a fight is
+computed from and **prints it in the log**. Nothing is enforced, nothing is sent, no interface.
+
+    bt3: gameplay data: afd9336a (tables 1b07c338 characters 39b40b5f animations dc20c449 stages 57279192 effects de456880 scripts 5c25c3bc menus b269586a): the original disc's
+    bt3: gameplay data: 2c0f... (...): modified: tables, characters differ
+    bt3: gameplay data:   tables: pzs3us1/00001.bin (fighter tables): entry 0x8
+    bt3: gameplay data:   characters: pzs3us1/01423.bin (character 0 costume 0): entry 0x12, entry 0x13
+
+**The rule.** A change that only alters what is seen or heard never changes the fingerprint: pictures of any
+kind (HUD and announcement graphics, portraits, menu art, character skins, stage and effect textures), text,
+music, voices, sound banks, texture packs, added songs. Only data that can change what the game computes counts.
+The data check above ("is every file the original's?") asks another question and stays as it is.
+
+**Why it can be trusted where it says "same".** Two things were checked beyond byte edits. (1) A run of the
+replay check with 3.8 MB of the excluded data of every pack that fight loads inverted (all effect, stage, light
+and model textures, the skill names): health, positions, clock and generator are identical on all 29,484
+vertical blanks compared (`BT3_HASH`), while one changed health value differs from the fight's first blank.
+(2) The stage layout below was used to write a stage file whose texture file is 128 KB longer, with all 831
+offsets behind it rewritten: the game loads it and the same fight is identical on all 29,599 blanks.
+
+### Definition
+
+Code: `port/src/plat_fprint.c`; second implementation and maker of the table of the original's values
+(`port/src/plat_fprint_tab.h`, hashes only): `port/tools/make_fingerprint.py [--root DIR] [--write] [--diff]
+[--list ID]`. The two agree on the original data, on each of the 50 edits below and on the modified image.
+
+- **What is read** is what the game would load: `Port_FileOpenHost` (plat_fcache.c), the function the loader
+  itself now uses (a stage / song list's file, else `mods/<path>`, else the original). A file is taken in whole
+  2048-byte sectors, the rest of the last one zero, as `ADXF_ReadNw` hands it to the game.
+- **Hash**: SHA-256, the first 64 bits kept. An *item* is the hash of a byte stream built from one block of a
+  file; a *file* is its list of (item id, hash); a *component* is the hash of, for each of its files in the
+  order below, `id (u32), item count (u32; 0xFFFFFFFF = file missing), then per item id (u32) and hash (8 bytes,
+  big-endian)`; the *fingerprint* is the hash of `"BT3FP", version (u32, = 1), the seven component hashes`.
+  All u32 little-endian. The log shows the first 32 bits of each.
+- **A pack** (word 0 = count N, words 1..N+1 = offsets w): entry k starts at `w[k] & ~3`, is empty when
+  `w[k+1] == w[k]` (the game's own test, `BObjFile_GetEntry`) and runs to the next larger offset of the table or
+  the end of the file. Offsets are never hashed, so an entry that moved is the same entry. An entry whose offset
+  lies outside the file is `X` (packs rebuilt by modding tools have such entries, and a last word of zero).
+- **Streams**: `E` empty; `D, length (u32), bytes` data; `T` a texture file; `X` outside; `P, N, then per entry
+  its flag byte (w & 3) and its stream` a pack; `H, N, the flag bytes` a file's header item (id 0);
+  `W, length, bytes` a file that is not a pack at all (item 0xFFFF).
+- **The generic walk** (used where the entry map is by content, not by number): empty -> `E`; a *texture file*
+  -> `T`; a *well-formed pack* (offsets in order and inside the block, every byte outside its entries zero), up
+  to four levels deep -> `P` with each entry walked; anything else -> `D`. A texture file is what
+  `Res_RelocateOffsets` takes: count 1..1024, entry table offset in words, 0x40-byte entries, and every pixel /
+  palette packet inside the block, a multiple of 16 bytes, starting with three zero words and a VIF DIRECT code
+  (0x50......) whose count spans the packet. Because the class is part of the stream, a definition block
+  dressed up as a texture file changes the fingerprint like any other edit.
+
+Files, in order (game file id n is `pzs3us1/(n-1)`); 1,780 files, 28,267 items, 334 MB hashed of 780 MB read:
+
+| component | files | items |
+|---|---|---|
+| tables | 2; 4 | file 2: header; entry 1 `T` if it is a texture file (the fighters' light texture), else data; entries 2..13 and any past 213 as data (animation flags, AI data, camera cuts, voice table, attack records, base health / ki / blast stocks, reference pose ...); entries 14..213 together as item 0x100 (the lip tracks objects share). File 4: header, entries 1 (character table) and 2 (item table) |
+| characters | 0x590 + c*10 + k, c = 0..160, k = 0..7; then 0xD1C..0xD47 (partner objects) | header; 2 (body volumes); 3 (skeleton, below); 0x12..0x2C each (parameters, attacks, ki blasts, movement, talk table, chains, supers, skills, AI, camera cuts, motions kept in the model file, camera animations); 0x35..0xFC together as item 0x100 (lip tracks). Not counted: 1 (HUD face), 4..0x11 (mouth, body, eye textures), 0x2D..0x34 (skill names) |
+| animations | 0x598 + c*10 | one item: `P`, N, every motion as data |
+| stages | 0x171 + s, then 0x198 + s (the two-player files an online match loads), s = 0..0x22; 0x1BF, 0x1C0 | header; entry 1 as four items (below); entries 2..N by the generic walk (parameter block `MAPD`, camera animations, object animations `EPCK`, AI way points, `MEF0`, path table `EVPp` count; the texture files 6, 0xA, 0xB, 0xE, 0x12, 0x14, 0x15 do not). Transition files: header and entry 1 (the camera animation the load waits for) |
+| effects | 3; 0x599 + c*10 | header; every entry by the generic walk |
+| scripts | 0x1FF..0x230 | one item: `S`, length, the file |
+| menus | 0x1C1 | section 2 (the character select's and team select's resources, the screens a session runs) byte-pair decoded, then header and every entry by the generic walk. So the tables that say which character, stage and song a cursor position means count, the pictures do not, and neither does how the section is packed |
+
+**Skeleton (model file entry 3, magic `pmdl`).** Stream `M`, the header's first 0x28 bytes (magic, flags, the
+four sizes), the record count, then per record of the chain from `+0x6C` (`next` at +0, `last` at +6): `1` and
+bytes 4..0x60 when `next > 0x40` (the record carries a mesh: bytes 0x40..0x60 are its centre and extent), else
+`0` and bytes 4..0x40. Not hashed: `next` (it grows with the mesh), the vertex streams behind the records, the
+header from 0x28 on (alpha, texture slots, GS block numbers), the seam section. If the entry does not walk
+(no magic, a record outside it, a `next` between 0x41 and 0x5F) it is hashed whole. Measured on the 742 model
+files: all walk; 44,027 records, 10,186 of them without a mesh (the 742 last records not counted in that).
+
+### The two layouts that were open
+
+**Stage file entry 1** (derived from `BtlStage_Relocate`, src/sys/gfxm_e_d.c, which is decompiled now, and the
+structures of battle/stg_a.h, stgm_a.h, eft_det_b.h, col_a.h; checked on all 70 fight stage files). The entry is
+the stage object; every offset in it is in WORDS from the entry's start. Header words:
+
+| +0x10 / +0x14 | timers: count, table (0x10 each) |
+|---|---|
+| +0x18 / +0x1C | 7 draw groups -> materials -> meshes -> VIF chains |
+| +0x20 / +0x24 | 9 lists of always-drawn parts |
+| +0x28 / +0x2C | visibility table: size, bytes |
+| +0x30 / +0x34 | transform nodes: count, table (0x50 each: matrix, key count, keys, end frame, body) |
+| +0x38 / +0x3C | zones: count (100 on stage 0), table (0x40 each) |
+| +0x40 | bounds: radius, top, bottom |
+| +0x44 / +0x48 | destructible objects: count, table (0x50 each) |
+| +0x4C, +0x50 | culling tree: root size, root node |
+| +0x54 | the stage's texture file |
+
+In the file the order is: nodes, keys, draw data, parts, visibility, part lists, **texture file** (word 0xC6AE0
+of stage 0), culling tree, zones, collision meshes, objects, bounds. So the collision lies BEHIND the textures
+and every one of its offsets changes with their size: nothing position dependent may be hashed. The four items:
+
+- 0x101 nodes: `N`, timer count, per timer bytes 0..4 and 8..0x10; node count, per node bytes 0..0x44 and
+  0x48..0x50, then its `keyCount` keys of 0x20 bytes.
+- 0x102 collision: `C`, zone count, per zone bytes 0..4, `nearCount`, bytes 0x10..0x18 (with the record count),
+  bytes 0x1C..0x40 (centre, half size), the neighbour list, the zone's mesh, then per collision record its
+  `broken` and object words, its last word and its mesh. A mesh: `0` when the offset is 0, else `1`, its first
+  three words (node count, polygon count), the nodes (0x20 each), the polygons (0x20 each), the vertex count
+  (largest index used + 1) and that many vertices (0x10 each).
+- 0x103 bounds: `B` and the 12 bytes.
+- 0x104 objects: `O`, count, per object bytes 0..0xC (with its health), its six parts, the piece count, the
+  pieces, bytes 0x2C..0x50. A part: `0`, or `1`, its flags, the INDEX of its node, and bytes 0xC..0x20 (radius,
+  position).
+
+Left out, all drawing: groups, materials, meshes, chains, texture animations, the visibility table, the part
+lists, the culling tree, the texture file. If anything points outside the entry the whole entry is hashed as
+data (item 1). The study's worry that a stage's vertex count sets the number of generator draws on haze stages
+does not hold: `StgHaze_Step` draws for a fixed 20 x 50 grid.
+
+**Effect packs** (common file 3: 637 entries; `0x599 + c*10`: entries 1..5 the packs of the technique slots,
+6 the character pack, itself a pack of packs). There is no table of entry numbers that separates them: the
+consumers bind by number per effect module, and the packs have another entry list for every technique. What
+does separate them is the content, measured over all 162 files (102.8 MB):
+
+| kind | share | counted |
+|---|---|---|
+| texture files (7,059) | 84.7 MB | no |
+| headerless definition blocks, all under 4 KB: particle definitions (0x300), colour tracks (0x140, 0xC0), emitter sets, slot parameters | 13.0 MB | yes |
+| key tracks `V000` | 3.1 MB | yes |
+| camera animations `CMAn` | 1.5 MB | yes |
+| models `pmdl` (25), `DBES` blocks | 0.4 MB | yes, whole |
+
+All 7,059 texture files have their entry table at word 8 and are covered completely by header plus packets, and
+no block over 4 KB is left that is not one of the named kinds, so nothing that carries hit radii, timers or
+behaviour is taken for a picture.
+
+### What the port adds, and what a session switches off
+
+| addition | gameplay? | in the fingerprint |
+|---|---|---|
+| `mods/<path>` | as the file it replaces | yes: it is what is hashed |
+| added stages (`stages/`, plat_stages.c) | yes, their collision | no: the stage selects do not offer them in a session (`extra = Port_NetSession() ? 0 : ...`, menu_c_e.c, menu_e_b.c), nor the stage swaps of `BT3_STAGE_REPLACE`, and the stage buffer has the game's own size. They are hashed like a stage and printed on a line of their own: `N added stage(s) <hash> (not offered online, not counted)` |
+| added songs (`songs/`, plat_songs.c) | no | no; not offered in a session either |
+| texture packs (gs_texpack.c) | no (replaced at upload, in the renderer) | no |
+| movies | no; not played in a session (plat_movie.c) | no |
+| `BT3_FILE_ALIAS` | - | reaches only the streams and movies (`Port_FilePath`); the pack loader does not read it (the comment in plat_stages.c that says so is out of date) |
+
+Audio is out for good: since d48b19b on `port` a session takes every stream's length from a table of the
+original disc's lengths built into the program, not from the player's file, so neither samples nor headers can
+reach a fight. An "audio lengths" line was planned as an uncounted extra and has been dropped altogether (it
+would have opened 65,201 files for a number that means nothing). The desync check added to net.c in the same
+change is the other half: the fingerprint says BEFORE a match that two data sets compute the same, the check
+says DURING one that they did not; a cause the fingerprint does not see (below) is caught there.
+
+### Cache and cost
+
+- `<root>/.fingerprint` (binary, 389 KB): per file its path, size and modification time (nanoseconds on Linux)
+  and its items. A file is read again only when one of the three changed, a `mods/` file appearing or going
+  included; the definition's version is in the header.
+- It runs on the data check's thread, before the 3 GB comparison when that has to run; the game does not wait.
+  `BT3_VERIFY=0` now turns off the comparison and its notice only: the fingerprint is still computed. Without a
+  window (`BT3_GS=none`) nothing runs unless `BT3_VERIFY=1`, as before.
+- Measured (this machine, NVMe): 1780 files read and hashed, files not in the system's cache 2.57 s; in the
+  cache 1.04 s; every later start 9 ms for the whole program in `BT3_FINGERPRINT=1` mode (1,780 `stat` calls).
+  The replay check running beside the cold pass printed its result before the fingerprint line.
+- `BT3_FINGERPRINT=1`: compute, print with EVERY differing file named, and end (a tool).
+- For the rest of the program: `int Port_DataFingerprint(unsigned long long *out)` (1 ready, 0 still being
+  computed, -1 not computed in this run), `Port_DataFingerprintPart(part, &out)`,
+  `Port_DataFingerprintOriginal()`, `Port_DataFingerprintText()`.
+
+### Tests
+
+Each edit on a copy of the file in the `mods/` folder of a scratch data root made of links; game and tool agree
+on every line. "LARGER" = the entry made longer and the offset tables rewritten.
+
+| edit | expected | got |
+|---|---|---|
+| character 0 health 40000 -> 50000 (file 2 entry 8) | changes | changes: tables, entry 0x8 |
+| AI data byte (file 2 entry 4) | changes | changes: tables, entry 0x4 |
+| attack record byte, an attack's damage (model file entry 0x13) | changes | changes: characters, entry 0x13 |
+| damage-taken scale 1.0 -> 0.5 (entry 0x12) | changes | changes: characters, entry 0x12 |
+| body volume offset (entry 2) | changes | changes: characters, entry 0x2 |
+| skeleton rest vector (entry 3, a node record) | changes | changes: characters, skeleton |
+| lip track byte (entry 0x35) | changes | changes: characters, lip tracks |
+| animation: a byte of motion 1 (hit windows are in the motion) | changes | changes: animations |
+| stage collision: a vertex of zone 0 (0x198 and 0x171) | changes | changes: stages, stage collision |
+| stage bounds radius 1200 -> 1500 | changes | changes: stages, stage bounds |
+| stage object health 10 -> 99 | changes | changes: stages, stage objects |
+| stage parameter block (entry 2) | changes | changes: stages, entry 0x2 |
+| item table value (file 4 entry 2) | changes | changes: tables, entry 0x2 |
+| effect definition byte (0x599, pack 2 entry 6; file 3 entry 4) | changes | changes: effects |
+| battle script byte | changes | changes: scripts |
+| versus menu stage id list (section 2 entry 39) | changes | changes: menus, entry 0x27 |
+| animation file cut in half | changes | changes: animations |
+| stage change camera animation (0x1BF entry 1) | changes | changes: stages |
+| character texture texels (entry 0xC) | same | same |
+| mesh vertex (entry 3, vertex stream) | same | same |
+| HUD face and mouth textures (entries 1, 4) | same | same |
+| skill names (entry 0x2D) | same | same |
+| music samples; voice samples; a voice stream's length in its header | same | same |
+| member HUD face block (file 8) | same | same |
+| fonts, HUD and announcement sheets ("FIGHT"; files 5, 6, 7) | same | same |
+| fighter light texture (file 2 entry 1) | same | same |
+| stage change model (0x1BF entry 2) | same | same |
+| stage sprite texture (stage entry 0x14) | same | same |
+| stage texture texels INSIDE entry 1; stage mesh data inside entry 1 | same | same |
+| effect texture texels (0x599 pack 2 entry 5; file 3 entry 3) | same | same |
+| battle sound bank sample; a character portrait (0x2F9) | same | same |
+| versus menu art texels; the menu section packed another way with the same content | same | same |
+| LARGER character texture file (+16 KB, entries 0xD.. move); LARGER HUD face (all 251 later entries move) | same | same |
+| LARGER effect texture inside a nested pack (inner and outer entries move); LARGER file 3 entry 3 (634 entries move) | same | same |
+| LARGER stage texture file, entry 6 (+64 KB) | same | same |
+| LARGER texture file inside stage entry 1 (+128 KB; collision, zones, objects move, 831 offsets rewritten), 0x198 and 0x171 | same | same |
+| a pack with its trailing padding cut off (file 4, 3 bytes shorter) | same | same |
+| an added song and a texture pack | same | same |
+| an added stage | same, own line | same; `1 added stage 8cdb321e (not offered online, not counted)` |
+
+**A real modified disc** (a modified disc image the user supplied; unpacked into a scratch folder, laid over the
+original as `mods/` would, removed afterwards). It is a full conversion: 2,599 of 3,401 entries of the second
+archive and 37,348 streams differ. All seven components differ; of the 1,780 files of the list 1,736 differ on
+disk and 1,733 in a counted item (two partner object files and one stage file differ only in textures). What
+it showed:
+- Its packs are not the tidy ones of the disc: 6 + 1 + 3 + 1 files end a few bytes short of their table's last
+  offset (padding cut off), 253 model files have entries 0x30.. pointing past the end (unused text and lip
+  entries left with old offsets), 35 have a last word smaller than the one before. The first version of the
+  reader refused all of these (299 files "not readable as a pack", which made their pictures count); the pack
+  rule above comes from them. One file is left that is no pack (it begins with zeros).
+- Not counted and correctly so: each of the three texture-only files by itself gives the original's
+  fingerprint; so do all 38,211 files of the image outside the list at once (HUD sheets, 322 member faces, 163
+  portraits, stage pictures, the other menu archives, sound and voice banks, every stream); so do the original's
+  versus menu archive, stage 0 and three model files with the image's pictures put into them (22 menu textures;
+  up to 14 face / mouth / eye / body texture and text entries per model file, 64 KB longer). Inside its effect
+  packs 2,365 texture files differ from the original's at the same place (29 MB) and none of that is hashed.
+- Counted: in the model files every counted entry class differs in 590 to 1,293 files; the fighter table file
+  differs in exactly one entry (8, base health / ki / blast stocks); 48 stage files have other collision, 52
+  other bounds; a texture ENTRY that appears or disappears in a stage file counts (33 and 30 cases), which is
+  intended: the stage effect tasks are created by whether the entry exists.
+
+### Known false alarms (a visual or audible change that DOES change the fingerprint)
+
+- Lip tracks (model file 0x35..0xFC, file 2 14..213). Counted on purpose: each mouth change the track commands
+  draws the libc generator the fight uses (`BtlObj_SetSubState` -> `rand()`), so a re-timed lip track is a
+  different fight. A dub that brings its own lip tracks changes the fingerprint.
+- A texture entry added to or removed from a pack, or a texture file in a shape the recogniser refuses (no VIF
+  DIRECT code at a packet, a packet outside the block).
+- A re-meshed EFFECT model (25 `pmdl` blocks in the effect packs are hashed whole; character models are split).
+- Stage file entries that are not texture files but may be purely visual or audible: 7 (holds a `DBES` block),
+  0xD (animated surfaces), 0x16 / 0x17 (the boundary wall's colour and parameter blocks); the colour tracks and
+  particle definitions of effect packs (they are definitions, but a recoloured effect is a changed block);
+  the versus menus' animations and text entries.
+- A nested pack rebuilt untidily (offsets out of order, non-zero padding) is hashed whole, pictures included;
+  top-level packs are read by the lenient rule.
+- A skin made as a model swap with another skeleton or other node bounds; a character file whose header flags
+  changed.
+
+### Open
+
+- The fingerprint covers the DATA. The program's own tables are checked at start already (`Port_LoadGameData`)
+  and the port's code is covered only by the version; environment overrides are not covered at all, and three
+  of them are not switched off in a session: `BT3_TEST_STAGE`, `BT3_TEST_BGM`, `BT3_TEST_SCREEN` (every battle
+  on a named stage / song / screen mode; with the first an added stage could be loaded in a session), and
+  `BT3_STAGE_BUF`. The step that enforces should refuse them in a session.
+- The menus component is the character / team select's pack only. The screens a session passes after a fight
+  (result, rematch) and the first-run overlay were not traced for data that decides the next fight.
+- Sound banks are left out whole. Battle code asks a bank one thing, `Snd_IsLoopSe`, which decides whether a
+  handle is kept in a per-side set; no path from there to health, position or a timer was found, and none was
+  proven absent. How the port clears a bank's `pending` flag in the first load was not read.
+- Readers still not traced, all counted: file 2 entries 9 and 12; model file entries 0x1A, 0x25..0x28, 0x2C;
+  stage entries 7, 0xD, 0x13, 0x16, 0x17.
+- Stage ids: 35 fight stages (0..0x22) are hashed. Files 0x194..0x197 (scene backdrops) and 0x1BB..0x1BE are
+  not; whether id 0x23 can be a fight stage was not settled.
+- Tournament, story, mission and training set up opponents from menu packs that are not hashed (not reachable
+  in a session today); the scripts component covers their battle scripts.
+- Added characters (branch `charslots`) are outside the data folder; when they can be used online their files
+  belong in the list.
+- Windows: the code is plain C with `stat`; it was built and run on Linux only here. The cache's time is in
+  seconds there.
