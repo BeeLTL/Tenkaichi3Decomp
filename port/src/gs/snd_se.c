@@ -35,6 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "gs_internal.h"
+#include "../port_addr.h"
 
 #define SPU_SIZE 0x200000
 #define VOICES 48
@@ -434,7 +435,7 @@ uint32_t sceSifSetDma(SifDmaData *d, int count) {
 
     for (i = 0; i < count; i++) {
         if (d[i].addr != 0 && d[i].data != 0 && d[i].size > 0) {
-            memcpy((void *)(uintptr_t)d[i].addr, (void *)(uintptr_t)d[i].data, (size_t)d[i].size);
+            memcpy(Port_Ptr(d[i].addr), Port_Ptr(d[i].data), (size_t)d[i].size);
         }
     }
     return 1;
@@ -442,7 +443,32 @@ uint32_t sceSifSetDma(SifDmaData *d, int count) {
 
 /* sceSdRemote (0x2967C0 in the PS2 executable). Used for two things: 0x80D0 = transfer `size` bytes at `iopAddr`
    into the sound chip's memory at `spuAddr`; 0x80F0 = is the transfer over (always: it is done at once). */
+#ifdef __APPLE__
+/* The game declares this one with `...` (src/sys/snd.c: it is called with 4 and with 7 arguments), and on Apple's
+   arm64 the arguments after the `...` travel on the stack, not in registers: read them as such. */
+#include <stdarg.h>
+static int sd_remote(int block, int cmd, int core, int mode, void *iopAddr, uint32_t spuAddr, uint32_t size);
+int func_002967C0(int block, int cmd, ...) {
+    va_list ap;
+    int core, mode;
+    void *iopAddr = NULL;
+    uint32_t spuAddr = 0, size = 0;
+
+    va_start(ap, cmd);
+    core = va_arg(ap, int);
+    mode = va_arg(ap, int);
+    if (cmd == 0x80D0) {
+        iopAddr = va_arg(ap, void *);
+        spuAddr = va_arg(ap, uint32_t);
+        size = va_arg(ap, uint32_t);
+    }
+    va_end(ap);
+    return sd_remote(block, cmd, core, mode, iopAddr, spuAddr, size);
+}
+static int sd_remote(int block, int cmd, int core, int mode, void *iopAddr, uint32_t spuAddr, uint32_t size) {
+#else
 int func_002967C0(int block, int cmd, int core, int mode, void *iopAddr, uint32_t spuAddr, uint32_t size) {
+#endif
     (void)block; (void)core; (void)mode;
     if (cmd == 0x80D0) {
         if (iopAddr != NULL && spuAddr < SPU_SIZE && size <= SPU_SIZE - spuAddr) {
@@ -475,8 +501,8 @@ int sceSifCallRpc(void *client, int fno, int mode, void *send, int sendSize, voi
         if (slot >= 0) {
             sBanks[slot].set = 1;
             sBanks[slot].spu = (uint32_t)w[1];
-            sBanks[slot].hd = (const uint8_t *)(uintptr_t)(uint32_t)w[2];
-            sBanks[slot].sq = (const uint8_t *)(uintptr_t)(uint32_t)w[3];
+            sBanks[slot].hd = (const uint8_t *)Port_Ptr((uint32_t)w[2]);
+            sBanks[slot].sq = (const uint8_t *)Port_Ptr((uint32_t)w[3]);
             sBanks[slot].paused = 0;
             if (sBanks[slot].volume == 0.0f) { sBanks[slot].volume = 1.0f; }
             voice_own_bank(slot);

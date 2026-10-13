@@ -68,6 +68,7 @@ See [docs/port/README.md](docs/port/README.md) for the running log of what is do
 - A 64-bit x86 processor and a graphics card with Vulkan support. Most of the work is on the processor (the
   game's arithmetic is reproduced exactly as on the PS2); a recent mid-range CPU is recommended.
 - Linux (glibc 2.35 or newer) or Windows 10 / 11.
+- macOS on Apple Silicon: **experimental**, built from source only (see below).
 - About 4 GB of disc space, and your disc image as an `.iso` file.
 
 ## Installing a release
@@ -89,6 +90,22 @@ python3 install.py --iso <your disc image>
 does everything on Linux: checks the tools, reads the disc, builds the 64-bit program and runs the game's demo
 fight as a test. `python3 install.py --check` lists what is missing. `port/setup/build.sh && ./Tenkaichi3Decomp-setup` is
 the same with a window.
+
+### macOS (experimental)
+
+Apple Silicon Macs, native arm64, built from source on the Mac itself; there is no macOS release archive. The
+attract-demo fight gives the same state as the Linux program on every frame, the rewind test (rollback) passes,
+and the game draws through Metal with sound; online play against Linux / Windows has not been tried on two machines
+yet. With [Homebrew](https://brew.sh):
+
+```
+xcode-select --install                       # (once: Apple's command line tools)
+brew install llvm sdl3 shaderc spirv-cross
+python3 install.py --iso <your disc image>   # then ./play.sh
+```
+
+`python3 install.py --check` lists what is missing. How the build works and what is left:
+[docs/port/macos_plan.md](docs/port/macos_plan.md).
 
 The release archives for Linux and Windows are built from the repository alone, with no disc involved:
 `port/release/build.sh` (needs only docker) or the GitHub workflow in `.github/workflows/release.yml`. The
