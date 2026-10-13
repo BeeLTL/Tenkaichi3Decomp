@@ -660,6 +660,7 @@ static void menu_text_name_styles(const char *dir) {
             label.widthMilli < 500 || label.widthMilli > 2000 || label.top > 0xFFFFFF || label.bottom > 0xFFFFFF || label.outline > 0xFFFFFF) { continue; }
         label.width = label.rowWidth = 512; label.height = label.rowHeight = selected == 2 ? 64 : 32;
         label.center = selected == 2;
+        label.outlineMilli = -1; label.shadow = 1; /* (as the disc names of labels.tsv: the outline by the size, the drop shadow on) */
         sNameStyles[selected] = label;
     }
     fclose(fp);
