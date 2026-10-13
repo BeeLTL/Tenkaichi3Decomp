@@ -131,8 +131,9 @@ What remains for the memory model is the rewrite below (step 2): turning `addrsp
 
 ## Native arm64: how the build works (as built)
 
-`BT3_CC=mac64 python port/tools/undefined.py && BT3_CC=mac64 python port/tools/link.py` -> `port/build/bt3_mac`.
-Needs Homebrew `llvm` (22.x), `sdl3`, and the repository's `.venv` (`libclang` 18 for `ptr32.py`).
+`python3 install.py --iso <image>` does it all on a Mac (about 2 minutes on an M-series): checks the Homebrew tools,
+reads the disc with the system's `bsdtar`, puts `libclang` 18 (for `ptr32.py`) in `.venv`, builds with `BT3_CC=mac64`
+(`port/tools/undefined.py`, `link.py` -> `port/build/bt3_mac`), runs the demo fight, writes `play.sh`.
 
 - **Game code**: preprocess + `eeconst.py` + `ptr32.py` as on Linux, then Homebrew clang `-emit-llvm` with
   `-Xclang -disable-llvm-passes`, the window pass (`port/tools/macwin/macwin.cpp`, an `opt` plugin built on first

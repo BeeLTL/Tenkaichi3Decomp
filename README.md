@@ -96,7 +96,15 @@ the same with a window.
 Apple Silicon Macs, native arm64, built from source on the Mac itself; there is no macOS release archive. The
 attract-demo fight gives the same state as the Linux program on every frame, the rewind test (rollback) passes,
 and the game draws through Metal with sound; online play against Linux / Windows has not been tried on two machines
-yet, and `install.py` does not do the macOS build yet. How the build works and what is left:
+yet. With [Homebrew](https://brew.sh):
+
+```
+xcode-select --install                       # (once: Apple's command line tools)
+brew install llvm sdl3 shaderc spirv-cross
+python3 install.py --iso <your disc image>   # then ./play.sh
+```
+
+`python3 install.py --check` lists what is missing. How the build works and what is left:
 [docs/port/macos_plan.md](docs/port/macos_plan.md).
 
 The release archives for Linux and Windows are built from the repository alone, with no disc involved:
