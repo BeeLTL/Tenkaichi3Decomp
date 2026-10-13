@@ -2824,3 +2824,26 @@ Not done / known:
   (the random tables may have done so, unchecked).
 - Both players need this release: the fight is computed differently from before once START is pressed (it is in the
   release that carries `NET_VERSION` 4).
+
+## Online: "Random" gave the same fighters in every session (2026-10-13)
+
+Reported by a player: Random at the character select of an online match is always the same, Yajirobe, then Cooler.
+
+Cause: a session is a fresh start of the program on both sides, and the port seeds the game's random numbers with a
+fixed number at start-up (`func_002BB390`, plat_sys.c: 0x12345678, so that a run can be repeated). The session's
+start-up is the same every time, so both of the game's generators (the C library's `rand`, and the twister of
+`src/sys/rand.c` that `Rand_Range` draws from: the Random cell, the random stage, the random song) were in the same
+state at the character select of every session.
+
+Fix (port/src/gs/net.c, port/src/headless.c): the host draws a number when it starts (`seed_draw`), it travels
+behind the host's other choices in `T_HELLO_ACK` and `T_CONFIG` (one more word at the end; no copy joins without
+the first of the two), and both copies seed both generators with it where the session enters the versus mode, the
+way `Rand_Init` does at start-up. `BT3_NET_SEED=<n>` on the host sets the number for tests; 0 leaves the generators
+alone (the sequence every session had before).
+
+Tests (two copies without a window, buttons from the same table, as above): two sessions with drawn numbers differ
+from each other and from before (random numbers, when the first fight starts and how it goes), the two copies of
+each agree in the whole state; with lag and loss too; with `BT3_NET_SEED=0` the session is blank for blank what it
+was before the change. Not done: the Random cell itself was not driven (the tables do not go to it); what was
+checked is that the generator it draws from differs from session to session.
+

@@ -119,6 +119,29 @@ static struct sockaddr_in sCodePunch;
    T_CONFIG); headless.c applies it on both sides when the session enters the versus mode. */
 static uint32_t sRules = 3u << 8; /* single battle, 240 seconds: the game's defaults */
 
+/* The match's seed. A session is a fresh start of the program on both sides with the same fixed seed (plat_sys.c),
+   so the game's random numbers were the same in every session: "Random" at the character select gave the same
+   fighters in the same order every time (reported: Yajirobe, then Cooler). The host draws a number when it starts,
+   it travels behind the host's other choices (T_HELLO_ACK, T_CONFIG), and both copies seed the game's generator
+   with it at the same point, where the session enters the versus mode (headless.c). 0 = leave the generator as it
+   is. BT3_NET_SEED=<n> on the host: that number (tests; 0 for the sequence every session had before). */
+static uint32_t sSeed;
+
+unsigned Port_NetSeed(void) {
+    return sSeed;
+}
+
+static void seed_draw(void) {
+    const char *e = getenv("BT3_NET_SEED");
+    if (e != NULL) {
+        sSeed = (uint32_t)strtoul(e, NULL, 0);
+    } else {
+        do {
+            sSeed = SDL_rand_bits() ^ (uint32_t)SDL_GetTicksNS() ^ (uint32_t)(SDL_GetPerformanceCounter() >> 7);
+        } while (sSeed == 0);
+    }
+}
+
 /* Each player's own two battle options of the game's option menu (save 0x1694: the camera type; 0x1698: the
    screen shake; they become BattleOption.optA / optB of the player's side, battle_load.c). A session starts from
    an empty save on both sides, so both sides had the defaults. Each copy now reads its player's own from his save
@@ -491,6 +514,9 @@ static int receive(void) {
             if (n >= 28 + NAME_LEN) {
                 opts_take(0, pkt + 24 + NAME_LEN);
             }
+            if (n >= 32 + NAME_LEN) {
+                memcpy(&sSeed, pkt + 28 + NAME_LEN, 4);
+            }
             sCfgGot = 2;
             net_send(ack, sizeof(ack), &from);
         } else if (type == T_CONFIG_ACK && sMode == 1) {
@@ -512,7 +538,8 @@ static int receive(void) {
             uint32_t ack[3] = {MAGIC, T_HELLO_ACK, NET_VERSION};
             net_send(ack, sizeof(ack), &from);
         } else if (type == T_HELLO && sMode == 1) {
-            uint32_t ack[7 + NAME_LEN / 4] = {MAGIC, T_HELLO_ACK, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+            uint32_t ack[8 + NAME_LEN / 4] = {MAGIC, T_HELLO_ACK, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+            ack[7 + NAME_LEN / 4] = sSeed;
             memcpy(&ack[6], sMyName, NAME_LEN);
             ack[6 + NAME_LEN / 4] = sOpts[0];
             if (n >= 12 + NAME_LEN) { /* the other player's name came with the greeting */
@@ -561,6 +588,9 @@ static int receive(void) {
                 }
                 if (n >= 28 + NAME_LEN) {
                     opts_take(0, pkt + 24 + NAME_LEN);
+                }
+                if (n >= 32 + NAME_LEN) {
+                    memcpy(&sSeed, pkt + 28 + NAME_LEN, 4);
                 }
                 memcpy(sNames[1], sMyName, NAME_LEN);
                 sCfgGot = 1;
@@ -737,7 +767,9 @@ static void net_start(int role, const char *host, const char *join) {
     local.sin_addr.s_addr = htonl(INADDR_ANY);
     memset(&sPeer, 0, sizeof(sPeer));
     sPeer.sin_family = AF_INET;
+    sSeed = 0;
     if (sMode == 1) {
+        seed_draw();
         local.sin_port = htons((uint16_t)atoi(host));
         if (!sFromLobby && bind(sSock, (struct sockaddr *)&local, sizeof(local)) != 0) {
             fprintf(stderr, "bt3: net: cannot use port %s\n", host);
@@ -833,7 +865,8 @@ static void net_start(int role, const char *host, const char *join) {
         while (!sCfgAcked && SDL_GetTicksNS() - start < 3000000000ull) {
             uint64_t now = SDL_GetTicksNS();
             if (now - lastCfg >= 50000000ull) {
-                uint32_t cfg[7 + NAME_LEN / 4] = {MAGIC, T_CONFIG, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+                uint32_t cfg[8 + NAME_LEN / 4] = {MAGIC, T_CONFIG, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+                cfg[7 + NAME_LEN / 4] = sSeed;
                 memcpy(&cfg[6], sMyName, NAME_LEN);
                 cfg[6 + NAME_LEN / 4] = sOpts[0];
                 net_send(cfg, sizeof(cfg), &sPeer);

@@ -148,6 +148,25 @@ int __wrap_Progress_Main(int arg) {
                     *(int *)((char *)gProgress + 0x630) = dp;
                     Save_UnlockAll(gSaveData);
                     *(int *)((char *)gSaveData + 0xC34) = time;
+                    {
+                        /* the match's seed, the host's draw (gs/net.c): the same on both copies, at the same point */
+                        /* Both of the game's generators, the way Rand_Init (src/sys/rand.c) seeds them at start-up:
+                           the C library's, then the twister from four of its numbers. "Random" at the character
+                           select, the random stage and song draw from the twister (Rand_Range). */
+                        extern unsigned Port_NetSeed(void);
+                        extern void Port_Srand(unsigned seed);
+                        extern int Port_Rand(void);
+                        extern void Rand_SeedByArray(unsigned *key, int keyLen);
+                        if (Port_NetSeed() != 0) {
+                            unsigned key[4];
+                            int k;
+                            Port_Srand(Port_NetSeed());
+                            for (k = 0; k < 4; k++) {
+                                key[k] = (unsigned)Port_Rand();
+                            }
+                            Rand_SeedByArray(key, 4);
+                        }
+                    }
                     fprintf(stderr, "bt3: net: rules: %s%s, time limit %s\n", type == 0 ? "single battle" : type == 1 ? "team battle" : "DP battle",
                             type == 2 ? (dp == 0 ? " (10)" : dp == 1 ? " (15)" : " (20)") : "",
                             time == 0 ? "60" : time == 1 ? "90" : time == 2 ? "180" : time == 3 ? "240" : "none");
