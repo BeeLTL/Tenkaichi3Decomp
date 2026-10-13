@@ -13,10 +13,10 @@ Steps (each is skipped when its result is already there; --force redoes them):
   2. disc image         found, read, and checked against the known checksum of the release
   3. game data          unpacked into gamedata/ as loose files
   4. executable data    the data tables of the game's two programs, split out for the build
-  5. menu fonts         the menus' lettering measured on the disc, for the "Menu font" setting (optional:
-                        when it cannot be done it is skipped, and that setting only offers "Original")
-  6. build              the port itself (64-bit; --32 for the 32-bit build)
-  7. self-test          the game's own demo fight, run without a window
+  5. build              the port itself (64-bit; --32 for the 32-bit build)
+  6. self-test          the game's own demo fight, run without a window
+(The list of menu labels of the "Menu font" setting was a step here. The game makes it itself now, the first time
+it starts with a window: port/src/gs/menu_labels.c, docs/port/menu_font.md.)
 Everything the tools print goes to install.log.
 Standard library only; Linux, and macOS on Apple Silicon (experimental: the native arm64 build, BT3_CC=mac64,
 docs/port/macos_plan.md)."""
@@ -38,7 +38,7 @@ MACHINE = False  # --machine: one line per event for the setup window (port/setu
 
 
 def say(event, text=""):
-    """A line of the protocol the setup window reads: `@step 3 7 Game data`, `@note ...`, `@ok ...`, `@skip ...`,
+    """A line of the protocol the setup window reads: `@step 3 6 Game data`, `@note ...`, `@ok ...`, `@skip ...`,
     `@fail`, `@missing name|purpose|package`, `@stopped message`, `@done launcher`. Line breaks inside a text are
     sent as the two characters backslash, n."""
     print(f"@{event} {text}".rstrip().replace("\n", "\\n"), flush=True)
@@ -66,8 +66,8 @@ def run(cmd, env=None, cwd=ROOT):
 
 
 class Step:
-    """One line of the wizard: `[3/7] Game data ... done (41 s)` with a running clock while it works."""
-    count, total = 0, 7
+    """One line of the wizard: `[3/6] Game data ... done (41 s)` with a running clock while it works."""
+    count, total = 0, 6
 
     def __init__(self, title):
         Step.count += 1
@@ -323,30 +323,7 @@ def step_split(args):
     s.ok()
 
 
-# -------------------------------------------------------------------------------------------------- 5. menu fonts
-
-def step_menu_fonts(args):
-    """port/tools/menu_font.py: where the menus' labels are in the disc's textures, for the "Menu font" setting.
-    Needs nothing but Python and gcc, and nothing from the network. It is an extra: whatever goes wrong here, the
-    step is skipped with the reason and the installation goes on (the game then offers only "Original")."""
-    out = ROOT / "gamedata/game-text"
-    ready = lambda: all((out / name).is_file() for name in ("labels.json", "labels.tsv", "name-styles.tsv"))
-    if not args.force and not args.rebuild and ready():
-        Step("Menu fonts").skip("already prepared")
-        return
-    s = Step("Menu fonts")
-    try:
-        code, text = run([sys.executable, ROOT / "port/tools/menu_font.py", "--data", ROOT / "gamedata", "--out", out])
-    except OSError as e:
-        code, text = 1, str(e)
-    if code != 0 or not ready():
-        why = (text.strip().splitlines() or ["see install.log"])[-1]
-        s.skip(f"skipped: the Menu font setting stays on Original. {why}")
-        return
-    s.ok("menu labels ready")
-
-
-# ------------------------------------------------------------------------------------------------------ 6. build
+# ------------------------------------------------------------------------------------------------------ 5. build
 
 def step_build(args):
     exe = ROOT / "port/build" / ("bt3_mac" if MAC else "bt3" if args.bits32 else "bt3_64")
@@ -377,7 +354,7 @@ def step_build(args):
     return exe
 
 
-# -------------------------------------------------------------------------------------------------- 7. self-test
+# -------------------------------------------------------------------------------------------------- 6. self-test
 
 def step_test(args, exe):
     if args.skip_test:
@@ -444,7 +421,6 @@ def main():
         iso = step_disc(args)
         step_gamedata(args, iso)
         step_split(args)
-        step_menu_fonts(args)
         exe = step_build(args)
         step_test(args, exe)
     except Failed as e:

@@ -354,7 +354,7 @@ static int style_build(int s, const char *const *names, int count, int rowH) {
     for (n = 0; n < count; n++) {
         uint8_t *d = t + (size_t)n * cell;
         for (i = 0; i < cell; i++) {
-            int v = d[i] * 255 / full[i / SHEET_W];
+            int v = full[i / SHEET_W] > 0 ? d[i] * 255 / full[i / SHEET_W] : 0; /* (a row of the cell with no fill at all, between rows that have it: not in the disc's sheets) */
             d[i] = (uint8_t)(v > 255 ? 255 : v < 30 ? 0 : v);
         }
     }

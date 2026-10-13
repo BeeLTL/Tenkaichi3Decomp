@@ -8,7 +8,9 @@
  * sanitizers, which stop the program at the first read or write outside a buffer.
  *
  *   gcc -g -O1 -fsanitize=address,undefined -fno-sanitize=shift -fno-sanitize-recover=all -Iport/src/gs \
- *       port/tests/menu_font/fuzz.c -lm -lpthread -o /tmp/menu_font_fuzz
+ *       port/tests/menu_font/fuzz.c port/src/gs/menu_labels.c -lm -lpthread -o /tmp/menu_font_fuzz
+ *   (menu_labels.c: menu_text.c names it for the list of labels; this test brings its own list, so it never runs
+ *   here. It has its own test, labels.c in this folder.)
  *   (-fno-sanitize=shift: stb_truetype builds a 32-bit number as p[0] << 24 in a signed int, in every font.)
  *   /tmp/menu_font_fuzz <work folder> <rounds> <seed> port/third_party/fonts/dejavu/DejaVuSansCondensed.ttf
  *   /tmp/menu_font_fuzz <work folder> 0 0 <any files...>          (each file as it is: not fonts, empty, huge)

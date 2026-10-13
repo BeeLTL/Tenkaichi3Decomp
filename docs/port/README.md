@@ -3234,3 +3234,81 @@ be safe (a `switch` with a default, and a comparison with 0), but `Port_NetSideO
 what the options menu can set (0..2 and 0..1).
 
 Not done: packets made at random thrown at the receiver (reading only).
+
+## Menu fonts: the game makes the list of labels itself (2026-10-13)
+
+The "Menu font" setting needs a list of which menu texture holds which label (`gamedata/game-text/labels.tsv`,
+`name-styles.tsv`), made from the player's disc data. It was made by `port/tools/menu_font.py`, with a C helper
+built by gcc while it ran, as a step of `install.py`: a release has neither Python nor a compiler, so there the
+setting offered only "Original". The game makes the list now (`port/src/gs/menu_labels.c`), in a release too.
+Notes for users: `docs/port/menu_font.md`.
+
+- When. At start with a window, if `labels.tsv` is missing or its first line is not the current format's
+  (`MENU_LABELS_VERSION`), and `fonts.tsv` has a font for the menus. The ten archives
+  `gamedata/pzs3us1/00448.bin` ... are checked by size and CRC-32 as the tool checked them (the table is the
+  tool's); any other disc: one line in the log, nothing made. `BT3_MENU_FONT_ANY_DISC=1` is the tool's
+  `--any-disc`.
+- Where it runs. In a thread of its own, started from `menu_text.c` the first time the font list is read
+  (`GsGpu_Init`). The thread reads the archives and writes files; it touches nothing of the game's or the
+  renderer's (the letter cutter `namefont.c`, which measures the name strips, is compiled into `menu_labels.c` a
+  second time with its own variables, as the tool's helper had it). When it is done it sets one flag. The renderer
+  calls `MenuText_Poll` between two frames (`gs_draw.c`, beside `scale_apply`): there, under `menu_text.c`'s
+  lock, the fonts for the menus become available and the font named in the settings file is opened. The settings
+  window reads and applies its values within one frame, so it never sees the change half way. While the list is
+  awaited the window can only offer "Original" and applies that with every change of another setting: the font
+  the settings file asked for is kept aside (`MenuText_FontIdToSave`), so it is not lost from the file.
+  As `song_mp3.c` does for its songs, a run with `BT3_PAD_REC`, `BT3_PAD_PLAY`, `BT3_PAD_TABLE` or `BT3_SYNCTEST`
+  makes the list at start instead, before anything is drawn (`BT3_TEST_LABELS_SLOW=<ms>` forces the thread, after
+  a wait, for testing).
+- The files are written under another name and renamed (`MoveFileExA` on Windows), `labels.tsv` last. A failure
+  (another disc, a folder that cannot be written, an archive that is not what it should be) is one line in the
+  log and leaves the setting on "Original".
+- One catalogue. Which archive, section and texture a menu's labels are in, and what they say, is `ml_catalog` in
+  `menu_labels.c` and nowhere else; the stage and song names are `namefont.c`'s tables (the tool read them out of
+  that file with a regular expression). `port/tools/menu_font_extract.c` is gone, the step "Menu fonts" of
+  `install.py` and its row in the setup window too (six steps). `port/tools/menu_font.py` is what is left of the
+  tool, 200 lines of Python that need no compiler: it turns an edited `labels.json` into the two tsv files, and
+  reads only that file (the colour styles too, which it used to have a table of). The game writes `labels.json`
+  beside the list unless one is there, and never reads it.
+- The release's README (`package.py`) says the setting is there.
+
+Checked:
+
+1. The same bytes. `python3 port/tools/menu_font.py --data gamedata --out <dir>` of the commit before, against
+   what the new code writes from the same data: `labels.tsv` (397 labels), `name-styles.tsv` and `labels.json`
+   are identical (`cmp`) from the test program built with gcc -O2, with clang -O2, with gcc and the sanitizers,
+   with mingw-w64 run under wine, and from the game itself (the 64-bit clang build), made at start and made in
+   the thread. The tsv files do not depend on the fonts installed: the tool looked at the fonts only to print
+   which characters none of them has. The reduced tool applied to the game's `labels.json`, and to the one the
+   old tool wrote, gives the same two tsv files again.
+2. Time. 200 to 250 ms for the whole list (reading and checking 32 MB of archives included; the Python tool
+   took 1.8 s). In the thread the start does not wait for it; in a recorded run the start is that much longer,
+   once. With the list there, the start reads its first line.
+3. Damaged archives (`port/tests/menu_font/labels.c`, gcc with the address and undefined-behaviour sanitizers,
+   the disc check left out). 24 damaged copies of the archives (cut short, emptied, tables zeroed or filled, 1 to
+   4096 bits flipped, table and size fields replaced): all turned down, nothing written. Damage after unpacking,
+   which reaches the tables and texture headers: 3,600 rounds of bytes flipped anywhere and 4,800 rounds aimed at
+   the fields the catalogue reads (over a quarter of those gave the list up, at eight different checks). One finding,
+   in the first run: `namefont.c` divided by zero for a name row with a line of no fill between lines that have
+   it (`style_build`, the normalising of the fill). The disc's sheets have no such row, but the stage select runs
+   the same code on the sheets in the game's memory, so a replaced name sheet could have stopped the game there;
+   fixed. Nothing after that.
+4. In the game, without a window on screen, a recording from the start through the title and the main menu into
+   a fight's pause menu, a font chosen in the settings file, a picture every 60 frames at 2x: started with the
+   Python tool's list, and started with no `game-text` at all (the list made at start): 201 of 201 pictures the
+   same bytes. With the list made in the thread (`BT3_TEST_LABELS_SLOW=1`): 201 of 201. With the thread held back
+   6 seconds: the title and the main menu (frames 1140 to 1440, 6 pictures) have the disc's lettering, every
+   picture after that is the same as with the tool's list. Without a recording: the list is made in the thread
+   and the font taken; started again, the list is read; a list with an older first line is made again (a
+   `labels.json` beside it is kept); one byte changed in `00452.bin`: one line in the log, "Original"; a folder
+   that cannot be written to: the same.
+5. Online. Nothing here is game state: the new file is `gs_menu_labels.o`, which `make_state.py` leaves out like
+   every `gs_*` object; in the map of the 64-bit build its variables and `gs_menu_text.o`'s lie at
+   0x20d11ae0 to 0x20d6eae8, outside every range of `bt3_64.mem`. The thread starts with the program, never
+   later; `MenuText_Poll` is not called under an online session, so a list that gets finished during one waits
+   for its end. Without a window nothing of it runs (the replay check runs so). Not run: an online session.
+
+Not tested: Windows at run time beyond the maker under wine (the Windows build links; the thread, the hand-over
+and the drawing were not run there); a release package made with `package.py` and its setup (the game was run
+with `BT3_DATA` pointing at a folder like a release's `gamedata`); the settings window during the hand-over (read
+in the code, not operated); the OpenGL renderer; macOS.

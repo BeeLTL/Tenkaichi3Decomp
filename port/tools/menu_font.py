@@ -1,405 +1,29 @@
 #!/usr/bin/env python3
-"""The menu labels of the "Menu font" setting, made from the user's own disc. See docs/port/menu_font.md.
+"""Edited menu labels of the "Menu font" setting, put into the form the game reads. See docs/port/menu_font.md.
 
-Reads the menu archives in gamedata/, finds the texture rows that hold the menus' lettering, measures each (letter
-height, baseline, margin) and writes gamedata/game-text/labels.json (editable) and labels.tsv / name-styles.tsv
-(what the game reads). Nothing it writes is in the repository or in a release: it is all derived from the disc.
+The game makes the list of labels itself, from the disc data, the first time it starts (port/src/gs/menu_labels.c):
+gamedata/game-text/labels.tsv and name-styles.tsv, which it reads, and labels.json, the same list for a person to
+edit. This tool turns an edited labels.json into labels.tsv and name-styles.tsv again:
 
-Standard library and the C compiler the port is built with (gcc); no other package. The disc has to be the USA
-release (SLUS-21678): the texture numbers below are that disc's, and another one's files are not touched."""
+    python3 port/tools/menu_font.py                      gamedata/game-text of this checkout
+    python3 port/tools/menu_font.py --out <folder>       another game-text folder (a release's gamedata/game-text)
+
+It reads labels.json and nothing else: not the disc, and no table of its own (which texture has which label, the
+measurements and the colours are all in the file, written there by the game). Standard library only.
+To start over, delete labels.json and labels.tsv: the game writes both again at its next start."""
 import argparse
-import collections
-import ctypes
-import functools
 import json
 import pathlib
 import re
 import struct
-import subprocess
-import sys
-import tempfile
-import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-FONTS = ROOT / 'port/third_party/fonts'
 
-# The menu archives the labels are in (gamedata/pzs3us1/<number>.bin), with size and CRC-32 on the USA disc. The
-# section and texture numbers in catalog() are only right for these files: anything else is left alone.
-MENU_FILES = {448: (3693312, 0xFF3A84B3), 449: (1544768, 0xB0DA7301), 450: (2884544, 0x5E5A6AD3),
-              451: (8374016, 0xBAC607A9), 452: (3466880, 0x0EC0646D), 453: (1776896, 0x717BA147),
-              459: (3329600, 0xE34CA2A0), 460: (2398528, 0x13642238), 461: (3604416, 0xD60327A4),
-              463: (875072, 0xB576B4B2)}
-
-
-class Skip(Exception):
-    """The labels cannot be made here; the message is the one line that says why."""
-
-
-def check_disc(data):
-    for number, (size, crc) in MENU_FILES.items():
-        path = data / 'pzs3us1' / f'{number:05d}.bin'
-        if not path.is_file():
-            raise Skip(f'{path} is missing (the game data of the USA release, SLUS-21678, is needed)')
-        content = path.read_bytes()
-        if len(content) != size or zlib.crc32(content) != crc:
-            raise Skip(f'{path} is not the file of the USA release (SLUS-21678): its menu textures are numbered differently')
-
-
-_LIB = None
-_LIB_DIR = None
-
-
-def helper():
-    """port/tools/menu_font_extract.c as a library: the port's own letter cutter (namefont.c) and the slow loops.
-    Built with gcc, the compiler every variant of the port (BT3_CC) builds port/src/gs with. It runs inside this
-    Python, so it is the machine's own gcc also when the game is cross-built for Windows."""
-    global _LIB, _LIB_DIR
-    if _LIB is None:
-        _LIB_DIR = tempfile.TemporaryDirectory()
-        so = pathlib.Path(_LIB_DIR.name) / 'menu_font_extract.so'
-        try:
-            r = subprocess.run(['gcc', '-shared', '-fPIC', '-O2', '-w', str(ROOT / 'port/tools/menu_font_extract.c'), '-lm', '-o', str(so)],
-                               capture_output=True, text=True)
-        except OSError as exc:
-            raise Skip(f'gcc cannot be run ({exc})')
-        if r.returncode != 0:
-            print(r.stderr)
-            raise Skip('port/tools/menu_font_extract.c does not compile with gcc')
-        lib = ctypes.CDLL(str(so))
-        lib.MenuFont_Extract.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
-        lib.MenuFont_Glyph.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
-        lib.MenuFont_Glyph.restype = ctypes.c_void_p
-        lib.MenuFont_Unpack.argtypes = [ctypes.c_char_p, ctypes.c_long, ctypes.c_char_p, ctypes.c_long]
-        lib.MenuFont_Unpack.restype = ctypes.c_long
-        lib.MenuFont_Hash.argtypes = [ctypes.c_char_p, ctypes.c_long]
-        lib.MenuFont_Hash.restype = ctypes.c_uint64
-        _LIB = lib
-    return _LIB
-
-COLOR_STYLES = {
-    'title-prompt': {'top': [239,239,223],'bottom': [177,179,96],'outline': [63,21,17],
-                     'outline_width': 2,'outer_outline': [217,194,193],'outer_outline_width': 2,'shadow': False},
-    'main-menu': {'top': [203,203,203],'bottom': [203,203,203],'outline': [94,35,109]},
-    'purple': {'top': [255,255,255],'bottom': [255,255,255],'outline': [70,0,89]},
-    'orange': {'top': [244,239,137],'bottom': [210,104,75],'outline': [44,21,27]},
-}
-
-
-def color_style_for(group):
-    """Catalog selection states determine colors; texture pixels never select a palette."""
-    if group == 'main-5':
-        return 'main-menu'
-    if group == 'title-press-start':
-        return 'title-prompt'
-    orange = ('stage','song-highlighted','main-6','ultimate-battle','sim-dragon-actions',
-              'character-preview-color','song-random-highlighted')
-    return 'orange' if group.endswith('-selected') or group in orange else 'purple'
-
-
-def u32(data, offset=0):
-    return struct.unpack_from('<I', data, offset)[0]
-
-
-def section(data, index):
-    return data[u32(data, index * 4) & ~3:]
-
-
-def unpack(data):
-    """The game's byte-pair compression, src/sys/bpe.c (no game code is executed)."""
-    size, packed = struct.unpack_from('<II', data)
-    if size > 64 * 1024 * 1024 or packed > len(data) - 8:
-        raise ValueError('Invalid BPE header')
-    out = ctypes.create_string_buffer(size)
-    if helper().MenuFont_Unpack(bytes(data), len(data), out, size) != size:
-        raise ValueError('Invalid BPE data')
-    return out.raw
-
-
-# The same GS layout tables as namefont.c. Map each decoded texel to its uploaded byte once.
-BLOCK = ((0,1,4,5,16,17,20,21),(2,3,6,7,18,19,22,23),(8,9,12,13,24,25,28,29),(10,11,14,15,26,27,30,31))
-COL = ((0,1,4,5,8,9,12,13),(2,3,6,7,10,11,14,15),(16,17,20,21,24,25,28,29),(18,19,22,23,26,27,30,31),
-       (32,33,36,37,40,41,44,45),(34,35,38,39,42,43,46,47),(48,49,52,53,56,57,60,61),(50,51,54,55,58,59,62,63))
-COL8 = ((0,4,16,20,32,36,48,52,2,6,18,22,34,38,50,54),(8,12,24,28,40,44,56,60,10,14,26,30,42,46,58,62),
-        (33,37,49,53,1,5,17,21,35,39,51,55,3,7,19,23),(41,45,57,61,9,13,25,29,43,47,59,63,11,15,27,31))
-_MAPPING = {}
-
-
-BLOCK16 = ((0,2,8,10),(1,3,9,11),(4,6,12,14),(5,7,13,15),(16,18,24,26),(17,19,25,27),(20,22,28,30),(21,23,29,31))
-COL4 = ((0,8,32,40,64,72,96,104,2,10,34,42,66,74,98,106,4,12,36,44,68,76,100,108,6,14,38,46,70,78,102,110),
-        (16,24,48,56,80,88,112,120,18,26,50,58,82,90,114,122,20,28,52,60,84,92,116,124,22,30,54,62,86,94,118,126),
-        (65,73,97,105,1,9,33,41,67,75,99,107,3,11,35,43,69,77,101,109,5,13,37,45,71,79,103,111,7,15,39,47),
-        (81,89,113,121,17,25,49,57,83,91,115,123,19,27,51,59,85,93,117,125,21,29,53,61,87,95,119,127,23,31,55,63))
-
-
-def texture(data, index):
-    """Decode indexed menu textures using their actual GS upload format and pitch."""
-    e = data[u32(data,4)*4+index*64:][:64]
-    if len(e)<64:
-        return None
-    tex0 = struct.unpack_from('<Q',e,48)[0]
-    w,h = 1<<((tex0>>26)&15),1<<((tex0>>30)&15)
-    psm = (tex0>>20)&63
-    if w>512 or h>512 or psm not in (19,20) or u32(e,24)>>8 != 0:
-        return None
-    pixels,palette = u32(e)*4+96,u32(e,4)*4+96
-    reg = struct.unpack_from('<Q',data,pixels-48)[0]
-    uw,uh = reg&4095,(reg>>32)&4095
-    dbw,tbw = u32(e,24)&63,(tex0>>14)&63
-    key=(w,h,psm,uw,uh,dbw,tbw)
-    if key not in _MAPPING:
-        mem=[None]*(512*512*4)
-        for y in range(uh):
-            for x in range(uw):
-                a=(((y&~31)*dbw+((x>>1)&~31)+BLOCK[(y>>3)&3][(x>>3)&7])<<6)+COL[y&7][x&7]
-                at=(y*uw+x)*4
-                mem[a*4:a*4+4]=range(at,at+4)
-        mapping=[]
-        for y in range(h):
-            for x in range(w):
-                col=(y&15)>>2;sx=x^(4 if col&1 else 0)
-                if psm==19:
-                    a=((((y>>1)&~31)*(tbw>>1)+((x>>2)&~31)+BLOCK[(y>>4)&3][(x>>4)&7])<<8)+COL8[y&3][sx&15]+col*64
-                    address,shift=a,0
-                else:
-                    a=((((y>>2)&~31)*(tbw>>1)+((x>>2)&~31)+BLOCK16[(y>>4)&7][(x>>5)&3])<<9)+COL4[y&3][sx&31]+col*128
-                    address,shift=a>>1,(a&1)*4
-                if mem[address] is None:
-                    return None  # dimensions outside the uploaded rectangle
-                mapping.append((mem[address],shift))
-        _MAPPING[key]=mapping
-    count=256 if psm==19 else 16
-    colors=[]
-    for i in range(count):
-        c=(i&0xE7)|((i&8)<<1)|((i&16)>>1) if psm==19 else i
-        colors.append(data[palette+c*4:palette+c*4+4])
-    mask=count-1
-    return b''.join(colors[(data[pixels+a]>>shift)&mask] for a,shift in _MAPPING[key])
-
-
-def sheets(pack, part, width=512):
-    data = section(pack, part)
-    result = []
-    for i in range(u32(data)):
-        entry = u32(data,4)*4 + i*64
-        tex0 = struct.unpack_from('<Q',data,entry+48)[0]
-        if 1 << ((tex0 >> 26) & 15) == width:
-            rgba = texture(data,i)
-            if rgba is not None:
-                result.append(rgba)
-    return result
-
-
-def catalog(data):
-    """Named texture groups, with the archive/section addresses used by the menu source."""
-    @functools.lru_cache(maxsize=None)
-    def read(n):
-        return (data / 'pzs3us1' / f'{n:05d}.bin').read_bytes()
-    @functools.lru_cache(maxsize=None)
-    def screen(file, outer):
-        return unpack(section(read(file), outer))
-    names = (ROOT / 'port/src/gs/namefont.c').read_text()
-    def table(name):
-        return re.findall(r'"([^"\\]*)"', names.split('static const char *const ' + name + '[] = {', 1)[1].split('};', 1)[0])
-    select = unpack(section(read(448), 2))
-    main = unpack(section(read(449), 2))
-    groups = [dict(id='stage', height=64, labels=table('kStageNames'), rgba=sheets(select, 6)),
-              dict(id='song', height=32, labels=table('kSongNames'), rgba=sheets(select, 4)[:3]),
-              dict(id='song-highlighted', height=32, labels=table('kSongNames'), rgba=sheets(select, 3)[:3])]
-    # Main-menu selectable labels, normal and selected. Their Flash clips use these same UV rows.
-    main_labels = ['Dragon History','Ultimate Battle','Dragon World Tour','Duel','Dragon Net Battle','Evolution Z',
-                   'Ultimate Training','Data Center','Character Reference','Options','Shenron']
-    for part in (5,6):
-        groups.append(dict(id=f'main-{part}', height=32, labels=main_labels, rgba=sheets(main, part)))
-    # Explicit texture indices: panels/backgrounds often share the same section as text.
-    def add(id, file, outer, part, index, labels, height=32, centered=False, text_from=None, width=512, nested=None):
-        pack = screen(file, outer)
-        if nested is not None:
-            pack = section(pack, nested)
-        section_data = section(pack, part)
-        rgba = texture(section_data, index)
-        entry = u32(section_data,4)*4 + index*64
-        actual_width = 1 << ((struct.unpack_from('<Q',section_data,entry+48)[0] >> 26) & 15)
-        if rgba is None or actual_width != width:
-            raise ValueError(f'{id}: unexpected menu text sheet dimensions')
-        groups.append(dict(id=id, height=height, labels=labels, rgba=[rgba], centered=centered, text_from=text_from, width=width))
-
-    add('title-normal',449,1,8,0,['New Game','Continue'],centered=True)
-    add('title-selected',449,1,8,1,['New Game','Continue'],centered=True,text_from='title-normal')
-    add('title-press-start',449,1,6,0,['Press START button'],centered=True)
-    # Measure the inner letters rather than this prompt's bright outer border.
-    groups[-1].update(font_cap=17,font_baseline=25,font_art_width=264,outline=(63,21,17))
-    versus = ['1P VS COM','1P VS 2P','COM VS COM','Battle Settings']
-    battle = ['Single Battle','Team Battle','DP Battle']
-    for index in range(4):
-        family = 'versus' if index < 2 else 'versus-type'
-        style = 'normal' if index % 2 == 0 else 'selected'
-        add(f'{family}-{style}',448,1,8,index,versus if index < 2 else battle,
-            text_from=f'{family}-normal' if index % 2 else None)
-    options = ['Save/Load','Screen','Sound','Controller','Camera Type','Screen Shake','Screen Adjust','Speaker']
-    sound = ['Volume','BGM Test','Change Voice','Control Type','Vibration']
-    for index in range(4):
-        family = 'options' if index % 2 == 0 else 'options-sound'
-        style = 'normal' if index < 2 else 'selected'
-        add(f'{family}-{style}',453,1,16,index,options if index % 2 == 0 else sound,
-            text_from=f'{family}-normal' if index >= 2 else None)
-    for index, style in ((0,'normal'),(1,'selected')):
-        add(f'options-actions-{style}',453,1,27,index,['EXIT','Default'],width=256,
-            text_from='options-actions-normal' if index else None)
-        add(f'save-confirm-{style}',453,1,3,index,['Yes','No'],width=128,centered=True,nested=35,
-            text_from='save-confirm-normal' if index else None)
-    values = ['ON','OFF','Save','Load','Stereo','Mono','English','Japanese']
-    controls = ['1P','2P','Normal','Custom','Simple']
-    for index in range(4):
-        family = 'options-values' if index % 2 == 0 else 'options-controls'
-        style = 'normal' if index < 2 else 'selected'
-        add(f'{family}-{style}',453,1,14,index,values if index % 2 == 0 else controls,
-            centered=True,width=256,text_from=f'{family}-normal' if index >= 2 else None)
-    for index, style in ((2,'normal'),(3,'selected')):
-        add(f'history-difficulty-{style}',460,1,9,index,['Easy','Normal','Hard'],centered=True,
-            text_from='history-difficulty-normal' if index == 3 else None)
-    for index, style in ((4,'normal'),(5,'selected')):
-        add(f'history-action-{style}',460,1,9,index,['Select Scenario','Select Difficulty'],centered=False,
-            text_from='history-action-normal' if index == 5 else None)
-    add('ultimate-battle',451,1,3,7,['Sim Dragon','Mission 100','Survival','Disc Fusion','???'],centered=True)
-    add('sim-dragon-actions',451,5,2,19,['Start','Battle Record','Explanation'])
-    for index, style in ((0,'normal'),(1,'selected')):
-        add(f'evolution-{style}',452,1,5,index,['Character Customize','Item Shop','Evolution Z Explanation'],
-            text_from='evolution-normal' if index else None)
-        add(f'customize-menu-{style}',452,3,4,index,['Equip Item','Password','Distribute Z Points'],width=256,
-            text_from='customize-menu-normal' if index else None)
-        add(f'customize-slots-{style}',452,3,4,index+2,['','','','Distribute Z Points'],
-            centered=True,text_from='customize-slots-normal' if index else None)
-        add(f'item-shop-{style}',452,2,3,index,['Item Exchange','Item List'],
-            text_from='item-shop-normal' if index else None)
-        add(f'data-center-{style}',459,1,8,index,['Password Input Screen','Replay','Fighter Catalog'],
-            text_from='data-center-normal' if index else None)
-        add(f'character-reference-{style}',463,1,8,index,
-            ['Character Introduction','Voice Playback',"Chi-Chi's Commentary",'View Model'],width=256,
-            text_from='character-reference-normal' if index else None)
-    for index, style in ((0,'normal'),(4,'selected')):
-        add(f'training-{style}',461,1,9,index,['Training','Battle Training'],
-            text_from='training-normal' if index == 4 else None)
-    for index, style in ((1,'normal'),(5,'selected')):
-        add(f'practice-{style}',461,1,9,index,['Single Practice','Team Practice'],
-            text_from='practice-normal' if index == 5 else None)
-    for index, style in ((3,'normal'),(7,'selected')):
-        add(f'training-controller-{style}',461,1,9,index,['Nunchuk Style','Classic Style','GC Controller'],
-            text_from='training-controller-normal' if index == 7 else None)
-    add('ultimate-battle-normal',451,1,3,6,['Sim Dragon','Mission 100','Survival','Disc Fusion','???'],
-        centered=True,text_from='ultimate-battle')
-    add('sim-dragon-actions-normal',451,5,2,18,['Start','Battle Record','Explanation'],text_from='sim-dragon-actions')
-    tour=['World Tour','Free','World Tournament','World Martial Arts Big Tournament','Cell Games','Otherworld Tournament','Yamcha Game']
-    for index,style in ((0,'normal'),(1,'selected')):
-        add(f'world-tour-list-{style}',450,1,5,index,tour,text_from='world-tour-list-normal' if index else None)
-        add(f'world-tour-custom-{style}',450,2,13,index,['Normal','Custom 1','Custom 2','Custom 3'],width=256,centered=True,
-            text_from='world-tour-custom-normal' if index else None)
-        add(f'versus-settings-{style}',448,1,13,index,['Duel Time','COM Level','Referee','Transformations','Map Setting','Default'],
-            width=256,centered=False,text_from='versus-settings-normal' if index else None)
-        add(f'versus-dp-{style}',448,1,12,index+1,['10','15','20'],width=256,centered=True,
-            text_from='versus-dp-normal' if index else None)
-        # The narrow "10" has more fill than outline; use this sheet's outline palette color.
-        groups[-1]['outline'] = (44,21,27) if index else (70,0,89)
-        add(f'versus-onoff-{style}',448,1,17,index,['ON','OFF'],width=256,centered=True,
-            text_from='versus-onoff-normal' if index else None)
-        for family,part,labels in (
-                ('versus-time',15,['60','90','180','240','∞']),
-                ('versus-com-level',16,['Very Weak','Weak','Average','Strong','Very Strong']),
-                ('versus-referee',18,['Ox King','Videl','Supreme Kai™','Shenron','Announcer 1','Announcer 2','Announcer 3'])):
-            add(f'{family}-{style}',448,1,part,index,labels,width=256,centered=True,
-                text_from=f'{family}-normal' if index else None)
-            # The infinity symbol's fill also outnumbers its outline pixels.
-            groups[-1]['outline'] = (44,21,27) if index else (70,0,89)
-        for player in (1,2):
-            family=f'versus-transform-{player}p'
-            add(f'{family}-{style}',448,1,17,player*2+index,[f'{player}P:ON',f'{player}P:OFF'],width=128,centered=True,
-                text_from=f'{family}-normal' if index else None)
-        add(f'item-shop-confirm-{style}',452,2,28,index,['Yes','No','Explanation'],width=256,centered=True,
-            text_from='item-shop-confirm-normal' if index else None)
-    for index,style in ((2,'normal'),(6,'selected')):
-        add(f'battle-training-{style}',461,1,9,index,['Basic','Intermediate','Advanced'],width=256,
-            text_from='battle-training-normal' if index==6 else None)
-    for index,style in ((0,'normal'),(1,'selected')):
-        add(f'team-end-{style}',448,2,36,index,['END'],width=256,centered=True,
-            text_from='team-end-normal' if index else None)
-        add(f'sound-digits-{style}',453,1,11,index,[],width=128)
-        groups[-1]['rectangles']=[dict(text=str(n),x=(n%4)*32,y=(n//4)*32,width=32,height=32) for n in range(10)]
-        add(f'character-color-{style}',448,2,29,index,[],width=128)
-        groups[-1]['rectangles']=[dict(text=str(n+1),x=(n%2)*64,y=(n//2)*32,width=64,height=32) for n in range(4)]
-        groups[-1]['outline'] = (44,21,27) if index else (70,0,89)
-    add('character-preview-color',463,1,7,0,[],width=128)
-    groups[-1]['rectangles']=[dict(text=str(n),x=(n%4)*32,y=(n//4)*32,width=32,height=32) for n in range(10)]
-    add('song-random',448,2,4,3,['Random'])
-    add('song-random-highlighted',448,2,3,3,['Random'],text_from='song-random')
-    return groups
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data', type=pathlib.Path, default=ROOT/'gamedata')
-    parser.add_argument('--out', type=pathlib.Path, default=ROOT/'gamedata/game-text')
-    parser.add_argument('--extract-only', action='store_true', help='Inspect the texture catalog without exporting labels')
-    parser.add_argument('--apply', action='store_true', help='Compile edited labels.json for the game; the disc is not read')
-    parser.add_argument('--any-disc', action='store_true',
-                        help='Do not check that the menu archives are the USA release\'s (a changed archive; wrong numbers give no labels or wrong ones)')
-    args = parser.parse_args()
-    if args.apply:
-        if not (args.out / 'labels.json').is_file():
-            raise Skip(f'{args.out}/labels.json is not there yet: run this tool without --apply first')
-        apply_labels(args.out)
-        return
-    if not args.any_disc:
-        check_disc(args.data)
-    args.out.mkdir(parents=True, exist_ok=True)
-    groups = catalog(args.data)
-    for group in groups:
-        print(group['id'], len(group['rgba']), 'sheets')
-    if not args.extract_only:
-        export(args, groups)
-
-
-def measure_strips(groups):
-    """Letter height and baseline of the long name strips (stages, songs, the main menu), from the port's own
-    letter cutter: it tells capitals from lower case, which a row's pixels alone do not."""
-    lib = helper()
-    letters = set()
-    for group in groups:
-        if not group['labels'] or not group['rgba']:
-            continue
-        sample_labels = []
-        sample_rows = []
-        slots = [(sheet, y) for sheet in group['rgba'] for y in range(0, len(sheet) // 2048, group['height'])]
-        for (sheet, y), label in zip(slots, group['labels']):
-            if label and '\n' not in label:
-                at = y * 2048
-                sample_rows.append(sheet[at:at + group['height'] * 2048])
-                sample_labels.append(label)
-        # The segmenter operates on 256-high sheets; pad the final, shorter one transparently.
-        rgba = b''.join(sample_rows)
-        rgba = rgba.ljust((len(rgba) + 512*256*4 - 1) // (512*256*4) * (512*256*4), b'\0')
-        buf = ctypes.create_string_buffer(rgba)
-        labels = (ctypes.c_char_p * len(sample_labels))(*(t.encode('ascii') for t in sample_labels))
-        if not lib.MenuFont_Extract(0, buf, len(rgba)//(512*256*4), group['height'], labels, len(labels)):
-            print('Could not segment', group['id'], '(it keeps the measurements of its rows)')
-            continue
-        capitals = []
-        for ch in range(33, 127):
-            m, sp = (ctypes.c_int*7)(), (ctypes.c_float*3)()
-            if lib.MenuFont_Glyph(0, ch, m, sp):
-                letters.add(chr(ch))
-                if chr(ch) in 'HETILMN':
-                    capitals.append(list(m))
-        if not capitals:
-            continue
-        group['font_baseline'] = sorted(m[5]+1 for m in capitals)[len(capitals)//2]
-        group['font_cap'] = sorted(m[5]-m[4]+1 for m in capitals)[len(capitals)//2]
-    if len(letters) < 20:
-        raise Skip('the lettering of the menus was not recognised (is the game data the USA release, SLUS-21678?)')
-
-
-@functools.lru_cache(maxsize=None)
-def hash_rgba(rgba):
-    """FNV-1a, 64 bits, over a texture's decoded pixels: what the game looks a texture up by (menu_text.c)."""
-    return f'{helper().MenuFont_Hash(rgba, len(rgba)):016x}'
+# The first lines of the two files, as port/src/gs/menu_labels.c writes them (ml_tsv). The game takes a labels.tsv
+# without this version as one of an older format and makes the list again from the disc.
+LABELS_HEAD = ('# BT3 menu text v6: hash width height y row_height cap_height baseline center margin width_milli x row_width '
+               'art_width top bottom outline italic outline_milli outer_milli outer_rgb shadow text')
+STYLES_HEAD = '# kind (0 song, 1 selected song, 2 stage) cap_height baseline margin width_milli top bottom outline'
 
 
 def font_chars(path):
@@ -437,107 +61,98 @@ def font_chars(path):
     return chars
 
 
-def row_style(rgba, height, centered, width=512, outline=None):
-    pixels=list(zip(rgba[0::4],rgba[1::4],rgba[2::4],rgba[3::4]))
-    colors=collections.Counter(p[:3] for p in pixels if p[3]>=120)
-    if not colors:
+def supported_chars(fonts):
+    """The characters some font of the "Menu font" list has (fonts.tsv in the fonts folder). None: no list found."""
+    if not (fonts / 'fonts.tsv').is_file():
         return None
-    outline=outline if outline is not None else colors.most_common(1)[0][0]
-    fill=[(i%width,i//width,p[:3]) for i,p in enumerate(pixels) if p[3]>=100 and sum(p[:3])-sum(outline)>100]
-    if not fill:
-        return None
-    ys=collections.Counter(y for x,y,c in fill)
-    full=[y for y,n in ys.items() if n >= max(ys.values())*0.35]
-    # Sparse capital strokes still define the cap top; dense rows locate the baseline.
-    y0,y1=min(y for x,y,c in fill),max(full)
-    return dict(height=height, cap_height=y1-y0+1, baseline=y1+1, align='center' if centered else 'left',
-                margin=8 if centered else min(x for x,y,c in fill), art_width=max(x for x,y,c in fill)-min(x for x,y,c in fill)+1)
+    chars = set()
+    for line in (fonts / 'fonts.tsv').read_text(encoding='utf-8').splitlines():
+        fields = line.split('\t')
+        if line and not line.startswith('#') and len(fields) >= 2 and (len(fields) < 3 or (fields[2].strip().isdigit() and int(fields[2]) & 1)):
+            chars.update(font_chars(fonts / fields[0]))
+    return chars
 
 
-def apply_labels(out):
-    """Turn user-editable JSON into the bounded TSV read by the native renderer."""
-    config=json.loads((out/'labels.json').read_text())
-    palettes=config.get('color_styles',COLOR_STYLES)
+def rgb(value, what):
+    if not isinstance(value, list) or len(value) != 3 or any(type(c) != int or not 0 <= c <= 255 for c in value):
+        raise ValueError(f'{what}: expected three RGB values (0-255)')
+    return ''.join(f'{c:02x}' for c in value)
+
+
+def apply_labels(out, fonts):
+    """labels.json into the bounded TSV files read by the game's renderer (port/src/gs/menu_text.c)."""
+    config = json.loads((out / 'labels.json').read_text(encoding='utf-8'))
+    palettes = config.get('color_styles')
+    if not isinstance(palettes, dict) or not isinstance(config.get('labels'), list):
+        raise ValueError('labels.json has no "color_styles" or no "labels" (a file of an early version: delete it and labels.tsv, '
+                         'and the game writes both again at its next start)')
+
     def palette(row):
-        name=row.get('color_style',color_style_for(row['id'].split('/')[0]))
-        if name not in COLOR_STYLES or name not in palettes:
-            raise ValueError(f"{row['id']}: unknown color_style {name!r}")
-        colors={**COLOR_STYLES[name],**palettes[name]}
-        for key in ('top','bottom','outline'):
-            value=colors.get(key)
-            if not isinstance(value,list) or len(value)!=3 or any(type(c)!=int or not 0<=c<=255 for c in value):
-                raise ValueError(f'color_styles.{name}.{key}: expected three RGB values (0–255)')
-        return colors
+        name = row.get('color_style')
+        if name not in palettes:
+            raise ValueError(f"{row['id']}: color_style {name!r} is not one of color_styles")
+        colors = palettes[name]
+        return colors, [rgb(colors.get(key), f'color_styles.{name}.{key}') for key in ('top', 'bottom', 'outline')]
+
     def decorations(colors):
-        widths=[]
-        for key,default in (('outline_width',None),('outer_outline_width',0)):
-            value=colors.get(key,default)
-            if value is None and key=='outline_width':
-                widths.append(-1)
-            elif type(value) not in (int,float) or not 0<=value<=8:
+        widths = []
+        for key, default in (('outline_width', None), ('outer_outline_width', 0)):
+            value = colors.get(key, default)
+            if value is None and key == 'outline_width':
+                widths.append(-1)  # the renderer's own width
+            elif type(value) not in (int, float) or not 0 <= value <= 8:
                 raise ValueError(f'{key}: expected a width from 0 to 8')
             else:
-                widths.append(round(value*1000))
-        outer=colors.get('outer_outline',[0,0,0])
-        if not isinstance(outer,list) or len(outer)!=3 or any(type(c)!=int or not 0<=c<=255 for c in outer):
-            raise ValueError('outer_outline: expected three RGB values (0–255)')
-        shadow=colors.get('shadow',True)
-        if type(shadow)!=bool:
+                widths.append(round(value * 1000))
+        shadow = colors.get('shadow', True)
+        if type(shadow) != bool:
             raise ValueError('shadow must be true or false')
-        return [*widths,''.join(f'{c:02x}' for c in outer),int(shadow)]
-    supported=set()  # by any font of the "Menu font" list (port/third_party/fonts/fonts.tsv)
-    for line in (FONTS/'fonts.tsv').read_text(encoding='utf-8').splitlines() if (FONTS/'fonts.tsv').is_file() else []:
-        fields=line.split('\t')
-        if line and not line.startswith('#') and len(fields)>=2 and (len(fields)<3 or int(fields[2]) & 1):
-            supported.update(font_chars(FONTS/fields[0]))
-    lines=['# BT3 menu text v6: hash width height y row_height cap_height baseline center margin width_milli x row_width art_width top bottom outline italic outline_milli outer_milli outer_rgb shadow text']
+        return [*widths, rgb(colors.get('outer_outline', [0, 0, 0]), 'outer_outline'), int(shadow)]
+
+    supported = supported_chars(fonts)
+    lines = [LABELS_HEAD]
     # The overlay uses these same styles for names of external songs and stages.
-    styles=['# kind (0 song, 1 selected song, 2 stage) cap_height baseline margin width_milli top bottom outline']
-    for selected,id in ((0,'song/0/0'),(1,'song-highlighted/0/0'),(2,'stage/0/0')):
-        template=next((r for r in config['labels'] if r['id']==id),None)
+    styles = [STYLES_HEAD]
+    for selected, id in ((0, 'song/0/0'), (1, 'song-highlighted/0/0'), (2, 'stage/0/0')):
+        template = next((r for r in config['labels'] if r['id'] == id), None)
         if template:
-            style=palette(template)
-            colors=[''.join(f'{c:02x}' for c in style[key]) for key in ('top','bottom','outline')]
-            values=[selected,template['cap_height'],template['baseline'],template['margin'],round(template.get('width_scale',1)*1000),*colors]
-            styles.append('\t'.join(map(str,values)))
-    count=0
-    by_id={row['id']:row for row in config['labels']}
+            values = [selected, template['cap_height'], template['baseline'], template['margin'], round(template.get('width_scale', 1) * 1000), *palette(template)[1]]
+            styles.append('\t'.join(map(str, values)))
+    count = 0
+    by_id = {row['id']: row for row in config['labels']}
     for row in config['labels']:
-        if row['id'].startswith('submenu-'):
-            continue  # story battle-title artwork has a different typeface
         if not re.fullmatch(r'[0-9a-fA-F]{16}', row['hash']):
             raise ValueError(f"{row['id']}: invalid texture hash")
-        texture_width=row.get('texture_width',512)
-        if texture_width < 8 or texture_width > 512 or texture_width & (texture_width-1):
+        texture_width = row.get('texture_width', 512)
+        if texture_width < 8 or texture_width > 512 or texture_width & (texture_width - 1):
             raise ValueError(f"{row['id']}: unsupported texture width")
-        x=row.get('x',0);row_width=row.get('width',texture_width)
-        if not (0 <= x < texture_width and 1 <= row_width <= texture_width-x):
+        x = row.get('x', 0)
+        row_width = row.get('width', texture_width)
+        if not (0 <= x < texture_width and 1 <= row_width <= texture_width - x):
             raise ValueError(f"{row['id']}: invalid horizontal bounds")
         if not (1 <= row['texture_height'] <= 512 and 1 <= row['height'] <= 64 and
                 0 <= row['y'] <= row['texture_height'] - row['height'] and 1 <= row['cap_height'] <= 64 and
-                0 <= row['baseline'] <= row['height'] and 0 <= row['margin'] < row_width/2 and row['align'] in ('left','center')):
+                0 <= row['baseline'] <= row['height'] and 0 <= row['margin'] < row_width / 2 and row['align'] in ('left', 'center')):
             raise ValueError(f"{row['id']}: invalid label bounds or style")
         width_scale = row.get('width_scale', 1.0)
-        if not isinstance(width_scale, (int,float)) or not 0.5 <= width_scale <= 2.0:
+        if not isinstance(width_scale, (int, float)) or not 0.5 <= width_scale <= 2.0:
             raise ValueError(f"{row['id']}: width_scale must be between 0.5 and 2")
         art_width = row.get('art_width', 0)
         if type(art_width) != int or not 0 <= art_width <= row_width:
             raise ValueError(f"{row['id']}: invalid art_width")
-        source=by_id.get(row.get('text_from'),row)
-        text=source['text']
-        if not row.get('enabled',True) or not source.get('enabled',True) or not text:
+        source = by_id.get(row.get('text_from'), row)
+        text = source['text']
+        if not row.get('enabled', True) or not source.get('enabled', True) or not text:
             continue
-        if '\t' in text or '\r' in text or text.count('\n') > 1 or len(text.encode('utf-8'))>255:
+        if '\t' in text or '\r' in text or text.count('\n') > 1 or len(text.encode('utf-8')) > 255:
             raise ValueError(f"{row['id']}: use at most two lines and 255 UTF-8 bytes")
-        missing=sorted(set(text)-{chr(c) for c in supported}-{'\n'})
-        if missing:
-            print(f"{row['id']}: fonts will skip unsupported characters {''.join(missing)!r}")
-        def rgb(name):
-            v=colors[name]
-            return ''.join(f'{c:02x}' for c in v)
-        colors=palette(row)
-        italic=row.get('italic',False)
-        if type(italic)!=bool:
+        if supported is not None:
+            missing = sorted(set(text) - {chr(c) for c in supported} - {'\n'})
+            if missing:
+                print(f"{row['id']}: fonts will skip unsupported characters {''.join(missing)!r}")
+        colors, fill = palette(row)
+        italic = row.get('italic', False)
+        if type(italic) != bool:
             raise ValueError(f"{row['id']}: italic must be true or false")
         # Only the unchanged original label has a measured artwork width.
         target_width = art_width if text == row.get('original') else 0
@@ -548,147 +163,40 @@ def apply_labels(out):
             height = row['height'] // len(parts)
             cap = min(row['cap_height'], height - 8) if len(parts) > 1 else row['cap_height']
             baseline = (height + cap) // 2 if len(parts) > 1 else row['baseline']
-            fields=[row['hash'],texture_width,row['texture_height'],row['y'] + i * height,height,cap,baseline,
-                    int(row['align']=='center'),row['margin'],round(width_scale*1000),x,row_width,target_width if len(parts) == 1 else 0,rgb('top'),rgb('bottom'),rgb('outline'),int(italic),*decorations(colors),part]
-            lines.append('\t'.join(map(str,fields)));count+=1
+            fields = [row['hash'], texture_width, row['texture_height'], row['y'] + i * height, height, cap, baseline,
+                      int(row['align'] == 'center'), row['margin'], round(width_scale * 1000), x, row_width,
+                      target_width if len(parts) == 1 else 0, *fill, int(italic), *decorations(colors), part]
+            lines.append('\t'.join(map(str, fields)))
+            count += 1
     if count > 512:
         raise ValueError('The renderer supports at most 512 label rows')
-    (out/'labels.tsv.tmp').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-    (out/'labels.tsv.tmp').replace(out/'labels.tsv')
-    (out/'name-styles.tsv.tmp').write_text('\n'.join(styles)+'\n')
-    (out/'name-styles.tsv.tmp').replace(out/'name-styles.tsv')
+    # each file whole or not at all; labels.tsv last, as the game writes them
+    (out / 'name-styles.tsv.tmp').write_text('\n'.join(styles) + '\n', encoding='utf-8')
+    (out / 'name-styles.tsv.tmp').replace(out / 'name-styles.tsv')
+    (out / 'labels.tsv.tmp').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    (out / 'labels.tsv.tmp').replace(out / 'labels.tsv')
     print(f'{count} labels ready. Restart the game to load {out}/labels.tsv')
 
 
-def export(args,groups):
-    # The legacy strips benefit from the spacing solver; standalone submenu sheets
-    # use row_style's direct cap/baseline measurements (including single-color labels).
-    measure_strips([g for g in groups if 'centered' not in g])
-    rows=[]
-    for group in groups:
-        if 'rectangles' in group:
-            rgba=group['rgba'][0];width=group['width'];stride=width*4
-            for n,rect in enumerate(group['rectangles']):
-                x,y,rw,rh=rect['x'],rect['y'],rect['width'],rect['height']
-                pixels=b''.join(rgba[(yy*width+x)*4:(yy*width+x+rw)*4] for yy in range(y,y+rh))
-                style=row_style(pixels,rh,True,rw,group.get('outline'))
-                if style:
-                    style['margin']=0
-                    rows.append(dict(id=f"{group['id']}/0/{n}",hash=hash_rgba(rgba),texture_width=width,texture_height=len(rgba)//stride,
-                                     x=x,y=y,width=rw,original=rect['text'],text=rect['text'],enabled=True,**style))
-            continue
-        label_idx=0
-        width=group.get('width',512)
-        stride=width*4
-        for i,rgba in enumerate(group['rgba']):
-            texh=len(rgba)//stride
-            for y in range(0,texh,group['height']):
-                original=group['labels'][label_idx] if label_idx<len(group['labels']) else ''
-                label_idx+=1
-                if not original:
-                    continue
-                style=row_style(rgba[y*stride:(y+group['height'])*stride],group['height'],group.get('centered',group['id']=='stage' or group['id'].startswith('submenu')),width,group.get('outline'))
-                if style:
-                    if 'font_cap' in group:
-                        style['cap_height'], style['baseline'] = group['font_cap'], group['font_baseline']
-                    if 'font_art_width' in group:
-                        style['art_width']=group['font_art_width']
-                    row=dict(id=f"{group['id']}/{i}/{y//group['height']}",hash=hash_rgba(rgba),texture_height=texh,y=y,
-                             original=original,text=original,enabled=True,**style)
-                    if width != 512:
-                        row['texture_width']=width
-                    source = group.get('text_from')
-                    if group['id'] == 'main-5':
-                        source = 'main-6'
-                    if source:
-                        row['text_from'] = f"{source}/{i}/{y//group['height']}"
-                    rows.append(row)
-    for row in rows:
-        if row['id'].startswith('song-random'):
-            source='song-highlighted/0/0' if 'highlighted' in row['id'] else 'song/0/0'
-            template=next((r for r in rows if r['id']==source),None)
-            if template:
-                for key in ('cap_height','baseline','margin'):
-                    row[key]=template[key]
-    audio_families=('song','song-highlighted','song-random','song-random-highlighted',
-                    'options-sound-normal','options-sound-selected')
-    for row in rows:
-        if row['id'].split('/')[0] in audio_families:
-            row.update(align='left',margin=4)
-    # These lists share one font size; measuring each word separately can mistake
-    # its lowercase x-height for its cap height. Normalize each list across states.
-    uniform_families=('history-action','ultimate-battle','sim-dragon-actions','world-tour-list',
-                      'world-tour-custom','versus-settings','versus-dp','versus-onoff','versus-time','versus-com-level',
-                      'versus-referee','versus-transform','save-confirm','item-shop-confirm','battle-training','sound-digits','character-color',
-                      'character-reference','character-preview-color','customize-menu','customize-slots')
-    for family in uniform_families:
-        entries=[r for r in rows if r['id'].split('/')[0] == family or r['id'].startswith(family+'-')]
-        if entries:
-            cap=max(r['cap_height'] for r in entries);baseline=max(r['baseline'] for r in entries)
-            for row in entries:
-                row.update(cap_height=cap,baseline=baseline)
-    for row in rows:
-        if row['id'].startswith('versus-settings-') and row['y']==160:
-            row.update(align='center',margin=8)  # Default is centered; the five settings are left-aligned.
-    actions=[r for r in rows if r['id'].startswith('history-action-')]
-    if actions:
-        cap=max(r['cap_height'] for r in actions)
-        margin=min(r['margin'] for r in actions)
-        for row in actions:
-            row.update(cap_height=cap,align='left',margin=margin)
-    for family in ('sound-digits-normal','sound-digits-selected'):
-        digits=[r for r in rows if r['id'].startswith(family+'/')]
-        if digits:
-            cap=max(r['cap_height'] for r in digits);baseline=max(r['baseline'] for r in digits)
-            for row in digits:
-                row.update(cap_height=cap,baseline=baseline)
-    path=args.out/'labels.json'
-    for row in rows:
-        row['color_style']=color_style_for(row['id'].split('/')[0])
-        if row['id'].startswith('title-press-start/'):
-            row['italic']=True
-    if not path.exists():
-        path.write_text(json.dumps(dict(color_styles=COLOR_STYLES,labels=rows),indent=2)+'\n')
-    else:
-        config=json.loads(path.read_text())
-        config.pop('font',None)
-        palettes=config.setdefault('color_styles',{})
-        for name,colors in COLOR_STYLES.items():
-            palettes.setdefault(name,colors)
-        config['labels']=[r for r in config['labels'] if not r['id'].startswith(
-            ('submenu-','customize-equipment/','customize-ability-limit-up/',
-             'customize-type/','customize-ability-limit/','customize-character-z-points/'))
-            and not (r['id'].startswith('customize-slots-') and not r['id'].endswith('/0/3'))]
-        known={row['id'] for row in config['labels']}
-        fresh={row['id']:row for row in rows}
-        for row in config['labels']:
-            if row['id'] in fresh:
-                row.setdefault('color_style',fresh[row['id']]['color_style'])
-                if 'italic' in fresh[row['id']]:
-                    row.setdefault('italic',fresh[row['id']]['italic'])
-                if row['id'].startswith('main-5/') and row['color_style']=='purple':
-                    row['color_style']='main-menu'
-                for key in ('top','bottom','outline'):
-                    row.pop(key,None)
-                for key in ('hash','texture_height','y','art_width'):
-                    row[key]=fresh[row['id']][key]
-                family=row['id'].split('/')[0]
-                if any(family==name or family.startswith(name+'-') for name in uniform_families):
-                    for key in ('align','margin','cap_height','baseline'):
-                        row[key]=fresh[row['id']][key]
-                if family in audio_families:
-                    row.update(align='left',margin=4)
-        additions=[row for row in rows if row['id'] not in known]
-        config['labels'].extend(additions)
-        path.write_text(json.dumps(config,indent=2,ensure_ascii=False)+'\n')
-        print(f'Keeping existing labels.json edits; adding {len(additions)} new rows')
-    apply_labels(args.out)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--out', type=pathlib.Path, default=ROOT / 'gamedata/game-text', help='the game-text folder (labels.json is read there)')
+    parser.add_argument('--fonts', type=pathlib.Path, default=None,
+                        help='the fonts folder, to say which characters no font has (default: port/third_party/fonts, or fonts/ beside gamedata)')
+    parser.add_argument('--apply', action='store_true', help='(what this tool does; kept so that the earlier command line works)')
+    args = parser.parse_args()
+    if not (args.out / 'labels.json').is_file():
+        raise SystemExit(f'No menu labels: {args.out}/labels.json is not there. Start the game once: it makes the list from the disc data '
+                         '(USA release) and writes labels.json beside it.')
+    fonts = args.fonts
+    if fonts is None:
+        beside = args.out.resolve().parent.parent / 'fonts'
+        fonts = beside if (beside / 'fonts.tsv').is_file() else ROOT / 'port/third_party/fonts'
+    apply_labels(args.out, fonts)
 
 
 if __name__ == '__main__':
     try:
         main()
-    except Skip as exc:
-        raise SystemExit(f'No menu labels: {exc}.')
-    except (ValueError, OSError, KeyError, IndexError, struct.error) as exc:
+    except (ValueError, OSError, KeyError, IndexError, TypeError) as exc:
         raise SystemExit(f'No menu labels: {type(exc).__name__}: {exc}')

@@ -1407,6 +1407,16 @@ static void scale_apply(void) {
     fprintf(stderr, "bt3: internal resolution %dx (%d x %d)\n", gsScale, 512 * gsScale, 448 * gsScale);
 }
 
+/* The list of menu labels is made in a thread at start when it is not there (menu_labels.c, menu_text.c). What it
+   made is taken into use here, between two frames: the settings window and the texture cache see the fonts for the
+   menus appear at no other moment. Not under an online session: it waits until that is over. */
+static void menu_labels_apply(void) {
+    extern int Port_NetSession(void); /* net.c */
+    if (!Port_NetSession()) {
+        MenuText_Poll();
+    }
+}
+
 /* ------------------------------------------------------------------------------------------- the one window */
 /* Created (with SDL's video subsystem) before the device / the GL context: everything the user can choose
    about it (BT3_WINDOW, BT3_DISPLAY, BT3_FULLSCREEN, the saved settings, the aspect ratio) is decided here,
@@ -1562,7 +1572,7 @@ void GsGpu_SetSettings(const PortVideo *v) {
     MenuText_SetFont(v->menuFont);
     MenuText_SetSharedFont(v->textFont);
     Port_SettingSave("text_font_id", MenuText_FontId(MenuText_GetSharedFont()));
-    Port_SettingSave("menu_font_id", MenuText_FontId(MenuText_GetFont()));
+    Port_SettingSave("menu_font_id", MenuText_FontIdToSave());
     sSmooth2d = v->smooth2d != 0;
     Port_SettingSave("smooth_2d", sSmooth2d);
     Port_SettingSave("texture_pack", sTexPackOn);
@@ -3926,6 +3936,7 @@ static void interp_show(int step) {
         interp_wall_restore();
         interp_present_log('R');
         scale_apply();
+        menu_labels_apply();
     }
 }
 
@@ -4139,6 +4150,7 @@ void GsGpu_FrameEnd(void) {
             interp_cost(gpu_now() - t1);
             interp_present_log('S');
             scale_apply();
+            menu_labels_apply();
         }
     }
     gGpuEndNs += gpu_now() - t0;
