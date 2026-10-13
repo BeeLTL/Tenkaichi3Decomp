@@ -1239,6 +1239,114 @@ static void cheats_tab(void) {
     }
 }
 
+// The Controls tab's part for the sticks: each stick of the player's controller as it is now (the dot), its deadzone
+// (the shaded middle: a circle, or the game's own square), what the game is given for it (the ring, and in numbers),
+// the triggers, and the settings for these and for vibration. For seeing a stick that drifts and choosing a deadzone
+// that covers it.
+static void sticks_panel(int player) {
+    static const char *const kStick[2] = {"Left stick", "Right stick"}, *const kTrigger[2] = {"Left trigger", "Right trigger"};
+    static const char *const kDir[5] = {"", "up", "down", "left", "right"};
+    const float R = 42.0f, box = 2.0f * R + 8.0f;
+    const ImU32 colZone = ImGui::GetColorU32(ImGuiCol_Text, 0.22f);
+    const ImU32 colRaw = ImGui::GetColorU32(ImGuiCol_Text), colGame = ImGui::GetColorU32(ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
+    int *dead = PortInput_Deadzone(player), *vib = PortInput_Vibration(player);
+    PortStickView view;
+    char label[64];
+
+    PortInput_StickView(player, &view);
+    if (!ImGui::BeginTable("sticks", 2)) {
+        return;
+    }
+    float top = 0.0f;
+    for (int s = 0; s < 2; s++) {
+        ImGui::TableNextColumn();
+        if (s == 0) {
+            top = ImGui::GetCursorScreenPos().y;
+        } else { // (the second cell would start lower by the text offset of the first one's last line)
+            ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, top));
+        }
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        ImVec2 at = ImGui::GetCursorScreenPos(), c(at.x + box * 0.5f, at.y + box * 0.5f);
+        ImGui::Dummy(ImVec2(box, box));
+        dl->AddCircleFilled(c, R, ImGui::GetColorU32(ImGuiCol_FrameBg), 48);
+        if (dead[s] < 0) { // the game's own: each axis by itself, 50 of 127.5
+            float h = R * 50.0f / 127.5f;
+            dl->AddRectFilled(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), colZone);
+        } else if (dead[s] > 0) {
+            dl->AddCircleFilled(c, R * (float)dead[s] / 100.0f, colZone, 48);
+        }
+        dl->AddLine(ImVec2(c.x - R, c.y), ImVec2(c.x + R, c.y), ImGui::GetColorU32(ImGuiCol_Border));
+        dl->AddLine(ImVec2(c.x, c.y - R), ImVec2(c.x, c.y + R), ImGui::GetColorU32(ImGuiCol_Border));
+        dl->AddCircle(c, R, ImGui::GetColorU32(ImGuiCol_Border), 48);
+        if (view.connected) {
+            dl->AddCircle(ImVec2(c.x + view.game[s][0] * R, c.y + view.game[s][1] * R), 5.5f, colGame, 16, 1.5f);
+            dl->AddCircleFilled(ImVec2(c.x + view.raw[s][0] * R, c.y + view.raw[s][1] * R), 3.0f, colRaw, 12);
+        }
+        ImGui::SameLine();
+        ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, top));
+        ImGui::BeginGroup();
+        ImGui::AlignTextToFramePadding(); // (in both cells: the second one's lines start that much lower anyway)
+        if (view.connected) {
+            ImGui::Text(view.dir[s] != 0 ? "%s: %s" : "%s", kStick[s], kDir[view.dir[s]]);
+            ImGui::Text("stick  %+.2f %+.2f", view.raw[s][0], view.raw[s][1]);
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colGame), "game   %+.2f %+.2f", view.game[s][0], view.game[s][1]);
+        } else {
+            ImGui::TextUnformatted(kStick[s]);
+            ImGui::TextDisabled("no controller");
+            ImGui::TextDisabled(" ");
+        }
+        ImGui::SetNextItemWidth(100.0f);
+        snprintf(label, sizeof(label), "Deadzone##%d", s);
+        ImGui::SliderInt(label, &dead[s], -1, PORT_DEADZONE_MAX, dead[s] < 0 ? "Original" : "%d%%", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            PortInput_Save();
+        }
+        ImGui::SetItemTooltip("How far the stick has to be moved before the game is told anything (the shaded middle).\n"
+                              "Original: the game's own, 39%% for left / right and for up / down separately, a square.\n"
+                              "0%% to 90%%: a round one of that size instead; from its edge the value grows evenly\n"
+                              "to full at full tilt, and the stick counts as a direction half way between the two.\n"
+                              "The white dot is the stick, the ring what the game is given; after the stick's name,\n"
+                              "the direction the game takes it for. Choose a size that covers where the dot rests\n"
+                              "when the stick is let go.");
+        ImGui::EndGroup();
+    }
+    for (int s = 0; s < 2; s++) {
+        ImGui::TableNextColumn();
+        snprintf(label, sizeof(label), "%d%%%s", (int)(view.trigger[s] * 100.0f + 0.5f), view.triggerHeld[s] ? " pressed" : "");
+        ImGui::ProgressBar(view.trigger[s], ImVec2(144.0f, 0.0f), label);
+        ImGui::SetItemTooltip("A trigger counts as pressed from %d%% on. The game is told pressed or not, nothing between.",
+                              (PORT_TRIGGER_AT * 100 + 16383) / 32767);
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::TextUnformatted(kTrigger[s]);
+    }
+    ImGui::EndTable();
+    bool on = vib[0] != 0;
+    if (ImGui::Checkbox("Vibration", &on)) {
+        vib[0] = on;
+        PortInput_Save();
+    }
+    ImGui::SetItemTooltip("The game's own vibration (hits, clashes, charging), on this player's controller.\n"
+                          "The game's Options > Controller > Vibration has to be on as well: it is, unless you turned it off.\n"
+                          "The game gives none in a replay or for a side the computer plays.");
+    ImGui::BeginDisabled(!on);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::SliderInt("Strength", &vib[1], 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        PortInput_Save();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Test")) {
+        PortInput_VibrationTest(player);
+    }
+    ImGui::SetItemTooltip("Half a second of both motors at this strength.");
+    ImGui::EndDisabled();
+    if (view.connected && !view.canVibrate) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(this controller has none)");
+    }
+}
+
 static void controls_tab(void) {
     static int player;
     char label[96];
@@ -1275,10 +1383,14 @@ static void controls_tab(void) {
         PortInput_ResetDefaults(player);
         PortInput_Save();
     }
+    if (ImGui::CollapsingHeader("Sticks, triggers and vibration", ImGuiTreeNodeFlags_DefaultOpen)) {
+        sticks_panel(player);
+    }
     ImGui::TextDisabled("Choose a binding, then press the new key or button. Esc keeps it, Delete clears it;");
     ImGui::TextDisabled("with a controller, press nothing for five seconds to keep it.");
+    // (never lower than a few rows: in a small window the tab scrolls as a whole instead)
     if (ImGui::BeginTable("bindings", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV,
-                          ImVec2(0.0f, ImGui::GetContentRegionAvail().y))) {
+                          ImVec2(0.0f, ImGui::GetContentRegionAvail().y > 140.0f ? ImGui::GetContentRegionAvail().y : 140.0f))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Action");
         ImGui::TableSetupColumn("Keyboard");
@@ -1349,7 +1461,8 @@ static void build(void) {
         sPadTab = true;
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640.0f, 600.0f), ImGuiCond_Appearing);
+    // (760 high where the picture has the room: the Controls tab's sticks and its list of bindings together)
+    ImGui::SetNextWindowSize(ImVec2(640.0f, io.DisplaySize.y >= 800.0f ? 760.0f : 600.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Settings", &open, ImGuiWindowFlags_NoCollapse)) {
         {
             int latest = update_latest();

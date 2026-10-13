@@ -2159,3 +2159,126 @@ outline's copy of the ids 0.3 ms; the shadow buffer 1.1 ms. These are the effect
 tab already turns off. The driver's buffer compression is not the cost (`RADV_DEBUG=nodcc,nohiz` changes nothing
 or is slower). Two measurements were thrown away: skipping "every buffer but the first" and "buffer 070" doubled
 the speed only because the game shows buffers 000 and 070 in turn, so every other frame was not drawn at all.
+
+## Vibration, stick deadzones, and the sticks shown in Controls (2026-10-13)
+
+A player asked for "Vibration and Deadzone settings, with the analog sticks showing in Controls".
+
+**What the game does with the motors.** It drives both of the DualShock 2's motors itself. In a fight, hits given
+and taken, clashes, charging and the like call `BtlChar_SetVibration` (large motor: a power 0..1 and a time),
+`BtlChar_SetSmallVibration` (small motor: a time) or `BtlChar_Vibrate` (both); some eighty calls in
+`src/battle/`. Once per fight step `BtlChar_UpdateVibration` (btl_char_get.c) turns that into this step's request,
+`Pad_AddVibration(pad, small, power)`: the large motor's power swings between 50% and 100% of what was asked, six
+times a second, and the small motor is on in every other step. `Pad_Update` (src/sys/pad.c) ends with
+`Pad_SendActuator` for each port, which calls libvib's `sceVibSetActParam` with two bytes, bit 0 = small motor,
+bits 1..7 = large motor 0..127, and clears the request: a motor stops by the game sending zero in the next step.
+(`sceVibGetProfile` is asked once when a pad appears; its answer is only handed back with each command.) The game gives no vibration
+
+- when its own switch is off: Options > Controller > Vibration, per player, bits 1 and 2 of the save's flags
+  (`SAVE_FLAG_PAD_A`, on in a new save; read into the fighter at its reset);
+- in a replay (`BattleReplay_IsActive`);
+- for a side the computer plays.
+
+Nothing outside a fight vibrates. Until now `sceVibSetActParam` was an empty function in the port.
+
+**Vibration in the port.** `sceVibSetActParam` (plat_stub.c) hands the two values to `Port_PadVibrate`
+(gs/gs_input.c), which calls `SDL_RumbleGamepad` on that player's controller: the large motor is SDL's
+low-frequency motor (power * 65535 / 127), the small motor the high-frequency one (all or nothing), each times
+the player's strength. A command that only repeats the last one is not sent again until half its 250 ms are over;
+every command runs out after 250 ms by itself, so a controller is not left humming if the game stops coming.
+Nothing is sent, and what runs is stopped: while the settings window is open, while the game's window is not the
+one in use, with the setting off, in a frame that is only being re-run (rollback), and as the program ends
+(`atexit`). Settings, per player, in the Controls tab:
+
+| key | default | |
+|---|---|---|
+| `vibration_p1`, `vibration_p2` | 1 | "Vibration": on / off |
+| `vibration_p1_strength`, `vibration_p2_strength` | 100 | "Strength", 0..100 % |
+
+On at full strength is the default because that is what the game does on a console. The game's own switch still
+works and comes first: with it off the game sends zero and there is nothing to pass on; the port's setting can
+only take away from what the game sends. "Test" next to it gives half a second of both motors at the chosen
+strength (the one thing felt while the window is open). "Reset to defaults" resets these and the deadzones too.
+
+It cannot change a fight: the function reads two bytes, writes nothing the game can see and returns the constant
+it always returned; its own state is outside the game's memory (not in a saved state, not rolled back). So a
+replay, a pad recording and both sides of an online match compute the same with it on or off, and the two sides
+need not have the same setting. Online, both ports' commands are computed on both sides; only this side's
+(`Port_NetMe`) are passed on, to player 1's controller, the one that plays there.
+
+**How the game reads a stick** (found while looking for "the current threshold"; the port had none of its own and
+passed the controller's bytes through). `Pad_Update` takes each axis as a byte and gives every axis *by itself* a
+deadzone of `PAD_STICK_DEADZONE` = 50 of 127.5, 39%: `value = (|byte - 127.5| - 50) / 77.5`, zero below. The pair
+is brought inside the unit circle, and the stick counts as a direction when the larger value is beyond 0.5, which
+is 69.6% of the way on an axis. So the zone of rest is a square, and a diagonal starts late (a stick pushed fully
+into a diagonal reads 0.52, 0.52).
+
+**Deadzone setting**, per player and stick: `deadzone_p1_ls`, `deadzone_p1_rs`, `deadzone_p2_ls`,
+`deadzone_p2_rs`; default -1.
+
+- -1, shown as "Original": the bytes are passed as before. This is today's behaviour exactly, and it is the
+  default because the game's square zone cannot be written as a round one of some size: 39% round would change
+  every diagonal.
+- 0..90: a round deadzone of that many percent, in place of the game's. With `m` the stick's distance from the
+  centre (0..1; the corners of a square gate count as 1) and `d` the setting: nothing while `m <= d`, else
+  `out = (m - d) / (1 - d)` in the stick's own direction. The bytes handed to the game are the ones its own
+  formula turns back into `out`: 0x80 for zero, else `127.5 +- (50 + |out| * 77.5)` per axis, to the nearest of
+  the 78 steps a side (so values are exact to 1/155; anything outside the zone gives at least the first step,
+  0.0065). The game code is not changed, and its direction test, 0.5 of `out`, falls at `d + (1 - d) / 2` of the
+  way in every direction: half way between the zone's edge and full tilt. With d = 39 that is the same 69.6% on
+  an axis as the original.
+
+It is done to the pad's bytes before they reach the game or the other side of an online match, as the Square
+option is, so the game sees an ordinary pad. The keyboard's stick keys are not touched (full tilt, as before).
+
+**The Controls tab** has a new part between the controller list and the bindings, "Sticks, triggers and
+vibration" (it folds away): for each stick of the chosen player's controller a circle with the stick as a white
+dot, the deadzone shaded in the middle (a square for Original, a circle otherwise), what the game is given as an
+orange ring and in numbers ("stick" and "game", x and y), and after the stick's name the direction the game takes
+it for; the deadzone slider under the numbers; a bar for each trigger with its percent and "pressed" (a trigger
+counts from 37%; the game is only told pressed or not); and the vibration switch, strength and test. A stick that
+drifts shows as a dot resting off the centre: the deadzone to choose is one whose shade covers it. The list of
+bindings already had the eight stick directions (a key each; on a controller they are the sticks themselves).
+The window is 760 high instead of 600 where the picture has 800 lines or more, and the list of bindings keeps at
+least a few rows (in a small window the tab scrolls as a whole).
+
+**For testing without a controller or a person:**
+- `BT3_STICK_TEST="lx,ly,rx,ry[,lt,rt]"` (sticks -32768..32767, triggers 0..32767) attaches a controller made by
+  SDL (a virtual joystick, "Test controller") with its sticks held there; it goes through everything a real one
+  does. It also prints the numbers once: what SDL reports, the bytes passed, what the game makes of them as
+  computed in the port, and then what the game's own pad record holds.
+- `BT3_RUMBLE_LOG=1` attaches the same controller and prints every motor command with the SDL call made, and what
+  SDL then delivers to that controller's motors.
+- `BT3_RUMBLE_TEST=1` lifts the game's rule "no vibration in a replay" (one line in `BtlChar_UpdateVibration`,
+  under `#ifdef PORT`), so that a recorded fight can be used: the regression replay is a replay.
+
+**Verified, by numbers:**
+- replay01 with `BT3_RUMBLE_TEST=1 BT3_RUMBLE_LOG=1`: the first hit, at vertical blank 1250, gives large motor
+  95, 125, 113, 76 of 127 and then 0, the small motor on, off, on, off: the game's own curve for a power of 1.0
+  (0.75, 0.988, 0.897, 0.603 times 127). The calls were `SDL_RumbleGamepad(49022, 65535, 250)`, `(64502, 0)`,
+  `(58310, 65535)`, `(39217, 0)`, `(0, 0, 0)`, and the test controller received the same. With strength 50:
+  `(24511, 32767)`, `(32251, 0)`, ... With vibration off, and with the settings window open: no call at all.
+  Without `BT3_RUMBLE_TEST`: no command (the game's rule). 393 commands up to tick 500, all for player 1.
+- The regression line (`tick 2111 ... hp 23050 0`) is the same with and without `BT3_RUMBLE_TEST`, headless and in
+  a window with the commands going to the test controller.
+- Sticks, twelve runs (the port's computed value equalled the game's own record in every one). Original:
+  `(1500, -900)` -> bytes 133 124 -> 0, 0; `(20000, 20000)` -> 206 206 -> 0.3677, 0.3677; full right -> 1, 0,
+  "right"; the diagonal `(23170, -23170)` -> 0.5226, -0.5226, "up"; 69.3% on an axis no direction, 69.9% a
+  direction. Round 10%: drift of 5% and 8% -> 0; 9% -> 0, 11% -> 0.0065; full right -> 1, 0; the same diagonal ->
+  0.7032, -0.7032; 55% (the half-way point) -> 0.4968, no direction yet. Round 25%: a square gate's corner
+  `(32767, 32767)` -> 0.7032, 0.7032; half tilt -> -0.3290 (exact: -0.3333); 62.5% -> 0.4968. Round 0%: half
+  tilt -> 0.4968; `(300, -200)` -> 0.0065, -0.0065. Round 90%: 94.6% -> 0.4581 (exact: 0.461).
+- With the settings window open the game's pad record stays at rest whatever the stick does (as before).
+
+**Verified, by pictures** of the Controls tab (window never shown on a screen): drift under Original and under a
+round 10%; just inside and just outside 10%; full tilt and a diagonal under 10% and under Original, with triggers
+at 24% and 92%; a square gate's corner and half tilt under 25%; vibration off with the strength greyed; no
+controller.
+
+**Not verified:** nothing was felt and nothing was pressed by a person: no real controller was connected, so how
+the two motors feel on a given controller (the small motor's on / off every 33 ms in particular), the "Test"
+button, a stick moved by hand and the window worked by the controller alone were not tried (the new controls are
+ImGui's ordinary header, sliders, checkbox and button, which the window's controller navigation already works).
+Vibration stopping when the settings window is opened in the middle of an effect, or when the window loses the
+focus, was not run (only: opened from the start, no call). No online match was played with it. The Windows
+program was built (`BT3_CC=win64`) and not run. The window in a picture lower than 800 lines was not looked at.
