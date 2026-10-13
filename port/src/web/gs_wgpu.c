@@ -1418,14 +1418,25 @@ static void replay_fb_upload(const GsDraw *d) {
     gsTargets[d->target].cleared = 1;
 }
 
-/* GS_NATIVE_COPY_IDS / _COPY_DATE: the target's alpha bytes as they are now, for the passes that read them. */
-static void replay_copy(const GsDraw *d) {
+/* GS_NATIVE_COPY_IDS / _COPY_DATE: the target's alpha bytes as they are now, for the passes that read them. The DATE
+   copy (draw `n`) covers only what the draws after it read (GsDraw_DateRegion, gs_draw.c; upstream 0.1.33 does the
+   same in its GL and Vulkan back ends: the HUD makes nine of these a frame, each a small piece); none when nothing
+   reads it. Texture rows are in the same order as Vulkan's, so the box applies as it is. */
+static void replay_copy(const GsDraw *d, uint32_t n) {
     WGPUTexelCopyTextureInfo from = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT, to = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
     WGPUExtent3D extent = {GS_W * SCALE, GS_H * SCALE, 1};
+    int rx = 0, ry = 0, rw = GS_W * SCALE, rh = GS_H * SCALE;
     if (!gsTargets[d->target].cleared) {
         return;
     }
+    if (d->native == GS_NATIVE_COPY_DATE && !GsDraw_DateRegion(n, &rx, &ry, &rw, &rh)) {
+        return;
+    }
     pass_end();
+    from.origin.x = to.origin.x = (uint32_t)rx;
+    from.origin.y = to.origin.y = (uint32_t)ry;
+    extent.width = (uint32_t)rw;
+    extent.height = (uint32_t)rh;
     from.texture = sTargets[d->target].aux->texture;
     to.texture = (d->native == GS_NATIVE_COPY_DATE ? sDateCopy : sAuxCopy)->texture;
     wgpuCommandEncoderCopyTextureToTexture(sR.encoder, &from, &to, &extent);
@@ -1521,7 +1532,7 @@ static void replay(void) {
         if (d->native >= GS_NATIVE_FB_UPLOAD) {
             replay_fb_upload(d);
         } else if (d->native == GS_NATIVE_COPY_DATE || d->native == GS_NATIVE_COPY_IDS) {
-            replay_copy(d);
+            replay_copy(d, n);
         } else if (d->native == GS_NATIVE_TABLE_PASS) {
             replay_table_pass(d);
         } else if (d->native == GS_NATIVE_OUTLINE) {
