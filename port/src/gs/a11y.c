@@ -18,14 +18,16 @@
  *                     a11y_log=1        the log below, into a11y_log.txt in the program's folder (for a report)
  *                     a11y_cue_volume   the fight's cues (a11y_game.c: a transformation or the Ultimate Blast within
  *                                       reach), in percent: default 60, 0 turns them off
+ *                     a11y_lang="pt"    the language to speak, a code of two or three letters (default: the
+ *                                       system's preferred language)
+ *                     a11y_missing=1    out of English, adds each line said without a translation, once, to
+ *                                       a11y_untranslated.txt in the program's folder (for whoever translates)
  *   $BT3_A11Y_LOG=<file>                writes what is said, one line each with the blank (tests without a screen
  *                                       reader: the headless build has no library), and notes on what changed on
  *                                       the screen, marked "#"
- *   $BT3_A11Y_LANG=es|en                the language of the labels the game draws as pictures (default: the
- *                                       system's preferred language)
- *   a11y_es.txt                         in Spanish, lines to say instead of the game's own text where the disc has
- *                                       it in English (see "the game's lines in Spanish" below)
- *   $BT3_A11Y_MISSING=<file>            in Spanish, writes once each line of the game's said without one
+ *   $BT3_A11Y_LANG=<code>               the language, over a11y_lang
+ *   a11y_<code>.txt                     the lines to say instead of the English ones (see "translations" below)
+ *   $BT3_A11Y_MISSING=<file>            the lines without a translation into this file instead, a new one each run
  *
  * The screen reader is chosen by trying them: NVDA, then JAWS, then the others in Prism's order. A screen reader
  * is used only when it starts (prism_backend_initialize), not because it is installed: Prism's own "best" choice
@@ -39,6 +41,7 @@
 #include <string.h>
 
 extern int Port_Setting(const char *name, int def); /* plat_settings.c */
+extern void Port_SettingText(const char *name, const char *def, char *out, int size);
 
 #define A11Y_INTERRUPT 1 /* (the same in a11y_game.c) */
 #define A11Y_TEXT 1024
@@ -158,6 +161,8 @@ static PrismBackend *choose_backend(PrismContext *ctx) {
 
 static volatile int sOn; /* set once by the game's thread before the speaker starts; read by the render thread */
 static int sSpanish, sRepeatKey, sGaugeKey[2], sCueVolume;
+static int sTranslate;         /* the language is not English */
+static char sLang[4] = "en";   /* its code: two or three small letters */
 static int sFrame; /* blanks since the start (only for the log) */
 static SDL_AtomicInt sAsk;   /* the gauges asked for and not said yet: 1 + the player's side, 0 none */
 static SDL_AtomicInt sFight; /* 1 while a fight is on with no menu over it (a11y_game.c says so every blank) */
@@ -226,13 +231,15 @@ static int SDLCALL speaker(void *unused) {
     return 0;
 }
 
-/* ---- the game's lines in Spanish ----
+/* ---- translations ----
  *
- * Where the Spanish translation of a disc did not reach (the memory card's messages, the main menu guides' lines),
- * the game's own text is in English. a11y_es.txt, in the program's folder, gives a line to say instead, one per
- * line: the FNV-1a hash (64 bits, 16 hex digits) of the English line as it would be said (UTF-8, on one line, as
- * PortA11y_Utf8 makes it), a tab, and the Spanish line. Lines starting with '#' are notes. Only the hash of the
- * English is needed, so the file need not carry the game's text. */
+ * Out of English, a11y_<code>.txt in the program's folder gives lines to say instead of English ones, one per line:
+ * the FNV-1a hash (64 bits, 16 hex digits) of the English line as it would be said (UTF-8, on one line: one of the
+ * game's own as PortA11y_Utf8 makes it, or a label as a11y_game.c has it), a tab, and the line to say. Lines starting
+ * with '#' are notes. Only the hash of the English is needed, so the file need not carry the game's text. Spanish
+ * has the labels in a11y_game.c itself, and a11y_es.txt is only for where the Spanish translation of a disc did not
+ * reach (the memory card's messages, the main menu guides' lines). A label with numbers or names put in it (%d, %s)
+ * keeps them, in the same order, or the English is said. */
 
 typedef struct {
     uint64_t hash;
@@ -242,7 +249,7 @@ typedef struct {
 static A11yLine *sLines; /* by hash */
 static int sLineCount;
 static FILE *sMissing;
-static uint64_t sMissed[1024]; /* the lines already in $BT3_A11Y_MISSING */
+static uint64_t sMissed[4096]; /* the lines already in sMissing */
 static int sMissedCount;
 
 static uint64_t fnv1a(const char *s) {
@@ -260,7 +267,7 @@ static int by_hash(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-/* Reads a11y_es.txt (kept for the whole run: the lines point into it). */
+/* Reads a11y_<code>.txt (kept for the whole run: the lines point into it). */
 static void load_lines(void) {
     char path[1024], *data, *s, *next, *tab;
     const char *base = SDL_GetBasePath();
@@ -270,7 +277,7 @@ static void load_lines(void) {
     if (base == NULL) {
         return;
     }
-    snprintf(path, sizeof(path), "%sa11y_es.txt", base);
+    snprintf(path, sizeof(path), "%sa11y_%s.txt", base, sLang);
     data = SDL_LoadFile(path, NULL); /* (ends in a terminator) */
     if (data == NULL) {
         return;
@@ -304,37 +311,105 @@ static void load_lines(void) {
     sLineCount = count;
 }
 
-/* In Spanish: the line from a11y_es.txt for `out` (one of the game's lines, n bytes of UTF-8) into out, if there is
-   one. Returns the length. */
-static int spanish_line(char *out, int cap, int n) {
+/* The line a11y_<code>.txt has for an English one, or NULL; then the English goes to sMissing, once. */
+static const char *find_line(const char *en) {
     A11yLine key, *line;
     int i;
 
-    if (!sSpanish || n == 0) {
-        return n;
-    }
-    key.hash = fnv1a(out);
+    key.hash = fnv1a(en);
     line = sLineCount > 0 ? bsearch(&key, sLines, sLineCount, sizeof(*sLines), by_hash) : NULL;
     if (line != NULL) {
-        n = (int)strlen(line->text);
-        if (n >= cap) { /* (cut between letters, not inside one) */
-            for (n = cap - 1; n > 0 && ((uint8_t)line->text[n] & 0xC0) == 0x80; n--) {
-            }
-        }
-        memcpy(out, line->text, n);
-        out[n] = '\0';
-        return n;
+        return line->text;
     }
     if (sMissing != NULL && sMissedCount < (int)(sizeof(sMissed) / sizeof(sMissed[0]))) {
         for (i = 0; i < sMissedCount && sMissed[i] != key.hash; i++) {
         }
         if (i == sMissedCount) {
             sMissed[sMissedCount++] = key.hash;
-            fprintf(sMissing, "%016llx\t%s\n", (unsigned long long)key.hash, out);
+            fprintf(sMissing, "%016llx\t%s\n", (unsigned long long)key.hash, en);
             fflush(sMissing);
         }
     }
+    return NULL;
+}
+
+/* Out of English: the line from a11y_<code>.txt for `out` (one of the game's lines, n bytes of UTF-8) into out, if
+   there is one. Returns the length. */
+static int translated_line(char *out, int cap, int n) {
+    const char *text;
+
+    if (!sTranslate || n == 0 || (text = find_line(out)) == NULL) {
+        return n;
+    }
+    n = (int)strlen(text);
+    if (n >= cap) { /* (cut between letters, not inside one) */
+        for (n = cap - 1; n > 0 && ((uint8_t)text[n] & 0xC0) == 0x80; n--) {
+        }
+    }
+    memcpy(out, text, n);
+    out[n] = '\0';
     return n;
+}
+
+/* The next of a format's conversions (%d, %02d, %s, ...) from s on, or NULL ("%%" is none). */
+static const char *next_conversion(const char *s) {
+    for (; (s = strchr(s, '%')) != NULL; s += 2) {
+        if (s[1] != '%') {
+            return s;
+        }
+    }
+    return NULL;
+}
+
+/* 1: a and b have the same conversions in the same order, so one can be the format for the other's arguments. */
+static int same_conversions(const char *a, const char *b) {
+    size_t n;
+
+    for (;;) {
+        a = next_conversion(a);
+        b = next_conversion(b);
+        if (a == NULL || b == NULL) {
+            return a == b;
+        }
+        n = 1 + strspn(a + 1, "-+ #0123456789.hlz");
+        if (strchr("cdiouxXs", a[n]) == NULL || a[n] == '\0' || strncmp(a, b, n + 1) != 0) {
+            return 0;
+        }
+        a += n + 1;
+        b += n + 1;
+    }
+}
+
+/* A label of a11y_game.c (UTF-8, perhaps a format), in the language spoken: in Spanish as it is (a11y_game.c has
+   them), otherwise the line from a11y_<code>.txt for the English one when it keeps the same conversions, else the
+   English. */
+const char *PortA11y_Tr(const char *label) {
+    const char *text;
+
+    if (!sTranslate || sSpanish || label == NULL || label[0] == '\0' || (text = find_line(label)) == NULL ||
+        !same_conversions(label, text)) {
+        return label;
+    }
+    return text;
+}
+
+/* sMissing for a11y_missing=1: a11y_untranslated.txt, added to, with the lines it has already counted as written. */
+static FILE *open_missing(const char *base) {
+    char path[1024], line[64];
+    int start = 1; /* line[] is the start of a line of the file (a long one comes in pieces) */
+    FILE *fp;
+
+    snprintf(path, sizeof(path), "%sa11y_untranslated.txt", base);
+    if ((fp = fopen(path, "r")) != NULL) {
+        while (fgets(line, sizeof(line), fp) != NULL && sMissedCount < (int)(sizeof(sMissed) / sizeof(sMissed[0]))) {
+            if (start && strlen(line) > 16 && line[16] == '\t') {
+                sMissed[sMissedCount++] = strtoull(line, NULL, 16);
+            }
+            start = strchr(line, '\n') != NULL;
+        }
+        fclose(fp);
+    }
+    return fopen(path, "a");
 }
 
 /* In Spanish, the names the player's mod spells otherwise (the owner's choice) and the mod's abbreviations written
@@ -390,9 +465,27 @@ static int own_names(char *out, int n, int cap) {
     return n;
 }
 
+/* The language from a code like "pt-BR" or "es_AR": its first letters, lowercase, at most three. The code becomes
+   part of a file name, so nothing but letters is taken; "en" stays when it has none. */
+static void set_lang(const char *code) {
+    int i;
+    char c;
+
+    for (i = 0; i < (int)sizeof(sLang) - 1; i++) {
+        c = (char)(code[i] | 0x20);
+        if (c < 'a' || c > 'z') {
+            break;
+        }
+        sLang[i] = c;
+    }
+    if (i > 0) {
+        sLang[i] = '\0';
+    }
+}
+
 static void start(void) {
     const char *lang = getenv("BT3_A11Y_LANG"), *base;
-    char path[1024];
+    char path[1024], code[8];
     SDL_Locale **loc;
     int n = 0;
 
@@ -408,16 +501,26 @@ static void start(void) {
     if (!load_prism() && sLog == NULL) {
         return;
     }
+    Port_SettingText("a11y_lang", "", code, sizeof(code));
+    if (lang == NULL && code[0] != '\0') {
+        lang = code;
+    }
     if (lang != NULL) {
-        sSpanish = strncmp(lang, "es", 2) == 0;
+        set_lang(lang);
     } else if ((loc = SDL_GetPreferredLocales(&n)) != NULL) {
-        sSpanish = n > 0 && loc[0]->language != NULL && strcmp(loc[0]->language, "es") == 0;
+        if (n > 0 && loc[0]->language != NULL) {
+            set_lang(loc[0]->language);
+        }
         SDL_free(loc);
     }
-    if (sSpanish) {
+    sSpanish = strcmp(sLang, "es") == 0;
+    sTranslate = strcmp(sLang, "en") != 0;
+    if (sTranslate) {
         load_lines();
         if (getenv("BT3_A11Y_MISSING") != NULL) {
             sMissing = fopen(getenv("BT3_A11Y_MISSING"), "w");
+        } else if (Port_Setting("a11y_missing", 0) && (base = SDL_GetBasePath()) != NULL) {
+            sMissing = open_missing(base);
         }
     }
     sRepeatKey = Port_Setting("a11y_key_repeat", SDL_SCANCODE_F2);
@@ -629,7 +732,7 @@ void PortA11y_Cue(int side, int kind) {
 }
 
 /* One of the game's strings (UTF-16 in the machine's order, U+FEFF first, '\n' between lines) as UTF-8 on one
-   line, into out (cap bytes with the terminator); in Spanish, the line from a11y_es.txt instead when it has one.
+   line, into out (cap bytes with the terminator); out of English, the line from a11y_<code>.txt instead when it has one.
    Returns the length. */
 int PortA11y_Utf8(char *out, int cap, const uint16_t *str) {
     int n = 0, i, space = 0, need;
@@ -674,5 +777,5 @@ int PortA11y_Utf8(char *out, int cap, const uint16_t *str) {
     if (cap > 0) {
         out[n] = '\0';
     }
-    return own_names(out, spanish_line(out, cap, n), cap);
+    return own_names(out, translated_line(out, cap, n), cap);
 }
