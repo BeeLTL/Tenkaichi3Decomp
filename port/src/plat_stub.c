@@ -373,7 +373,23 @@ static int pad_read(int socket, unsigned char *data) {
     return 18;
 }
 int sceVibGetProfile() { return 0; }
-int sceVibSetActParam() { return 0; }
+/* The game's vibration (src/sys/pad.c: Pad_SendActuator, every frame for both pads): its first byte holds the large
+   motor's strength in bits 1..7 and the small motor in bit 0, and goes to that player's controller
+   (gs/gs_input.c). Not while frames are re-run, and not online, where the second pad is the other player's. */
+int sceVibSetActParam(int socket, int profileSize, unsigned char *profile, int dataSize, void *data) {
+    extern int gPortResim;
+    extern int Port_NetActive(void);
+    extern void Port_PadRumble(int player, int large, int small);
+    unsigned char act = *(const unsigned char *)data;
+
+    (void)profileSize;
+    (void)profile;
+    (void)dataSize;
+    if (!gPortResim && !Port_NetActive()) {
+        Port_PadRumble(socket, act >> 1, act & 1);
+    }
+    return 1;
+}
 
 /* ---- MPEG movies: port/src/plat_movie.c ---- */
 

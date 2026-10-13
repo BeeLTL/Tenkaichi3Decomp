@@ -223,6 +223,33 @@ static SDL_Gamepad *pad_of(int player) {
     return NULL;
 }
 
+/* The game's vibration for player's controller (plat_stub.c: sceVibSetActParam, every frame for both players): the
+   large motor's strength 0..127 and the small one on or off, as the PS2's controller has them. The game turns the
+   small one on every other frame for half strength (src/battle/btl_char_get.c), so its last two frames are averaged.
+   SDL is told when it changes, and again before its time runs out while it lasts. */
+void Port_PadRumble(int player, int large, int small) {
+    static int last[2], before[2];
+    static Uint64 sent[2];
+    SDL_Gamepad *g;
+    int high, now;
+
+    if (player < 0 || player > 1 || !GsGpu_Enabled()) {
+        return;
+    }
+    high = (small != 0) + before[player]; /* 0, 1 or 2 halves */
+    before[player] = small != 0;
+    now = large << 2 | high;
+    if (now == last[player] && (now == 0 || SDL_GetTicks() - sent[player] < 100)) {
+        return;
+    }
+    pthread_once(&sLoadOnce, load);
+    if ((g = pad_of(player)) != NULL) {
+        SDL_RumbleGamepad(g, (Uint16)(large * 0xFFFF / 127), (Uint16)(high * 0xFFFF / 2), now != 0 ? 200 : 0);
+    }
+    last[player] = now;
+    sent[player] = SDL_GetTicks();
+}
+
 /* BT3_PAD="frame:button,frame:button,...": scripted presses for player 1, each held for 4 frames from that frame
    (frame = the renderer's frame counter). Buttons: start select up down left right cross circle square triangle
    l1 r1 l2 r2. For tests without a person at the keyboard. */
