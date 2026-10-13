@@ -6,7 +6,7 @@ name: Browser build
 
 on:
   push:
-    branches: [browser-port]
+    branches: [main, browser-port]
   pull_request:
   workflow_dispatch:
 
