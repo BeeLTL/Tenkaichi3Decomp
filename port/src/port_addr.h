@@ -23,11 +23,9 @@ static inline uint32_t Port_Addr(const volatile void *p) {
     return p != 0 ? (uint32_t)((uintptr_t)p - PORT_WINDOW) : 0;
 }
 #else
-static inline void *Port_Ptr(uint32_t addr) {
-    return (void *)(uintptr_t)addr;
-}
-static inline uint32_t Port_Addr(const volatile void *p) {
-    return (uint32_t)(uintptr_t)p;
-}
+/* Linux and Windows: the casts themselves, as the code had them before these names existed (macros, not functions:
+   the compiler sees what it saw then, whatever its options). */
+#define Port_Ptr(addr) ((void *)(uintptr_t)(uint32_t)(addr))
+#define Port_Addr(p) ((uint32_t)(uintptr_t)(p))
 #endif
 #endif
