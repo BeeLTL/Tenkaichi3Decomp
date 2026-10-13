@@ -2944,13 +2944,29 @@ extern int gPauseMenuWhich;              /* src/battle/hud_0.c: 0 the pause menu
    (src/battle/hud_0_b.c, BtlMenu_GetText). */
 extern struct { char unk0[0x28]; uint32_t GAME_PTR battle; } GAME_PTR gCommonRes;
 
-/* The menu of the battle's tree that takes input (the deepest one open), or NULL when none is shown. */
+/* include/battle/battle.h: BattleWork, its flags and `running` (see battle_watch below). */
+extern struct { char unk0[0x19F0]; uint64_t flags; int running; } gBattleWork;
+#define BATTLE_FLAG_PAUSE_MENU 0x4000 /* the pause menu is open */
+
+/* gs/net.c: 1 in an online match, and which player this copy plays there. src/battle/hud_e_d.c: the port whose
+   player opened the pause menu (it only reads). */
+extern int Port_NetActive(void), Port_NetMe(void);
+extern int BtlPause_GetMenuPad(void);
+
+/* The menu of the battle's tree that takes input (the deepest one open), or NULL when none is shown. Online the
+   pause menu belongs to the player who opened it: the fight goes on under it and it is not drawn on the other
+   screen (src/battle/hud_0.c, PauseMenu_Draw), so there it is not a menu for this player either: it is not read
+   and the gauges and the cues go on. The menu after the fight is both players'. */
 static A11yBtlMenu GAME_PTR btl_menu_shown(void) {
     A11yBtlMenuWork GAME_PTR w = gBtlMenu;
     A11yBtlMenu GAME_PTR m;
     int depth;
 
     if (w == NULL || !w->active || w->top == NULL) {
+        return NULL;
+    }
+    if (Port_NetActive() && gPauseMenuWhich == 0 && (gBattleWork.flags & BATTLE_FLAG_PAUSE_MENU) &&
+        BtlPause_GetMenuPad() != Port_NetMe()) {
         return NULL;
     }
     m = w->top;
@@ -3031,7 +3047,6 @@ static void btl_menu(void) {
    Battle_Init, after the loading, to Battle_Term in every mode, and NULL outside (src/battle/btl_char_mgr.c:
    BtlChar_AllocAll / BtlChar_FreeAll; src/battle/btl_seq.c: BtlSeq_Init / BtlSeq_Term). Only compared with NULL
    here. */
-extern struct { char unk0[0x19F8]; int running; } gBattleWork;
 extern void GAME_PTR gBtlChars;
 extern void GAME_PTR gBtlSeq;
 
