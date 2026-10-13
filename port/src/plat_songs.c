@@ -63,6 +63,11 @@ static void add_song(const char *file, const char *name) {
         fprintf(stderr, "bt3: songs: more than %d added, %s is left out\n", PORT_SONG_MAX, file);
         return;
     }
+    if (strlen(file) >= sizeof(sFiles[0]) || strlen(sDir) + 1 + strlen(file) >= sizeof(sAliases[0].target)) {
+        /* (cut short, the name was that of no file: the song was in the list and silent) */
+        fprintf(stderr, "bt3: songs: %s is left out: the folder and the name together are too long\n", file);
+        return;
+    }
     i = gPortSongCount;
     snprintf(sFiles[i], sizeof(sFiles[i]), "%s", file);
     offset = PORT_SONG_FIRST_OFFSET + i;
@@ -106,7 +111,8 @@ void PortSongs_Init(void) {
             /* a list line may name the MP3: its ADX is the file, and none means the MP3 could not be converted */
             char *file = trim(line), adx[160];
             size_t l = strlen(file);
-            if (l > 4 && l < sizeof(adx) && strcmp(file + l - 4, ".mp3") * strcmp(file + l - 4, ".MP3") == 0) {
+            if (l > 4 && l < sizeof(adx) && file[l - 4] == '.' && (file[l - 3] | 0x20) == 'm' && (file[l - 2] | 0x20) == 'p' &&
+                file[l - 1] == '3') { /* ".mp3" in any case of the letters, as the converter takes it (".Mp3" was listed as a song) */
                 FILE *f;
                 snprintf(adx, sizeof(adx), "%.*s.adx", (int)(l - 4), file);
                 snprintf(path, sizeof(path), "%s/%s", sDir, adx);
