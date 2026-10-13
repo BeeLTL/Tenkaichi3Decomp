@@ -154,7 +154,7 @@ The following are already excluded from the browser build, with nothing left to 
      - **M3a (`9f2f3ec`):** the data folder is looked through over HTTP, so stages and songs are found.
      - **M3b (`d4ee2ff`):** texture packs are found and used, seen in screenshots on both renderers.
      - Without a server that lists folders, all three are reported as unavailable, with the reason.
-     - Not seen: a battle on an added stage (6a), an added song played.
+     - A battle on an added stage: seen with the game's own start (6a). Not seen: an added song played.
    - `plat_mc.c:214` also uses `opendir`, but on the memory card in MEMFS, which supports it (the saves test passes).
    - `mods/` overrides are looked up file by file through `fopen` (`plat_file.c:126`, `plat_fcache.c:52`), so they **probably** work over HTTP. Not tested.
 3. **`gs_core.c:1255`**: `pthread_create` with no check, only when `BT3_GS_THREAD` is set *and* the mode is `"gpu"` (Vulkan). This path is not reachable in the browser (**assumption**: `gs_mode()` is never `"gpu"` there; not traced). It is a pre-existing native defect.
@@ -183,7 +183,13 @@ The following are already excluded from the browser build, with nothing left to 
 
 ## 6a. Found during the approved tasks (2026-10-12)
 
-- **`BT3_TEST_STAGE=0x24` stops the game in the attract demo** at the battle's load, around frame 13, before the stage's file is read. This also happens on the build before M2 (`49a0419`, clean clone), and there with no added stage behind that id and with the old `BT3_EXTRA_STAGES` + `BT3_FILE_ALIAS` mechanism. Because of it, a battle on an added stage has **not** been seen in the browser. **Unknown — investigate further**, including whether it happens natively.
+- **`BT3_TEST_STAGE=0x24` stopped the game in the `BT3_DEMO` attract demo** at the battle's load. **Resolved (2026-10-13): the cause is the `BT3_DEMO` shortcut, not the browser.**
+  - **Call stack**, taken with Chrome's debugger: `Battle_Load` → `Load_RunBlocking` → `BtlLoad_StepInitial` → `File_Request` → `File_OpenById` → `ADXF_OpenAfs` → `Port_FileSize` → `fopen`. It repeats for the path `/70000.bin`, about 91,000 times in 12 s.
+  - **Why the folder name is empty:** an added stage's file id lies in archive partition 2, whose folder (`pzs3us2`) is set only when the game's first-run sequence loads that partition (`FirstRun_Main`, `src/menu/menu_i_c.c`: `File_LoadPartitionNw(2)`). The `BT3_DEMO` shortcut (`headless.c`) starts the battle without that sequence.
+  - **Effect:** the path has no folder, the added-stage alias (`pzs3us2/70000.bin`) never matches, and the loader retries forever. In the browser the page freezes too, because the missing file's size is cached and each retry finishes within the same JavaScript turn.
+  - **Natively:** the same code, so the same shortcut; not run natively.
+  - **With the game's own start**, as in normal play, the battle on the added stage loads and runs. Checked by `port/tests/web/extras.js`: the title's attract battle, put on the added stage by `BT3_TEST_STAGE`, reads the stage file (frame ~2450) and the game runs on; screenshots show the battle on that stage.
+  - **Candidate upstream report:** the `BT3_DEMO` / `BT3_REPLAY` shortcut could load partition 2. Not done; it is upstream's test tool.
 - **The crash report's context names a stale stage.** During a running game it says "stage: memory ready, before the program's main" (`gPortStage`, `plat_mem.c`), which is existing behaviour. **Unknown — investigate further**: whether the browser branch of `plat_mem.c` updates `gPortStage` at all.
 - **`emscripten_set_main_loop_timing: Cannot set timing mode…`** is printed once at the start of every run, before M2 as well. It is harmless so far. **Unknown** which call makes it.
 - **SDL's file functions.** The Emscripten SDL build defines `HAVE_FOPEN64`, but `libSDL3.a` references plain `fopen` (`llvm-nm`), so the existing `fopen` wrap covers texture packs. No `fopen64` wrap is needed.

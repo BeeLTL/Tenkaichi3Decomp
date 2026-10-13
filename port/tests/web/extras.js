@@ -11,6 +11,8 @@
 //     none;
 //   - listed, one of each added (BT3_STAGES / BT3_SONGS / BT3_TEXTURES name the test folders): all found, named in the
 //     panel, the stage's file reached over HTTP, the replacement texture found by the game and its PNG read over HTTP;
+//   - a battle on the added stage (the game's own start, its attract battle put there by BT3_TEST_STAGE): its file read,
+//     the game running on;
 //   - a server that does not list folders (its answers to ?list replaced by a page): said for stages, songs and
 //     texture packs, in the log and the panel; a stage named through BT3_EXTRA_STAGES (no folder needed) is still found.
 'use strict';
@@ -30,6 +32,9 @@ const SONG_SOURCE = 'disc/DATA/ZS3USOP.ADX';   // one of the disc's ADX streams
 // A texture of the attract demo's hit effects, by the name a pack gives its replacement (gs_texpack.c; found with
 // BT3_TEX_LOG=1), and the frame by which the demo has drawn it several times
 const TEXTURE = '1caec06f69c010f5-168969d9cd8be19f-00005dd3', TEXTURE_SIZE = 128, TEXTURE_FRAME = 700, TEXTURE_WAIT_MS = 60000;
+// The title's first attract battle starts around frame 2400 with logos, intro and copyright page skipped (measured);
+// the check waits up to this long, and wants the game this many frames past the stage's read
+const BATTLE_WAIT_MS = 150000, BATTLE_RUN_FRAMES = 1000;
 let failed = 0;
 const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failed++; };
 
@@ -94,9 +99,7 @@ function magentaPng(w, h) {
           r.panel[2] === 'Texture packs: none (the data folder has no textures folder with any).', `panel: ${r.panel.join(' | ')}`);
 
     // ---- listed, a stage, a song and a texture pack added ----
-    // (Not covered: a battle on the added stage. BT3_TEST_STAGE=0x24 with the attract demo stops the game at the
-    // battle's load, before the stage file is read, also in the build before this listing existed, with no added stage
-    // behind the id: BROWSER_ONLY_AUDIT.md, unknowns. Playing an added song needs the menus.)
+    // (Playing an added song needs the menus: not covered. A battle on the added stage: the next case.)
     r = await run(',BT3_STAGES=gamedata/test_extras/stages,BT3_SONGS=gamedata/test_extras/songs,BT3_TEXTURES=gamedata/test_extras/textures,BT3_TEX_LOG=1', TEXTURE_FRAME);
     check(r.state.stages === 1 && r.lines.some((l) => l === 'bt3: stages: 1 added from gamedata/test_extras/stages'), 'the added stage is found (log: 1 added)');
     check(r.state.songs === 1 && r.lines.some((l) => l === 'bt3: songs: 1 added from gamedata/test_extras/songs'), 'the added song is found (log: 1 added)');
@@ -107,6 +110,33 @@ function magentaPng(w, h) {
     check(r.lines.some((l) => l.startsWith('texpack: found') && l.endsWith(`gamedata/test_extras/textures/effects/${TEXTURE}.png`)), `the game uses the replacement for ${TEXTURE} (frame ${r.state.frame})`);
     check(await ev(`performance.getEntriesByType('resource').some((e) => e.name.endsWith('/gamedata/test_extras/textures/effects/${TEXTURE}.png'))`), 'its PNG is read over HTTP');
     check(r.panel[0] === 'Stages: 1 added stage.' && r.panel[1] === 'Songs: 1 added song.' && r.panel[2] === 'Texture packs: 1 replacement texture.', `panel: ${r.panel.join(' | ')}`);
+
+    // ---- a battle on the added stage ----
+    // The game's own start (no BT3_DEMO: its first-run sequence loads archive partition 2, where an added stage's file
+    // id lies; the BT3_DEMO shortcut skips that sequence, so there the added stage's file cannot be found and the
+    // battle's load waits for it forever). Logos, intro and copyright page skipped; the title, left alone, plays its
+    // attract battle, which BT3_TEST_STAGE puts on the added stage. Its file must be read, and the game run on.
+    await b.send('Page.enable');
+    const { identifier } = await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+      localStorage.setItem('bt3.settings', 'skip_logos=1\\nskip_intro=1\\nskip_copyright=1\\n');
+      window.stageReads = []; (() => { const t = setInterval(() => { if (typeof Bt3Data !== 'function') return; clearInterval(t);
+        const read = Bt3Data.prototype.read; Bt3Data.prototype.read = function (rel, off, dst, n) {
+          if (rel.endsWith('Test Stage.unk')) window.stageReads.push(performance.now());  /* (no call into the engine here) */
+          return read.call(this, rel, off, dst, n); }; }, 1); })();` });
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${TEST_PORT}/index.html?autostart=1&env=BT3_STAGES=gamedata/test_extras/stages,BT3_TEST_STAGE=0x24` });
+    let readAt = null, frameNow = -1;
+    for (const end = Date.now() + BATTLE_WAIT_MS; Date.now() < end;) {
+      await sleep(1000);
+      const s = JSON.parse(await Promise.race([ev(`JSON.stringify({ f: window.bt3Module ? window.bt3Module.ccall('Bt3Ui_Get','number',['string'],['frame']) : -1, n: (window.stageReads || []).length })`),
+                                               sleep(5000).then(() => '{"hung":true}')]));
+      if (s.hung) break;
+      frameNow = s.f;
+      if (s.n > 0 && readAt === null) readAt = s.f;
+      if (readAt !== null && frameNow >= readAt + BATTLE_RUN_FRAMES) break;
+    }
+    await b.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    check(readAt !== null, `the attract battle on the added stage reads its file (by frame ${readAt})`);
+    check(readAt !== null && frameNow >= readAt + BATTLE_RUN_FRAMES, `... and the game runs on (frame ${frameNow}, ${BATTLE_RUN_FRAMES} frames past the read)`);
 
     // ---- a server that does not list folders ----
     await b.send('Page.enable');

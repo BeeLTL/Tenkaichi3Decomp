@@ -94,7 +94,6 @@ The output goes to `port/build/web/`. The toolchain and tests are in [BROWSER_BU
 - **The game-data check is not run** (it would read all 3 GB). The log, the crash report and the dashboard say so.
 - **Smooth motion** is off with WebGL 2 (measured: uneven), and up to 60 pictures a second with WebGPU.
 - **Not verified in the browser:**
-  - a battle on an added stage: forcing one through `BT3_TEST_STAGE` in the attract demo stops at its load, also before these changes;
   - playing an added song;
   - physical controllers (simulated ones are tested);
   - audio by an automated test (heard by hand).
