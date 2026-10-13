@@ -3215,3 +3215,22 @@ lists); the OpenGL renderer; Windows at run time (the Windows build links); the 
 reach (versus, options, the shop, the character select with added stages and songs); a release package made with
 `package.py` (its font copy was run on its own, and the game was run with a `fonts/` folder beside it and no
 labels: the dialogue font is used, the menus keep their lettering).
+
+## Online: what a changed program on the other side can send (2026-10-13)
+
+Asked by the user: can someone change the messages to send bytes that do something here? Read through
+(port/src/gs/net.c `receive`, `net_recv`, the lobby's loop; net_relay.c `Relay_Unwrap`; net_match.c `json_str`):
+a packet is read into 2048 bytes and never trusted for its own length (every field is read only when the size
+received covers it; the inputs are copied 18 bytes at a time into a ring by `% RING`, as many as the packet really
+holds; the check value's slot by `% SYNC_SLOTS`); in a match only the other player's address is listened to; the
+name is 20 bytes with its end set, drawn as text and never used as a format; the host's delay and rollback are
+taken only within 0..30, the rules within their ranges (`Port_NetRules`). Nothing received is a file, a path, a
+length to allocate or a number of an entry in a table of the port. What a packet can do: put buttons in (which is
+the game), end the match, or stall it (the same as leaving).
+
+One thing was not held to its range: the other side's camera distance and screen shake (`sOpts`, a byte each,
+anything up to 255 from a changed program) went into the battle's options as they came. The game's uses happen to
+be safe (a `switch` with a default, and a comparison with 0), but `Port_NetSideOptions` now lets through only
+what the options menu can set (0..2 and 0..1).
+
+Not done: packets made at random thrown at the receiver (reading only).

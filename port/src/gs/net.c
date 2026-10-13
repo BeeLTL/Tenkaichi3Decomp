@@ -191,8 +191,10 @@ int Port_NetSideOptions(int *camera, int *shake) {
         return 0;
     }
     for (i = 0; i < 2; i++) {
-        camera[i] = (int)(sOpts[i] & 0xFF);
-        shake[i] = (int)(sOpts[i] >> 8 & 0xFF);
+        /* (the other side's word is whatever its program sent: only the values the options menu can set go into
+           the game, the camera distance 0..2 and the shake on or off; anything else is the default) */
+        camera[i] = (int)(sOpts[i] & 0xFF) > 2 ? 0 : (int)(sOpts[i] & 0xFF);
+        shake[i] = (int)(sOpts[i] >> 8 & 0xFF) > 1 ? 0 : (int)(sOpts[i] >> 8 & 0xFF);
     }
     {
         static int said;
