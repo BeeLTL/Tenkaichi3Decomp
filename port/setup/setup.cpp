@@ -36,7 +36,7 @@ static const char *kReleaseSteps[] = {"Disc image", "Game data", "Self-test"};
 static const struct { const char *title, *help; } kHelp[] = {
     {"Requirements", "Compilers and tools on this computer"}, {"Disc image", "Your disc image is read and checked"},
     {"Game data", "Models, sounds and text are unpacked"}, {"Executable data", "The data tables of the game's programs"},
-    {"Menu fonts", "Available fonts and menu lettering are prepared"},
+    {"Menu fonts", "The menus' lettering is measured, for the Menu font setting (optional)"},
     {"Build", "The port is compiled (a few minutes)"}, {"Self-test", "The game's demo fight, without a window"}};
 static bool sRelease;
 

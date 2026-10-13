@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Prepare editable menu labels with a clean vector font. See docs/port/menu_font.md."""
+"""The menu labels of the "Menu font" setting, made from the user's own disc. See docs/port/menu_font.md.
+
+Reads the menu archives in gamedata/, finds the texture rows that hold the menus' lettering, measures each (letter
+height, baseline, margin) and writes gamedata/game-text/labels.json (editable) and labels.tsv / name-styles.tsv
+(what the game reads). Nothing it writes is in the repository or in a release: it is all derived from the disc.
+
+Standard library and the C compiler the port is built with (gcc); no other package. The disc has to be the USA
+release (SLUS-21678): the texture numbers below are that disc's, and another one's files are not touched."""
 import argparse
 import collections
 import ctypes
@@ -7,12 +14,67 @@ import functools
 import json
 import pathlib
 import re
-import shutil
 import struct
 import subprocess
+import sys
 import tempfile
+import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+FONTS = ROOT / 'port/third_party/fonts'
+
+# The menu archives the labels are in (gamedata/pzs3us1/<number>.bin), with size and CRC-32 on the USA disc. The
+# section and texture numbers in catalog() are only right for these files: anything else is left alone.
+MENU_FILES = {448: (3693312, 0xFF3A84B3), 449: (1544768, 0xB0DA7301), 450: (2884544, 0x5E5A6AD3),
+              451: (8374016, 0xBAC607A9), 452: (3466880, 0x0EC0646D), 453: (1776896, 0x717BA147),
+              459: (3329600, 0xE34CA2A0), 460: (2398528, 0x13642238), 461: (3604416, 0xD60327A4),
+              463: (875072, 0xB576B4B2)}
+
+
+class Skip(Exception):
+    """The labels cannot be made here; the message is the one line that says why."""
+
+
+def check_disc(data):
+    for number, (size, crc) in MENU_FILES.items():
+        path = data / 'pzs3us1' / f'{number:05d}.bin'
+        if not path.is_file():
+            raise Skip(f'{path} is missing (the game data of the USA release, SLUS-21678, is needed)')
+        content = path.read_bytes()
+        if len(content) != size or zlib.crc32(content) != crc:
+            raise Skip(f'{path} is not the file of the USA release (SLUS-21678): its menu textures are numbered differently')
+
+
+_LIB = None
+_LIB_DIR = None
+
+
+def helper():
+    """port/tools/menu_font_extract.c as a library: the port's own letter cutter (namefont.c) and the slow loops.
+    Built with gcc, the compiler every variant of the port (BT3_CC) builds port/src/gs with. It runs inside this
+    Python, so it is the machine's own gcc also when the game is cross-built for Windows."""
+    global _LIB, _LIB_DIR
+    if _LIB is None:
+        _LIB_DIR = tempfile.TemporaryDirectory()
+        so = pathlib.Path(_LIB_DIR.name) / 'menu_font_extract.so'
+        try:
+            r = subprocess.run(['gcc', '-shared', '-fPIC', '-O2', '-w', str(ROOT / 'port/tools/menu_font_extract.c'), '-lm', '-o', str(so)],
+                               capture_output=True, text=True)
+        except OSError as exc:
+            raise Skip(f'gcc cannot be run ({exc})')
+        if r.returncode != 0:
+            print(r.stderr)
+            raise Skip('port/tools/menu_font_extract.c does not compile with gcc')
+        lib = ctypes.CDLL(str(so))
+        lib.MenuFont_Extract.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        lib.MenuFont_Glyph.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+        lib.MenuFont_Glyph.restype = ctypes.c_void_p
+        lib.MenuFont_Unpack.argtypes = [ctypes.c_char_p, ctypes.c_long, ctypes.c_char_p, ctypes.c_long]
+        lib.MenuFont_Unpack.restype = ctypes.c_long
+        lib.MenuFont_Hash.argtypes = [ctypes.c_char_p, ctypes.c_long]
+        lib.MenuFont_Hash.restype = ctypes.c_uint64
+        _LIB = lib
+    return _LIB
 
 COLOR_STYLES = {
     'title-prompt': {'top': [239,239,223],'bottom': [177,179,96],'outline': [63,21,17],
@@ -47,37 +109,10 @@ def unpack(data):
     size, packed = struct.unpack_from('<II', data)
     if size > 64 * 1024 * 1024 or packed > len(data) - 8:
         raise ValueError('Invalid BPE header')
-    p, out = 8, bytearray()
-    while p < packed + 8:
-        left, right = list(range(256)), [0] * 256
-        c = 0
-        while c < 256:
-            count = data[p]; p += 1
-            if count > 127:
-                c += count - 127
-                count = 0
-            if c == 256:
-                break
-            for _ in range(count + 1):
-                left[c] = data[p]; p += 1
-                if c != left[c]:
-                    right[c] = data[p]; p += 1
-                c += 1
-        block = data[p] * 256 + data[p + 1]; p += 2
-        for value in data[p:p + block]:
-            stack = [value]
-            while stack:
-                value = stack.pop()
-                if left[value] == value:
-                    out.append(value)
-                else:
-                    stack.extend((right[value], left[value]))
-                if len(out) > size or len(stack) > 256:
-                    raise ValueError('Invalid BPE block')
-        p += block
-    if p != packed + 8 or len(out) != size:
-        raise ValueError('BPE size mismatch')
-    return bytes(out)
+    out = ctypes.create_string_buffer(size)
+    if helper().MenuFont_Unpack(bytes(data), len(data), out, size) != size:
+        raise ValueError('Invalid BPE data')
+    return out.raw
 
 
 # The same GS layout tables as namefont.c. Map each decoded texel to its uploaded byte once.
@@ -303,13 +338,18 @@ def main():
     parser.add_argument('--data', type=pathlib.Path, default=ROOT/'gamedata')
     parser.add_argument('--out', type=pathlib.Path, default=ROOT/'gamedata/game-text')
     parser.add_argument('--extract-only', action='store_true', help='Inspect the texture catalog without exporting labels')
-    parser.add_argument('--apply', action='store_true', help='Compile edited labels.json for the game; no font extraction')
+    parser.add_argument('--apply', action='store_true', help='Compile edited labels.json for the game; the disc is not read')
+    parser.add_argument('--any-disc', action='store_true',
+                        help='Do not check that the menu archives are the USA release\'s (a changed archive; wrong numbers give no labels or wrong ones)')
     args = parser.parse_args()
-    args.out.mkdir(parents=True, exist_ok=True)
-    prepare_bundled_fonts(args.out)
     if args.apply:
+        if not (args.out / 'labels.json').is_file():
+            raise Skip(f'{args.out}/labels.json is not there yet: run this tool without --apply first')
         apply_labels(args.out)
         return
+    if not args.any_disc:
+        check_disc(args.data)
+    args.out.mkdir(parents=True, exist_ok=True)
     groups = catalog(args.data)
     for group in groups:
         print(group['id'], len(group['rgba']), 'sheets')
@@ -317,163 +357,84 @@ def main():
         export(args, groups)
 
 
+def measure_strips(groups):
+    """Letter height and baseline of the long name strips (stages, songs, the main menu), from the port's own
+    letter cutter: it tells capitals from lower case, which a row's pixels alone do not."""
+    lib = helper()
+    letters = set()
+    for group in groups:
+        if not group['labels'] or not group['rgba']:
+            continue
+        sample_labels = []
+        sample_rows = []
+        slots = [(sheet, y) for sheet in group['rgba'] for y in range(0, len(sheet) // 2048, group['height'])]
+        for (sheet, y), label in zip(slots, group['labels']):
+            if label and '\n' not in label:
+                at = y * 2048
+                sample_rows.append(sheet[at:at + group['height'] * 2048])
+                sample_labels.append(label)
+        # The segmenter operates on 256-high sheets; pad the final, shorter one transparently.
+        rgba = b''.join(sample_rows)
+        rgba = rgba.ljust((len(rgba) + 512*256*4 - 1) // (512*256*4) * (512*256*4), b'\0')
+        buf = ctypes.create_string_buffer(rgba)
+        labels = (ctypes.c_char_p * len(sample_labels))(*(t.encode('ascii') for t in sample_labels))
+        if not lib.MenuFont_Extract(0, buf, len(rgba)//(512*256*4), group['height'], labels, len(labels)):
+            print('Could not segment', group['id'], '(it keeps the measurements of its rows)')
+            continue
+        capitals = []
+        for ch in range(33, 127):
+            m, sp = (ctypes.c_int*7)(), (ctypes.c_float*3)()
+            if lib.MenuFont_Glyph(0, ch, m, sp):
+                letters.add(chr(ch))
+                if chr(ch) in 'HETILMN':
+                    capitals.append(list(m))
+        if not capitals:
+            continue
+        group['font_baseline'] = sorted(m[5]+1 for m in capitals)[len(capitals)//2]
+        group['font_cap'] = sorted(m[5]-m[4]+1 for m in capitals)[len(capitals)//2]
+    if len(letters) < 20:
+        raise Skip('the lettering of the menus was not recognised (is the game data the USA release, SLUS-21678?)')
 
 
-def glyphs_from(groups, out):
-    """Extract the existing segmenter's letter masks; no font artwork is checked into the repository."""
-    result = {}
-    with tempfile.TemporaryDirectory() as td:
-        so = pathlib.Path(td)/'extract.so'
-        subprocess.run(['cc','-shared','-fPIC','-O2', str(ROOT/'port/tools/menu_font_extract.c'), '-lm','-o',str(so)], check=True)
-        lib = ctypes.CDLL(str(so))
-        lib.MenuFont_Extract.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
-        lib.MenuFont_Glyph.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
-        lib.MenuFont_Glyph.restype = ctypes.c_void_p
-        for group in groups:
-            if not group['labels'] or not group['rgba']:
-                continue
-            sample_labels = []
-            sample_rows = []
-            slots = [(sheet, y) for sheet in group['rgba'] for y in range(0,len(sheet)//2048,group['height'])]
-            for (sheet,y), label in zip(slots,group['labels']):
-                if label and '\n' not in label:
-                    at = y * 2048
-                    sample_rows.append(sheet[at:at + group['height'] * 2048])
-                    sample_labels.append(label)
-            # The segmenter operates on 256-high sheets; pad the final, shorter one transparently.
-            rgba = b''.join(sample_rows)
-            rgba = rgba.ljust((len(rgba) + 512*256*4 - 1) // (512*256*4) * (512*256*4), b'\0')
-            buf = ctypes.create_string_buffer(rgba)
-            labels = (ctypes.c_char_p * len(sample_labels))(*(t.encode('ascii') for t in sample_labels))
-            if not lib.MenuFont_Extract(0, buf, len(rgba)//(512*256*4), group['height'], labels, len(labels)):
-                print('Could not segment', group['id'], '(other groups may supply its letters)')
-                continue
-            found = {}
-            for ch in range(33,127):
-                m, sp = (ctypes.c_int*7)(), (ctypes.c_float*3)()
-                ptr = lib.MenuFont_Glyph(0,ch,m,sp)
-                if ptr:
-                    rgba = ctypes.string_at(ptr, m[0]*m[1]*4)
-                    found[chr(ch)] = dict(metrics=list(m), spacing=list(sp), mask=rgba[3::4])
-            capitals = [g['metrics'] for ch,g in found.items() if ch in 'HETILMN']
-            if not capitals:
-                continue
-            baseline = sorted(m[5]+1 for m in capitals)[len(capitals)//2]
-            cap = sorted(m[5]-m[4]+1 for m in capitals)[len(capitals)//2]
-            group['font_cap'], group['font_baseline'] = cap, baseline
-            for ch,g in found.items():
-                # Use the largest source when a letter occurs in several sheets.
-                if ch not in result or cap > result[ch]['cap']:
-                    result[ch] = dict(g, baseline=baseline, cap=cap, source=group['id'])
-    if len(result) < 20:
-        raise ValueError('Not enough letters recovered; check that the extracted data is the USA PS2 edition')
-    return result
-
-
-def contours(mask, w, h):
-    """Trace pixel boundaries with holes intact. Collinear edges collapse to one segment."""
-    solid = {(x,y) for y in range(h) for x in range(w) if mask[y*w+x] >= 128}
-    edges = set()
-    for x,y in solid:
-        for a,b in [((x,y),(x+1,y)),((x+1,y),(x+1,y+1)),((x+1,y+1),(x,y+1)),((x,y+1),(x,y))]:
-            if (b,a) in edges:
-                edges.remove((b,a))
-            else:
-                edges.add((a,b))
-    paths = []
-    starts = collections.defaultdict(set)
-    for a,b in edges:
-        starts[a].add(b)
-    while starts:
-        first = min(starts)
-        path, a = [first], first
-        while True:
-            candidates = starts[a]
-            # At diagonally touching pixels, keep the filled region on the right.
-            if len(candidates) > 1 and len(path) > 1:
-                dx,dy = a[0]-path[-2][0], a[1]-path[-2][1]
-                b = max(candidates, key=lambda p: dx*(p[1]-a[1])-dy*(p[0]-a[0]))
-            else:
-                b = min(candidates)
-            candidates.remove(b)
-            if not candidates:
-                del starts[a]
-            if b == first:
-                break
-            path.append(b); a=b
-        simple=[]
-        for i,p in enumerate(path):
-            before, after = path[i-1], path[(i+1)%len(path)]
-            if (p[0]-before[0])*(after[1]-p[1]) != (p[1]-before[1])*(after[0]-p[0]):
-                simple.append(p)
-        if len(simple) >= 3:
-            paths.append(simple)
-    return paths
-
-
-def simplify_path(points, tolerance=0.65):
-    # Simplify the staircase caused by thresholding the small bitmap. Keep the outline's topology.
-    def simplify(line):
-        if len(line) < 3:
-            return line
-        ax,ay=line[0]; bx,by=line[-1]; dx,dy=bx-ax,by-ay
-        length=(dx*dx+dy*dy)**0.5
-        distances=[abs(dy*(x-ax)-dx*(y-ay))/length if length else ((x-ax)**2+(y-ay)**2)**0.5 for x,y in line[1:-1]]
-        maximum=max(distances)
-        if maximum <= tolerance:
-            return [line[0],line[-1]]
-        at=distances.index(maximum)+1
-        return simplify(line[:at+1])[:-1]+simplify(line[at:])
-    first=points[0]
-    split=max(range(1,len(points)),key=lambda i:(points[i][0]-first[0])**2+(points[i][1]-first[1])**2)
-    result=simplify(points[:split+1])[:-1]+simplify(points[split:]+[first])[:-1]
-    return result if len(result)>=3 else points
-
-
-def build_font(glyphs, path):
-    from fontTools.fontBuilder import FontBuilder
-    from fontTools.pens.ttGlyphPen import TTGlyphPen
-    fb = FontBuilder(1000, isTTF=True)
-    order = ['.notdef','space'] + [f'uni{ord(ch):04X}' for ch in sorted(glyphs)]
-    fb.setupGlyphOrder(order)
-    fb.setupCharacterMap({32:'space', **{ord(ch):f'uni{ord(ch):04X}' for ch in glyphs}})
-    shapes, metrics = {}, {}
-    pen = TTGlyphPen(None)
-    pen.moveTo((50,0)); pen.lineTo((50,700)); pen.lineTo((450,700)); pen.lineTo((450,0)); pen.closePath()
-    pen.moveTo((100,50)); pen.lineTo((400,50)); pen.lineTo((400,650)); pen.lineTo((100,650)); pen.closePath()
-    shapes['.notdef'], metrics['.notdef'] = pen.glyph(), (500,50)
-    shapes['space'], metrics['space'] = TTGlyphPen(None).glyph(), (220,0)
-    for ch,g in sorted(glyphs.items()):
-        w,h,ox,oy,_,_,sw = g['metrics']; lb,rb,_ = g['spacing']
-        scale = 700/g['cap']
-        pen = TTGlyphPen(None)
-        xs=[]
-        for contour in contours(g['mask'],w,h):
-            points = [(round((x+ox+lb)*scale),round((g['baseline']-oy-y)*scale)) for x,y in simplify_path(contour)]
-            xs.extend(p[0] for p in points)
-            pen.moveTo(points[0])
-            for point in points[1:]:pen.lineTo(point)
-            pen.closePath()
-        name = f'uni{ord(ch):04X}'
-        shapes[name] = pen.glyph()
-        metrics[name] = (max(1,round((lb+sw+rb)*scale)),min(xs,default=0))
-    fb.setupGlyf(shapes)
-    fb.setupHorizontalMetrics(metrics)
-    fb.setupHorizontalHeader(ascent=900, descent=-250)
-    fb.setupNameTable({'familyName':'BT3 Menu Reconstructed','styleName':'Regular','uniqueFontIdentifier':'BT3MenuReconstructed-1',
-                      'fullName':'BT3 Menu Reconstructed','psName':'BT3MenuReconstructed-Regular','version':'Version 1.000',
-                      'description':'Reconstructed from the user-provided USA PS2 menu bitmap artwork. Limited character coverage; pixel contours, not the original typeface.'})
-    fb.setupOS2(sTypoAscender=900, sTypoDescender=-250, usWinAscent=1000, usWinDescent=350, sCapHeight=700, sxHeight=520)
-    fb.setupPost()
-    fb.setupMaxp()
-    fb.save(path)
-
-
+@functools.lru_cache(maxsize=None)
 def hash_rgba(rgba):
-    value=14695981039346656037
-    for b in rgba:
-        value=((value^b)*1099511628211)&0xffffffffffffffff
-    return f'{value:016x}'
+    """FNV-1a, 64 bits, over a texture's decoded pixels: what the game looks a texture up by (menu_text.c)."""
+    return f'{helper().MenuFont_Hash(rgba, len(rgba)):016x}'
+
+
+def font_chars(path):
+    """The characters a TrueType file has glyphs for (its Unicode character map, formats 4 and 12)."""
+    chars = set()
+    try:
+        d = path.read_bytes()
+        tables = {d[12 + 16 * i:16 + 16 * i]: struct.unpack_from('>I', d, 20 + 16 * i)[0] for i in range(struct.unpack_from('>H', d, 4)[0])}
+        cmap, best = tables[b'cmap'], None
+        for i in range(struct.unpack_from('>H', d, cmap + 2)[0]):
+            platform, encoding, offset = struct.unpack_from('>HHI', d, cmap + 4 + 8 * i)
+            kind = struct.unpack_from('>H', d, cmap + offset)[0]
+            if (platform == 0 or (platform == 3 and encoding in (1, 10))) and kind in (4, 12) and (best is None or kind > best[0]):
+                best = (kind, cmap + offset)
+        if best is None:
+            return chars
+        kind, at = best
+        if kind == 4:
+            segs = struct.unpack_from('>H', d, at + 6)[0] // 2
+            ends, starts = at + 14, at + 16 + 2 * segs
+            deltas, offsets = starts + 2 * segs, starts + 4 * segs
+            for i in range(segs):
+                end, start, delta, offset = (struct.unpack_from('>H', d, base + 2 * i)[0] for base in (ends, starts, deltas, offsets))
+                for c in range(start, min(end, 0xFFFE) + 1):
+                    glyph = c if offset == 0 else struct.unpack_from('>H', d, offsets + 2 * i + offset + 2 * (c - start))[0]
+                    if glyph and (glyph + delta) & 0xFFFF:
+                        chars.add(c)
+        else:
+            for i in range(min(struct.unpack_from('>I', d, at + 12)[0], 100000)):
+                start, end, glyph = struct.unpack_from('>III', d, at + 16 + 12 * i)
+                if end < 0x110000 and end - start < 0x20000:
+                    chars.update(range(start, end + 1))
+    except (OSError, KeyError, struct.error, IndexError):
+        pass
+    return chars
 
 
 def row_style(rgba, height, centered, width=512, outline=None):
@@ -524,15 +485,11 @@ def apply_labels(out):
         if type(shadow)!=bool:
             raise ValueError('shadow must be true or false')
         return [*widths,''.join(f'{c:02x}' for c in outer),int(shadow)]
-    supported=set()
-    from fontTools.ttLib import TTFont
-    for line in (out/'fonts.tsv').read_text(encoding='utf-8').splitlines():
-        if line and not line.startswith('#'):
-            fields=line.split('\t')
-            if len(fields)>2 and not int(fields[2]) & 1:
-                continue
-            with TTFont(out/'fonts'/line.split('\t',1)[0]) as font:
-                supported.update(font.getBestCmap() or {})
+    supported=set()  # by any font of the "Menu font" list (port/third_party/fonts/fonts.tsv)
+    for line in (FONTS/'fonts.tsv').read_text(encoding='utf-8').splitlines() if (FONTS/'fonts.tsv').is_file() else []:
+        fields=line.split('\t')
+        if line and not line.startswith('#') and len(fields)>=2 and (len(fields)<3 or int(fields[2]) & 1):
+            supported.update(font_chars(FONTS/fields[0]))
     lines=['# BT3 menu text v6: hash width height y row_height cap_height baseline center margin width_milli x row_width art_width top bottom outline italic outline_milli outer_milli outer_rgb shadow text']
     # The overlay uses these same styles for names of external songs and stages.
     styles=['# kind (0 song, 1 selected song, 2 stage) cap_height baseline margin width_milli top bottom outline']
@@ -606,7 +563,7 @@ def apply_labels(out):
 def export(args,groups):
     # The legacy strips benefit from the spacing solver; standalone submenu sheets
     # use row_style's direct cap/baseline measurements (including single-color labels).
-    glyphs_from([g for g in groups if 'centered' not in g],args.out)
+    measure_strips([g for g in groups if 'centered' not in g])
     rows=[]
     for group in groups:
         if 'rectangles' in group:
@@ -728,58 +685,10 @@ def export(args,groups):
     apply_labels(args.out)
 
 
-def prepare_bundled_fonts(out):
-    """Discover compatible TTF files recursively and write the runtime font list."""
-    from fontTools.ttLib import TTFont, TTLibError
-    root=ROOT/'port/third_party/fonts'
-    entries=[]
-    for source in sorted(root.rglob('*'),key=lambda p:p.relative_to(root).as_posix()):
-        if not source.is_file() or source.suffix.lower() != '.ttf':
-            continue
-        relative=source.relative_to(root)
-        if relative.parts[0] not in ('menu','dialogue'):
-            continue
-        usage=1 if relative.parts[0]=='menu' else 2
-        key=relative.as_posix()
-        if len(key.encode('utf-8')) > 255 or any(ord(c)<32 for c in key):
-            raise ValueError(f'{key}: font path is too long or contains control characters')
-        try:
-            with TTFont(source) as font:
-                if 'fvar' in font or not 256 <= source.stat().st_size <= 4*1024*1024 or ord('H') not in (font.getBestCmap() or {}):
-                    print(f'{key}: skipping unsupported font (requires a static TTF with H, up to 4 MB)')
-                    continue
-                name=font['name'].getDebugName(4) or source.stem
-                name=' '.join(''.join(' ' if ord(c)<32 else c for c in name).split())
-                if len(name.encode('utf-8')) > 255:
-                    name=source.stem
-        except (TTLibError, KeyError, ValueError) as exc:
-            print(f'{key}: skipping invalid font ({exc})')
-            continue
-        target=out/'fonts'/relative
-        target.parent.mkdir(parents=True,exist_ok=True)
-        shutil.copy2(source,target)
-        license=source.parent/'LICENSE'
-        if license.is_file():
-            shutil.copy2(license,target.parent/'LICENSE')
-        entries.append((key,name,usage))
-    if not entries:
-        raise ValueError('No compatible .ttf fonts found in port/third_party/fonts/menu or dialogue')
-    # Duplicate metadata names are distinguished by their relative source path.
-    counts=collections.Counter((usage,name) for key,name,usage in entries)
-    lines=['# BT3 menu fonts v2: relative_path display_name usage (1=menu, 2=dialogue)']
-    for key,name,usage in entries:
-        if counts[usage,name]>1:
-            name=f'{name} ({key})'
-        lines.append(key+'\t'+name+'\t'+str(usage))
-    (out/'fonts.tsv.tmp').write_text('\n'.join(lines)+'\n',encoding='utf-8')
-    (out/'fonts.tsv.tmp').replace(out/'fonts.tsv')
-
-
-
 if __name__ == '__main__':
     try:
         main()
-    except ImportError as exc:
-        raise SystemExit(f'{exc}. Install Pillow and fonttools in the Python environment used for this tool.')
-    except (ValueError, FileNotFoundError) as exc:
-        raise SystemExit(str(exc))
+    except Skip as exc:
+        raise SystemExit(f'No menu labels: {exc}.')
+    except (ValueError, OSError, KeyError, IndexError, struct.error) as exc:
+        raise SystemExit(f'No menu labels: {type(exc).__name__}: {exc}')

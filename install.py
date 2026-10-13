@@ -13,7 +13,8 @@ Steps (each is skipped when its result is already there; --force redoes them):
   2. disc image         found, read, and checked against the known checksum of the release
   3. game data          unpacked into gamedata/ as loose files
   4. executable data    the data tables of the game's two programs, split out for the build
-  5. menu fonts         vector fonts and editable label styles from the disc artwork
+  5. menu fonts         the menus' lettering measured on the disc, for the "Menu font" setting (optional:
+                        when it cannot be done it is skipped, and that setting only offers "Original")
   6. build              the port itself (64-bit; --32 for the 32-bit build)
   7. self-test          the game's own demo fight, run without a window
 Everything the tools print goes to install.log.
@@ -294,35 +295,24 @@ def step_split(args):
 # -------------------------------------------------------------------------------------------------- 5. menu fonts
 
 def step_menu_fonts(args):
+    """port/tools/menu_font.py: where the menus' labels are in the disc's textures, for the "Menu font" setting.
+    Needs nothing but Python and gcc, and nothing from the network. It is an extra: whatever goes wrong here, the
+    step is skipped with the reason and the installation goes on (the game then offers only "Original")."""
     out = ROOT / "gamedata/game-text"
-    files = ("labels.json", "labels.tsv", "name-styles.tsv", "fonts.tsv")
-    def ready():
-        if not all((out / name).is_file() for name in files):
-            return False
-        fonts = [line.split("\t", 1)[0] for line in (out / "fonts.tsv").read_text(encoding="utf-8").splitlines()
-                 if line and not line.startswith("#")]
-        return bool(fonts) and all((out / "fonts" / name).is_file() for name in fonts)
+    ready = lambda: all((out / name).is_file() for name in ("labels.json", "labels.tsv", "name-styles.tsv"))
     if not args.force and not args.rebuild and ready():
         Step("Menu fonts").skip("already prepared")
         return
     s = Step("Menu fonts")
-    py = venv_python() if venv_python().exists() else pathlib.Path(sys.executable)
-    if run([py, "-c", "import PIL, fontTools"])[0] != 0:
-        if not venv_python().exists():
-            s.note = "making the tool environment"
-            code, _ = run([sys.executable, "-m", "venv", "--system-site-packages", VENV])
-            if code != 0:
-                s.fail("Could not create the Python environment .venv (see install.log).")
-        py = venv_python()
-        s.note = "installing Pillow and fontTools"
-        code, _ = run([py, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "Pillow", "fonttools"])
-        if code != 0:
-            s.fail("Could not install Pillow and fontTools (see install.log). Install python3-pil and python3-fonttools, or retry with an internet connection.")
-    s.note = "preparing fonts and menu labels"
-    code, _ = run([py, ROOT / "port/tools/menu_font.py", "--data", ROOT / "gamedata", "--out", out])
+    try:
+        code, text = run([sys.executable, ROOT / "port/tools/menu_font.py", "--data", ROOT / "gamedata", "--out", out])
+    except OSError as e:
+        code, text = 1, str(e)
     if code != 0 or not ready():
-        s.fail("Preparing menu fonts failed (see install.log).")
-    s.ok("menu fonts ready")
+        why = (text.strip().splitlines() or ["see install.log"])[-1]
+        s.skip(f"skipped: the Menu font setting stays on Original. {why}")
+        return
+    s.ok("menu labels ready")
 
 
 # ------------------------------------------------------------------------------------------------------ 6. build
