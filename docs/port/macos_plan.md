@@ -1,5 +1,7 @@
 # macOS port: plan
 
+The macOS port is EXPERIMENTAL: built from source on the Mac, no release archive.
+
 Status 2026-10-12: native arm64 build (`BT3_CC=mac64`) links and runs the attract-demo fight headless to the end
 ("battle finished"), and its fight state (`BT3_HASH`: health, positions, clock, random generator, and their
 checksum) equals the Linux clang64 build's on all 4428 vertical blanks (the whole-memory checksum differs, as between

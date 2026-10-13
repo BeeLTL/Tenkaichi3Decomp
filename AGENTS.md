@@ -44,7 +44,7 @@ These hold across the whole port; a change that breaks one breaks the game silen
 
 ## Platforms
 
-Supported: Linux x86-64 (glibc ≥ 2.35) and Windows 10/11 x86-64. macOS is in progress: read
+Supported: Linux x86-64 (glibc ≥ 2.35) and Windows 10/11 x86-64. macOS (Apple Silicon) is experimental and built from source only: read
 `docs/port/macos_plan.md` before any macOS task (native arm64, `BT3_CC=mac64`: game addresses are offsets in a window at
 1 TB, applied by an LLVM pass). Guard macOS code with `__APPLE__`, next to the existing `_WIN32` branches, leaving the Linux path
 as it is.
