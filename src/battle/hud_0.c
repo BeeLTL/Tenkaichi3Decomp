@@ -294,8 +294,40 @@ void PauseMenu_Reset(void) {
     gPauseMenuWhich = 0;
 }
 
+#ifdef PORT
+/* Takes the entry with an id out of a menu (the entries behind it move up). The engine finds entries by id and
+   sizes the box by the count, so nothing else has to know. */
+static void PauseMenu_PortRemove(BtlMenu *menu, s32 id) {
+    s32 i;
+    s32 k;
+
+    for (i = 0; i < menu->count; i++) {
+        if (menu->items[i].id == id) {
+            for (k = i; k + 1 < menu->count; k++) {
+                menu->items[k] = menu->items[k + 1];
+            }
+            menu->count--;
+            return;
+        }
+    }
+}
+#endif
+
 /* Battle start: allocates the menu work. */
 void PauseMenu_Init(void) {
+#ifdef PORT
+    {
+        /* Online the menu at the end of a battle does without two of its six entries (asked for by the user):
+           "Return to Vs Menu" (id 0xE; a session has no versus menu, the host sets the rules in the lobby window)
+           and "Save Replay Data" (id 0x17). Done on both copies at every battle start (the first time takes them
+           out, later ones find nothing); the program is started afresh after a session, so offline has them. */
+        extern int Port_NetActive(void);
+        if (Port_NetActive()) {
+            PauseMenu_PortRemove(&gPauseMenuResultVersus, 0xE);
+            PauseMenu_PortRemove(&gPauseMenuResultVersus, 0x17);
+        }
+    }
+#endif
     BtlMenu_Init();
 }
 
