@@ -31,7 +31,8 @@ const check = (ok, what) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if
   check(r.lines.filter((l) => l.startsWith('bt3: game data: not checked against the original disc (the browser version cannot run the check')).length === 1,
         'log: "not checked", once, with the reason');
   check(!r.lines.some((l) => /modified game data/.test(l)), 'log: no claim that the data is modified');
-  check(r.context.endsWith('; game data: not checked (browser version)'), `crash report context: ${r.context}`);
+  check(/^stage: the game is running \(vertical blank \d+\); game data: not checked \(browser version\)$/.test(r.context),
+        `crash report context: the game running, the data not checked (${r.context})`);
   check(/^not checked: the browser version cannot run the check/.test(r.row || ''), `dashboard: ${r.row}`);
 
   r = await run(',BT3_VERIFY=0');

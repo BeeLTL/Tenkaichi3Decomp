@@ -190,7 +190,10 @@ The following are already excluded from the browser build, with nothing left to 
   - **Natively:** the same code, so the same shortcut; not run natively.
   - **With the game's own start**, as in normal play, the battle on the added stage loads and runs. Checked by `port/tests/web/extras.js`: the title's attract battle, put on the added stage by `BT3_TEST_STAGE`, reads the stage file (frame ~2450) and the game runs on; screenshots show the battle on that stage.
   - **Candidate upstream report:** the `BT3_DEMO` / `BT3_REPLAY` shortcut could load partition 2. Not done; it is upstream's test tool.
-- **The crash report's context names a stale stage.** During a running game it says "stage: memory ready, before the program's main" (`gPortStage`, `plat_mem.c`), which is existing behaviour. **Unknown — investigate further**: whether the browser branch of `plat_mem.c` updates `gPortStage` at all.
+- **The crash report's context named a stale stage**: during a running game, "stage: memory ready, before the program's main". **Resolved (2026-10-13).**
+  - **Cause:** `gPortStage` (`plat_mem.c`) is updated to "the game is running" only by the Windows start (its `__wrap_main`). The browser's main is not wrapped, and neither is the Linux one, so it stays at the last start-up step.
+  - **Fix, browser-only:** `web/web_crash.c` says "the game is running (vertical blank N)" once the game has counted a vertical blank (`gPortVBlanks`, `plat_stub.c`). Before that, it gives `gPortStage` as it is.
+  - **Test:** `web/verify.js` checks the whole line. The native Linux build still shows the stale stage, an upstream matter.
 - **`emscripten_set_main_loop_timing: Cannot set timing mode…`** is printed once at the start of every run, before M2 as well. It is harmless so far. **Unknown** which call makes it.
 - **SDL's file functions.** The Emscripten SDL build defines `HAVE_FOPEN64`, but `libSDL3.a` references plain `fopen` (`llvm-nm`), so the existing `fopen` wrap covers texture packs. No `fopen64` wrap is needed.
 
