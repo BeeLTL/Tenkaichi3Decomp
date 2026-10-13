@@ -57,6 +57,10 @@ extern int Port_NetWarp(void);
 extern void Port_NetArrived(void);
 extern struct { int unk0[2]; int loadPack, loadRes, loadSprites; int flags; int mode; } GAME_PTR gProgress; /* include/menu/menu_a.h */
 static int sNetEntered;
+/* The vertical blank at which the session's start-up was over (0: not yet). Part of the game's state like the rest
+   of this file's variables, so it goes back with a rollback: it is always what the blanks as they were last run
+   say, which gs/net.c's own note of the same moment (sArrived, for the picture) is not. */
+static unsigned sNetArrivedAt;
 /* Extra stage ids (BT3_STAGE_REPLACE="0x1b=0x24,0x23=0x25"): the menus swap the id in a stage-list slot for a
    map added from outside the disc. Parsed here, in a port file where pointers are the host's; the game code reads
    the result from these globals. (A getenv result cannot be used inside the game code: its 64-bit pointer would
@@ -230,6 +234,42 @@ int Port_NetMenuListed(void) {
    here, on the game's side, at a vertical blank. */
 
 
+/* For gs/net.c's check that the two copies of an online match still compute the same game: a number made of what
+   has to be the same on both at a vertical blank whatever each player's settings, view and system are. Where the
+   game is (the start-up's end, the menu mode, whether the first-run part still runs) and, in a fight, the values
+   BT3_HASH logs as the fight's own without the generator: both fighters' health and position, the sequence's
+   state and the battle clock. (Not the whole state: each copy shows its own view, and two systems' programs keep
+   other addresses in the game's memory.) */
+unsigned long long Port_NetDigest(void) {
+    struct { unsigned arrived; int mode, first, battle, seq, clock, hp[2]; unsigned pos[2][3]; } d;
+    float q[4] __attribute__((aligned(16)));
+    unsigned long long h = 0xCBF29CE484222325ull;
+    const unsigned char *b = (const unsigned char *)&d;
+    unsigned i;
+    int k;
+
+    memset(&d, 0, sizeof(d));
+    d.arrived = sNetArrivedAt;
+    if (gProgress != NULL) {
+        d.mode = gProgress->mode;
+        d.first = (gProgress->flags & 0x40) != 0;
+    }
+    if ((sBattles != 0 || sFromMenu) && gBtlSeq != NULL && gBtlSeq->state >= 2) {
+        d.battle = 1;
+        d.seq = gBtlSeq->state;
+        d.clock = BtlSeq_GetClock()[0];
+        for (k = 0; k < 2; k++) {
+            d.hp[k] = BtlCharApi_GetHp(k);
+            BtlCharApi_GetPos(k, q);
+            memcpy(d.pos[k], q, 12);
+        }
+    }
+    for (i = 0; i < sizeof(d); i++) { /* FNV-1a */
+        h = (h ^ b[i]) * 0x100000001B3ull;
+    }
+    return h;
+}
+
 void Port_Trace(unsigned vblanks) {
     static int every = -1;
     float p[2][4] __attribute__((aligned(16)));
@@ -261,6 +301,9 @@ void Port_Trace(unsigned vblanks) {
         } else {
             Port_StateLog(vblanks, NULL, 0);
         }
+    }
+    if (sNetEntered && sNetArrivedAt == 0 && gProgress != NULL && !(gProgress->flags & 0x40)) {
+        sNetArrivedAt = vblanks;
     }
     if (Port_NetWarp() && sNetEntered && gProgress != NULL && !(gProgress->flags & 0x40)) {
         Port_NetArrived(); /* the logos and the card check are over: the character select is next, with picture and sound */

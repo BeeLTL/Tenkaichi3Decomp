@@ -287,6 +287,7 @@ void Title_Input(s32 *result) {
 
 #ifdef PORT
 extern int Port_Setting(const char *name, int def);
+extern int Port_NetFixedStart(void); /* port/src/gs/net.c */
 #endif
 
 /* The title screen's own frame loops. Returns 0 to go on to the main menu, 1 when the attract demo was set up
@@ -299,8 +300,9 @@ s32 Title_Run(s32 section) {
     ColorFade_StartIn(0, 0, 0, 0x14);
 #ifdef PORT
     /* A setting of the PC version (F1, UI): the copyright page, a still held for 300 frames that no button
-       shortens, is left out. Nothing else happens in its loop. */
-    while (!Port_Setting("skip_copyright", 0)) {
+       shortens, is left out. Nothing else happens in its loop. (Not in an online session: a player's setting does
+       not change what the two copies compute. A session does not come here as things are.) */
+    while (Port_NetFixedStart() || !Port_Setting("skip_copyright", 0)) {
 #else
     while (1) {
 #endif
