@@ -11,10 +11,10 @@ from toolchain import ROOT, VARIANT, WIN, MAC, PREFIX, OBJ, DATA, EXE, sdl3
 B = ROOT / "port/build"
 
 # macOS: where the program starts (1 TB + 0x20000000). The game's addresses are offsets in the 4 GB window that begins
-# 0x20000000 below it (port/src/port_addr.h), at 1 TB: on a 4 GB boundary (plat_mem.c, window_aligned). arm64 programs are always position-independent, but each segment can be given an
-# address (-segaddr; the system then moves the whole program by a small random amount), and up there nothing else is
-# placed: lower, macOS 26's malloc reserves its zones (64 GB and 256 GB failed every time, 24 GB a third of the time)
-# and the system's shared libraries sit at 6 to 12 GB.
+# 0x20000000 below it (port/src/port_addr.h), at 1 TB: on a 4 GB boundary (plat_mem.c, window_aligned). arm64
+# programs are always position-independent, but each segment can be given an address (-segaddr; the system may then
+# move the whole program, see window_aligned), and up there nothing else is placed: lower, macOS 26's malloc reserves
+# its zones (64 GB and 256 GB failed every time, 24 GB a third of the time) and the shared libraries sit at 6 to 12 GB.
 MAC_BASE = 0x10000000000 + 0x20000000
 
 def mac_segments(exe):
