@@ -1,45 +1,65 @@
 # Menu fonts
 
-Font choices come from the `.ttf` files found recursively in `port/third_party/fonts/menu/`
-and `port/third_party/fonts/dialogue/`,
-using their font family/style names. The choice is saved independently of the list order.
+Two settings in F1 > UI draw text from a TrueType font instead of the game's own lettering. Both are on "Original"
+unless chosen, and with "Original" nothing of this is active.
 
-Selected and unselected labels, including added song and stage names, use the chosen font.
-Decorative headings and Story battle titles keep their original artwork. The bundled fonts are
-alternatives to the original typeface.
+| setting | what it replaces | what it needs |
+|---|---|---|
+| Menu font | the labels of the menus (pictures on the disc: "Dragon History", "1P VS COM", ...), and the names of added stages and songs | the fonts, and a list of labels made from your disc (source installation only) |
+| Dialogue / UI font | the game's shared text font (`Font_Print`): dialogue, subtitles, explanations, ordinary menu text | the fonts |
 
-## Setup
+So the Dialogue / UI font does change the game's ordinary `Font_Print` text: that is what it is for. Placement,
+line breaks, colours, shadows and the button icons stay the game's; only the glyph pictures are drawn again.
+Decorative headings and the story's battle titles keep their original artwork with both settings.
 
-`install.py` discovers the fonts and prepares the label catalog from your disc automatically:
+## The fonts
 
-```sh
-python3 install.py --iso roms/SLUS-21678.iso --rebuild
+The fonts are in `port/third_party/fonts/` (in a release: `fonts/` next to the program), one folder per family
+with its licence, and the list `fonts.tsv`:
+
+```
+# file <tab> name in the list <tab> use: 1 = Menu font, 2 = Dialogue / UI font, 3 = both
+dejavu/DejaVuSansCondensed.ttf	DejaVu Sans Condensed	3
+dejavu/DejaVuSansCondensed-Bold.ttf	DejaVu Sans Condensed Bold	1
+liberation/LiberationSans-Bold.ttf	Liberation Sans Bold	1
 ```
 
-`--rebuild` and `--force` regenerate the assets; otherwise, existing assets are reused.
+To add a font, put the `.ttf` there and add a line; restart the game. A font has to be a static TrueType file
+(glyf outlines; not `.otf`, not a collection, not a variable font), have a capital `H` (the letter height is taken
+from it) and be at most 16 MB. The saved choice is kept by the file's path, not by its place in the list.
 
-To regenerate separately, from the repository root:
+A font file is checked when it is chosen and at every start. One that is cut short, damaged or of another kind is
+not used: the setting goes back to "Original", and the log has one line with the reason, for example
+
+```
+bt3: font "Liberation Sans Bold" (fonts/liberation/LiberationSans-Bold.ttf) is not used: a table lies outside
+the file (the file is cut short or damaged). The setting is back on "Original".
+```
+
+Bundled: DejaVu Sans Condensed and Condensed Bold (Bitstream Vera licence, `dejavu/LICENSE`) and Liberation Sans
+Bold (SIL Open Font License 1.1, `liberation/LICENSE`).
+
+## The menu labels (source installation)
+
+Which texture has which label, and how large its letters are, is measured on your own disc. `install.py` does it in
+its step "Menu fonts"; by hand, from the repository root:
 
 ```sh
 python3 port/tools/menu_font.py
 ```
 
-This needs extracted `gamedata/`, Pillow, fontTools and a C compiler (`cc`). New catalog entries are added;
-existing text edits are kept, while catalog layout corrections are refreshed. Restart the game afterward.
+It needs the unpacked `gamedata/`, Python and gcc; nothing else and nothing from the network. It writes
+`gamedata/game-text/`: `labels.json` (to edit), and `labels.tsv` and `name-styles.tsv` (what the game reads). Run
+again, it keeps the edits in `labels.json`, adds new entries and refreshes the measurements. About 2 seconds.
 
-## Add a font
+The step is an extra. If it cannot be done (no gcc, a disc other than the USA release SLUS-21678, whose menu
+archives are checked by size and CRC-32 before a texture number is used), it is skipped with one line saying why,
+the installation goes on, and the game offers only "Original" under Menu font. `--any-disc` leaves the check out
+for a changed archive.
 
-Put a `.ttf` under `port/third_party/fonts/menu/` for Menu font, or
-`port/third_party/fonts/dialogue/` for Dialogue / UI font. Subfolders work.
-To offer a font in both lists, put a copy in each folder. Regenerate and restart:
-
-```sh
-python3 port/tools/menu_font.py --apply
-```
-
-The tool copies fonts into `gamedata/game-text/fonts/` and writes `fonts.tsv`. Subfolders are preserved,
-so duplicate filenames work. Removed fonts disappear from options after regeneration; a missing saved choice
-falls back to Original. Fonts must be static, contain `H` for sizing, and be no larger than 4 MB.
+A release does not have this step: it ships the fonts and their licences, so "Dialogue / UI font" works there, and
+"Menu font" offers only "Original". The list of labels is derived from the disc and is never part of a package; a
+`gamedata/game-text/` folder made by a source installation works in a release too.
 
 ## Edit labels
 
@@ -52,8 +72,7 @@ falls back to Original. Fonts must be static, contain `H` for sizing, and be no 
    ./play.sh
    ```
 
-No game rebuild or archive repacking is needed. `--apply` updates the existing catalog; it does not find
-new texture sheets.
+No game rebuild or archive repacking is needed. `--apply` updates the existing catalog; it does not read the disc.
 
 | field | effect |
 |---|---|
@@ -73,7 +92,7 @@ Leave texture identity and cell bounds unchanged: `hash`, `texture_width`, `text
 Unchanged labels match the original artwork's letter width and intended height. Edited labels and added
 names use natural font proportions, shrinking to fit. Text supports up to two lines and 255 UTF-8 bytes.
 Characters absent from the selected font are skipped. Empty labels, or labels with no supported characters,
-keep the original sprite. `--apply` reports characters unsupported by every catalog font.
+keep the original sprite. `--apply` reports characters unsupported by every font of the Menu font list.
 Complex-script shaping and bidirectional text are not supported.
 
 ## Text styles
@@ -107,15 +126,18 @@ After editing styles, run `python3 port/tools/menu_font.py --apply` and restart 
 
 ## Files and rendering
 
-- `gamedata/game-text/`: generated labels, runtime styles and font files; ignored by Git.
-- `port/third_party/fonts/`: bundled typefaces and their licenses. The generated TTF files can also be
-  installed in an operating system; colors, outlines and shadows are applied by the game.
-- `port/tools/menu_font.py`: generation and label editing. `--data` and `--out` change the input/output
-  folders. PNG previews and separate offline font exports are not generated.
-- `port/src/gs/menu_text.c`: vector rendering, at least 4× texture resolution, for Vulkan and OpenGL.
-- `port/src/gs/ui.cpp`: F1 selection and added song/stage name overlays.
+- `port/third_party/fonts/` (release: `fonts/`): the typefaces, their licences and `fonts.tsv`. `BT3_FONTS` names
+  another folder; an empty value switches both settings off.
+- `gamedata/game-text/` (or `$BT3_DATA/game-text`): the labels made from the disc; ignored by Git, never packaged.
+  `BT3_MENU_FONT` names another folder; an empty value switches the Menu font off.
+- `port/tools/menu_font.py`, `port/tools/menu_font_extract.c`: making and editing the labels. `--data` and `--out`
+  change the input and output folders.
+- `port/src/gs/menu_text.c`: the font check, the drawing and the list of fonts, for Vulkan and OpenGL. Text is
+  drawn at the internal resolution, at least 2 and at most 4 times the PS2's.
+- `port/src/gs/ui.cpp`: the two settings, and the names of added songs and stages.
+- `src/battle/col_c.c` `Font_UploadTexture`: under `#ifdef PORT`, hands the game's glyph table to the renderer.
+- `port/tests/menu_font/fuzz.c`: damaged font files against the font check, with the sanitizers.
 
-The default runtime folder is `gamedata/game-text`, or `$BT3_DATA/game-text`. `BT3_MENU_FONT` selects another
-folder; an empty value disables replacements. Without a generated font catalog, options offers only Original.
-Missing label assets keep the original sprites. Texture-pack replacements take precedence. The game's ordinary
-`Font_Print*` text is unaffected.
+Texture-pack replacements take precedence over both settings. Neither setting touches the game's state: an online
+match is the same with any font on either side. `BT3_FONT_LOG=1` prints every decoded texture and the time the
+text took.
