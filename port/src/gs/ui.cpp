@@ -13,12 +13,14 @@
 #include "ui.h"
 #include "namefont.h"
 #include "../port_release.h"
+#include "menu_text.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
 static int sGL; // 1: the OpenGL back end draws the window (ImGui's OpenGL3 backend, no SDL GPU device)
 
 extern "C" {
+extern int gsScale; // gs_draw.c: resolution for dynamic menu text
 extern volatile int gPortNetMenuRequest;
 void Port_NetOptions(int rollback, int delay); // gs/net.c
 void Port_NetRulesSet(int type, int dp, int time); // gs/net.c: the host's battle type, DP limit row, time limit
@@ -1130,6 +1132,29 @@ static void misc_tab(void) {
 }
 
 static void ui_tab(PortVideo &v) {
+    if (ImGui::BeginCombo("Menu font", MenuText_FontName(v.menuFont))) {
+        for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, 0)) { continue; }
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), v.menuFont == i)) { v.menuFont = i; }
+            if (v.menuFont == i) { ImGui::SetItemDefaultFocus(); }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Original uses the game's sprites. Other fonts replace matching menu labels immediately.\nDecorative lettering keeps its original artwork.");
+    if (ImGui::BeginCombo("Dialogue / UI font", MenuText_FontName(v.textFont))) {
+        for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, 1)) { continue; }
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), v.textFont == i)) { v.textFont = i; }
+            if (v.textFont == i) { ImGui::SetItemDefaultFocus(); }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Replace the shared font used by dialogue, subtitles and ordinary UI text.\n"
+                          "Original keeps the game's glyphs. Text placement, colors, shadows and icons are preserved.");
     static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
     ImGui::Combo("HUD Style", &v.hudLayout, kHud, 3);
     ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
@@ -1650,7 +1675,7 @@ static void name_text(ImDrawList *dl, const char *text, float x, float y, float 
    and down a list). */
 struct FontName {
     SDL_GPUTexture *tex; // NULL: this name cannot be drawn that way (a character the disc's names do not have)
-    int style, w, h;
+    int style, w, h, choice, resolution;
     char text[64];
     bool used;
 };
@@ -1658,11 +1683,13 @@ static FontName sFontNames[12];
 static unsigned sFontNext;
 
 static const FontName *font_name(int style, const char *text) {
-    if (text == NULL || text[0] == '\0' || !NameFont_Ready()) { // (not ready: asked again next frame)
+    int choice = MenuText_GetFont();
+    int resolution = choice ? (gsScale > 4 ? gsScale : 4) : 1;
+    if (text == NULL || text[0] == '\0' || (choice == 0 && !NameFont_Ready())) { // (not ready: asked again next frame)
         return NULL;
     }
     for (FontName &n : sFontNames) {
-        if (n.used && n.style == style && strncmp(n.text, text, sizeof(n.text) - 1) == 0) {
+        if (n.used && n.style == style && n.choice == choice && n.resolution == resolution && strncmp(n.text, text, sizeof(n.text) - 1) == 0) {
             return n.tex != NULL ? &n : NULL;
         }
     }
@@ -1675,13 +1702,22 @@ static const FontName *font_name(int style, const char *text) {
         }
     }
     n.tex = NULL;
+    n.w = n.h = 0;
     n.used = true;
     n.style = style;
+    n.choice = choice; n.resolution = resolution;
     SDL_strlcpy(n.text, text, sizeof(n.text));
-    unsigned char *pix = NameFont_Compose(style, n.text, &n.w, &n.h);
+    unsigned char *pix;
+    if (choice) {
+        pix = style == NF_STAGE ? MenuText_RenderStage(n.text, resolution, &n.w, &n.h) :
+                                  MenuText_RenderSong(n.text, style == NF_SONG_LIT, resolution, &n.w, &n.h);
+    } else {
+        pix = NameFont_Compose(style, n.text, &n.w, &n.h);
+    }
     if (pix != NULL) {
         n.tex = make_strip(pix, (size_t)n.w * n.h * 4, (uint32_t)n.w, (uint32_t)n.h, 1); // (frees pix)
     }
+    if (choice) { n.w /= resolution; n.h /= resolution; }
     return n.tex != NULL ? &n : NULL;
 }
 
@@ -1819,9 +1855,19 @@ static bool frame_build(void) {
            window (the letterbox gs_gpu.c just blitted into). */
         float sx = (float)gUiPresentW / 512.0f;
         float sy = (float)gUiPresentH / 448.0f;
-        ImDrawList *dl = ImGui::GetForegroundDrawList();
+        // Names belong to the game picture, behind settings and other UI windows.
+        ImDrawList *dl = ImGui::GetBackgroundDrawList();
 
-        if (nameOn && gUiNameIdx >= (int)sNameCount) { // no pre-rendered name for this one
+        if (nameOn && MenuText_GetFont() != 0) {
+            const FontName *fn = font_name(NF_STAGE, PortStages_Name(gUiNameIdx));
+            float x = (float)gUiPresentX + (float)gUiNameX * sx, y = (float)gUiPresentY + (float)gUiNameY * sy;
+            if (fn != NULL) {
+                float kx = (float)gUiNameW * sx / 384.0f, ky = (float)gUiNameH * sy / 48.0f;
+                font_draw(dl, fn, x - 64.0f * kx, y + (1.5f - 14.0f) * ky, kx, ky, true);
+            } else {
+                name_text(dl, PortStages_Name(gUiNameIdx), x, y, (float)gUiNameW * sx, (float)gUiNameH * sy, true);
+            }
+        } else if (nameOn && gUiNameIdx >= (int)sNameCount) { // no pre-rendered name for this one
             /* In the game's lettering if the disc's names have all its characters, else as plain text. The menu's
                rectangle is the strip image's (384x48, set 64 right and 14 down in the 512x64 row of the disc's own
                name picture); the lettering goes where that row is. The menu's movie draws the row a little below
@@ -1844,7 +1890,15 @@ static bool frame_build(void) {
                          ImVec2(0.0f, (float)gUiNameIdx / (float)sNameCount),
                          ImVec2(1.0f, (float)(gUiNameIdx + 1) / (float)sNameCount));
         }
-        if (songOn && gUiSongIdx >= (int)sSongCount) {
+        if (songOn && MenuText_GetFont() != 0) {
+            const FontName *fn = font_name(gUiSongLit ? NF_SONG_LIT : NF_SONG, PortSongs_Name(gUiSongIdx));
+            float x = (float)gUiPresentX + (float)gUiSongX * sx, y = (float)gUiPresentY + (float)gUiSongY * sy;
+            if (fn != NULL) {
+                font_draw(dl, fn, x, y, (float)gUiSongW * sx / 512.0f, (float)gUiSongH * sy / 32.0f, false);
+            } else {
+                name_text(dl, PortSongs_Name(gUiSongIdx), x, y, (float)gUiSongW * sx, (float)gUiSongH * sy, false);
+            }
+        } else if (songOn && gUiSongIdx >= (int)sSongCount) {
             // (the rectangle is the 512x32 row of the disc's song-name picture itself)
             const FontName *fn = font_name(gUiSongLit ? NF_SONG_LIT : NF_SONG, PortSongs_Name(gUiSongIdx));
             if (fn != NULL) {

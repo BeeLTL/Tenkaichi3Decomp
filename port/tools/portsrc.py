@@ -2,7 +2,8 @@
 
 The matching decompilation keeps the C of a function that does not match yet inside `#if 0`, next to an
 INCLUDE_ASM line. The PC build wants that C. prepare() writes a copy of the source to port/build/gen/src with
-those `#if 0` turned into `#if 1`; nothing else changes, and sources without such functions are used as they are."""
+those `#if 0` turned into `#if 1`. The shared font uploader also registers its glyph metadata with the
+PC renderer. Original game files are left unchanged."""
 import pathlib, re
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -44,6 +45,21 @@ def enable_attempts(text):
 def prepare(f):
     """Path to compile for game source f, plus the names enabled and the names without C."""
     text = f.read_text()
+    # PC-only glyph atlas replacement. Keep the matching game source unchanged.
+    if f.relative_to(ROOT).as_posix() == "src/battle/col_c.c":
+        needle = "    Tex_Upload(slot->data->tex, slot->tbp, slot->cbp);"
+        if text.count(needle) != 1:
+            raise ValueError("Font upload hook no longer matches col_c.c")
+        text = text.replace(needle, "    {\n"
+                            "        extern void MenuText_RegisterGlyphs(int, int, const void *, int, int);\n"
+                            "        MenuText_RegisterGlyphs(slot->tbp, slot->cbp, slot->data->glyphs,\n"
+                            "                                slot->data->glyphCount, slot->lineHeight);\n"
+                            "    }\n" + needle)
+        new, done, missing = enable_attempts(text)
+        out = GEN / f.relative_to(ROOT)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(new)
+        return out, done, missing
     if "INCLUDE_ASM(" not in text:
         return f, [], []
     new, done, missing = enable_attempts(text)

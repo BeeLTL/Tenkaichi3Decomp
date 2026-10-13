@@ -24,6 +24,7 @@
 #include "gs_draw.h"
 #include "ui.h"         /* PortVideo and the window helpers */
 #include "gs_texpack.h" /* texture packs (replacement textures) */
+#include "menu_text.h"  /* editable labels in the original menu texture slots */
 #include <math.h>
 
 /* Stage-name overlay: defined here (C) so both the renderer (gs_gpu.c) and the game's menu (menu_c_e.c) can
@@ -121,7 +122,7 @@ typedef struct Tex {
     uint32_t gen;
     GsTex tex;
     unsigned last; /* frame last used */
-    int replaced;  /* from a texture pack: several times the size, so always filtered (texture_get) */
+    int replaced;  /* 1: texture pack, 2: vector menu labels, 3: packed shared glyphs */
     uint32_t ow, oh, rw, rh; /* then: the original's size and the replacement's */
     uint32_t amax;           /* and the largest alpha byte of the original */
 } Tex;
@@ -170,10 +171,11 @@ static GsTex texture_get(int ctx) {
     uint64_t tex_t0;
     TexPackImage pack;
     uint32_t packMaxAlpha = 255, rw = tw, rh = th;
-    int packFormat = GS_TEXFMT_RGBA8, replaced = 0;
+    int packFormat = GS_TEXFMT_RGBA8, replaced = 0, menuText = 0, sharedText = 0;
 
     if (tw > 1024) { tw = 1024; }
     if (th > 1024) { th = 1024; }
+    rw = tw; rh = th;
     pages = ((tbw ? tbw : 1) * 64 * th * (bits == 24 ? 32 : bits) / 8 + 8191) / 8192;
     /* `gen` identifies the CONTENT: a hash over the pages the texture and its palette occupy */
     for (i = 0; i <= pages; i++) {
@@ -181,6 +183,15 @@ static GsTex texture_get(int ctx) {
     }
     if (bits <= 8) {
         gen = (gen ^ clut_hash(cbp, cpsm, bits == 8 ? 256 : 16)) * 16777619u;
+    }
+    if (tw <= 512 && th <= 512) {
+        gen ^= (uint32_t)(SCALE > 4 ? SCALE : 4) * 0x9E3779B9u;
+        gen ^= (uint32_t)MenuText_GetFont() * 0x85EBCA6Bu; /* vector labels track resolution and font changes */
+    }
+    gen ^= (uint32_t)MenuText_GetSharedFont() * 0xC2B2AE35u;
+    if (MenuText_GetSharedFont()) {
+        gen ^= (uint32_t)(SCALE > 4 ? SCALE : 4) * 0x27D4EB2Du;
+        gen ^= MenuText_SharedGeneration() * 0x165667B1u; /* atlas layout follows registration and H calibration */
     }
     if (sTexPackOn && TexPack_Count() != 0) {
         gen ^= 0x5BD1E995u; /* with the pack and without it are different textures: switching it takes effect at once */
@@ -264,9 +275,22 @@ static GsTex texture_get(int ctx) {
             px[y * tw + x] = c;
         }
     }
+    if (!replaced && px != NULL) {
+        int mw, mh;
+        uint8_t *text = MenuText_RenderGlyphs((uint8_t *)px, (int)tw, (int)th, (int)tbp, (int)cbp,
+                                            SCALE > 4 ? SCALE : 4, &mw, &mh);
+        sharedText = text != NULL;
+        if (text == NULL) { text = MenuText_Render((uint8_t *)px, (int)tw, (int)th, SCALE > 4 ? SCALE : 4, &mw, &mh); }
+        if (text != NULL) {
+            free(px);
+            px = (uint32_t *)text;
+            rw = (uint32_t)mw; rh = (uint32_t)mh;
+            menuText = 1;
+        }
+    }
     gGpuTexNs += gpu_now() - tex_t0;
     t = &sTex[gsTexCount];
-    t->tex = replaced ? sBackend->texCreate(rw, rh, packFormat, pack.levels) : sBackend->texCreate(tw, th, GS_TEXFMT_RGBA8, 1);
+    t->tex = replaced ? sBackend->texCreate(rw, rh, packFormat, pack.levels) : sBackend->texCreate(rw, rh, GS_TEXFMT_RGBA8, 1);
     if (t->tex == 0) {
         free(px);
         if (replaced) {
@@ -284,18 +308,18 @@ static GsTex texture_get(int ctx) {
         }
         TexPack_Free(&pack);
     } else {
-        sBackend->texUpload(t->tex, 0, tw, th, GS_TEXFMT_RGBA8, px, tw * th * 4);
         if (getenv("BT3_TEX_DUMP") != NULL) { /* every texture as it is decoded, raw RGBA with a small header (looking at the game's art) */
             static unsigned n;
             char name[600];
             FILE *df;
-            snprintf(name, sizeof(name), "%s/tex_%05u_f%06u_%ux%u.rgba", getenv("BT3_TEX_DUMP"), n++, gGsFrame, (unsigned)tw, (unsigned)th);
+            snprintf(name, sizeof(name), "%s/tex_%05u_f%06u_%ux%u.rgba", getenv("BT3_TEX_DUMP"), n++, gGsFrame, (unsigned)rw, (unsigned)rh);
             df = fopen(name, "wb");
             if (df != NULL) {
-                fwrite(px, 1, (size_t)tw * th * 4, df);
+                fwrite(px, 1, (size_t)rw * rh * 4, df);
                 fclose(df);
             }
         }
+        sBackend->texUpload(t->tex, 0, rw, rh, GS_TEXFMT_RGBA8, px, rw * rh * 4);
     }
     gsTexCount++;
     {
@@ -306,13 +330,13 @@ static GsTex texture_get(int ctx) {
         sTexBucket[h] = (uint16_t)gsTexCount;
     }
     gGpuNewTex++;
-    gGpuNewTexPixels += tw * th;
+    gGpuNewTexPixels += rw * rh;
     sLast = t;
     t->tex0 = t0;
     t->texa = texa;
     t->gen = gen;
     t->last = gGsFrame;
-    t->replaced = replaced;
+    t->replaced = replaced ? 1 : sharedText ? 3 : menuText ? 2 : 0;
     t->ow = tw;
     t->oh = th;
     t->rw = rw;
@@ -665,7 +689,7 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
     d->pipeline = pipeline_get(ctx, topo, vu);
     d->mode[0] = !tme ? 0 : d->tex_is_target ? 2 : 1; /* 2: a frame buffer as texture, its alpha is already rescaled */
     /* (BT3_TEX_ALPHA=0 switches the replacement's alpha treatment off, for telling which one a fault comes from) */
-    if (d->mode[0] == 1 && sLast != NULL && sLast->tex == d->tex && sLast->replaced &&
+    if (d->mode[0] == 1 && sLast != NULL && sLast->tex == d->tex && sLast->replaced == 1 &&
         !(getenv("BT3_TEX_ALPHA") != NULL && atoi(getenv("BT3_TEX_ALPHA")) == 0)) {
         d->mode[0] = 3; /* a texture pack's replacement: the alpha test allows for its filtered, compressed alpha (gs.frag) */
         d->orig[2] = (float)sLast->amax / 128.0f; /* its alpha is kept at or below the original's largest (1.0 = 0x80) */
@@ -971,6 +995,29 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
             for (i = 0; i < 6; i++) {
                 gsVerts[d.first + i].s /= q[1];
                 gsVerts[d.first + i].t /= q[1];
+            }
+        }
+        if (fst && !d.tex_is_target && sLast != NULL && sLast->tex == d.tex && sLast->replaced == 3) {
+            float rect[8];
+            int tbp = (int)(t0 & 0x3FFF), cbp = (int)((t0 >> 37) & 0x3FFF);
+            if (MenuText_MapGlyph(tbp, cbp, (int)tw, (int)th,
+                                  v[0].u/16.0f, v[0].v/16.0f, v[1].u/16.0f, v[1].v/16.0f, rect)) {
+                float originalHeight = (v[1].v-v[0].v)/16.0f;
+                float yScale = (v[1].y-v[0].y)/originalHeight;
+                float y0 = v[0].y - rect[4]*yScale, y1 = v[1].y + rect[5]*yScale;
+                int k;
+                /* The extra space changes only the drawn quad. Font_DrawGlyph still returns the original
+                   advance, so wrapping, alignment and the following character's position are unchanged. */
+                for (k = 0; k < 6; k++) {
+                    Vtx *o = &gsVerts[d.first+k];
+                    int right = k == 1 || k == 3 || k == 4, bottom = k == 2 || k == 4 || k == 5;
+                    o->y = bottom ? y1 : y0;
+                    o->s = (rect[0]+0.5f+(right ? rect[2] : 0))/rect[6];
+                    o->t = (rect[1]+0.5f+(bottom ? rect[3] : 0))/rect[7];
+                }
+                d.rect[0]=rect[0]/rect[6]; d.rect[1]=rect[1]/rect[7];
+                d.rect[2]=(rect[0]+rect[2])/rect[6]; d.rect[3]=(rect[1]+rect[3])/rect[7];
+                d.orig[0]=rect[6]; d.orig[1]=rect[7]; d.orig[3]=1.0f; d.misc[3]=-(float)SCALE;
             }
         }
     } else {
@@ -1469,6 +1516,8 @@ void GsGpu_GetSettings(PortVideo *v) {
     v->display = sDisplaySetting;
     v->texPack = sTexPackOn;
     v->texPackCount = TexPack_Count();
+    v->menuFont = MenuText_GetFont();
+    v->textFont = MenuText_GetSharedFont();
     v->smooth2d = sSmooth2d;
     v->vsync = Port_Setting("vsync", 0) != 0;
     v->frameSkip = GsDraw_FrameSkip();
@@ -1511,6 +1560,10 @@ void GsGpu_SetSettings(const PortVideo *v) {
     }
     sDisplaySetting = v->display;
     sTexPackOn = v->texPack != 0;
+    MenuText_SetFont(v->menuFont);
+    MenuText_SetSharedFont(v->textFont);
+    Port_SettingSave("text_font_id", MenuText_FontId(MenuText_GetSharedFont()));
+    Port_SettingSave("menu_font_id", MenuText_FontId(MenuText_GetFont()));
     sSmooth2d = v->smooth2d != 0;
     Port_SettingSave("smooth_2d", sSmooth2d);
     Port_SettingSave("texture_pack", sTexPackOn);
@@ -1575,6 +1628,8 @@ int GsGpu_Init(void) {
     gsWhite = sb->whiteTex();
     gsFxOff = (unsigned)(getenv("BT3_FX_OFF") != NULL ? atoi(getenv("BT3_FX_OFF")) : Port_Setting("fx_off", 0)) & 63;
     gsGlowPercent = getenv("BT3_GLOW") != NULL ? atoi(getenv("BT3_GLOW")) : Port_Setting("glow", GLOW_DEFAULT);
+    MenuText_SetFontId(Port_Setting("menu_font_id", 0));
+    MenuText_SetSharedFontId(Port_Setting("text_font_id", 0));
     sTexPackOn = Port_Setting("texture_pack", 1) != 0;
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;
     gPortMusicPercent = Port_Setting("music", 100);
