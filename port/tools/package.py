@@ -10,6 +10,7 @@
 Contents:  Tenkaichi3Decomp, Tenkaichi3Decomp.dat   the game without the data tables of the original programs (strip_data.py)
            Tenkaichi3Decomp-setup       the setup window: reads the user's own disc image and unpacks it into gamedata/
            lib/            SDL3, so that it does not have to be installed
+           a11y_<code>.txt the screen reader's lines in other languages (port/lang; its own labels, no game text)
            README.txt, licenses/
 The user needs nothing but their disc image. Nothing from the disc is in the zip."""
 import os, pathlib, re, shutil, subprocess, sys, zipfile
@@ -31,6 +32,10 @@ In the game, F1 opens the settings: resolution, widescreen, controls and sound.
 Saves are kept in saves/. A file placed in gamedata/mods/<same path as the original> replaces the original.
 Texture packs (PCSX2 naming, .dds or .png) go into textures/, stages and music from outside the disc into
 stages/ and songs/: see the note in each folder.
+
+Screen reader: with Prism's library (prism.dll, libprism.so; release 0.18.3) placed next to the program, the menus
+and the fight's gauges are spoken and shown in braille. a11y_es.txt is its Spanish; another language is a file
+a11y_<code>.txt of the same kind, and lines of your own go into a11y_<code>_own.txt, which no update replaces.
 
 This package contains no game data. The game's data comes from your disc and stays on your computer.
 """
@@ -103,6 +108,13 @@ def take_program(exe, out):
     (out / ("bt3.exe" if exe.suffix == ".exe" else "bt3")).rename(out / name)  # strip_data.py writes bt3 and bt3.dat
     (out / "bt3.dat").rename(out / (NAME + ".dat"))
 
+def take_lang(out):
+    """The screen reader's lines in other languages (port/lang/a11y_<code>.txt, read by port/src/gs/a11y.c from beside
+    the program). They hold the reader's own labels only, none of the game's text."""
+    for p in sorted((ROOT / "port/lang").glob("a11y_*.txt")):
+        if not p.name.endswith("_own.txt"):
+            shutil.copy2(p, out / p.name)
+
 def bundle_sdl_dependencies(dll, out, lic, prefix):
     """MSYS2 SDL can import libiconv; the official SDL archive is self-contained.
     Collect vendor DLLs from the SDL bin folder, never Windows system DLLs."""
@@ -144,6 +156,7 @@ def main_win():
     if out.exists():
         shutil.rmtree(out)
     take_program(exe, out)
+    take_lang(out)
     shutil.copy2(setup, out / "Tenkaichi3Decomp-setup.exe")
     shutil.copy2(dll, out / "SDL3.dll")
     (out / "README.txt").write_text(WIN_README.replace("\n", "\r\n"))
@@ -182,6 +195,7 @@ def main():
     if OUT.exists():
         shutil.rmtree(OUT)
     take_program(exe, OUT)
+    take_lang(OUT)
     shutil.copy2(setup, OUT / "Tenkaichi3Decomp-setup")
     (OUT / "lib").mkdir()
     lib = next((p for d in ("/usr/local/lib", "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu") for p in sorted(pathlib.Path(d).glob("libSDL3.so.0"))), None)
