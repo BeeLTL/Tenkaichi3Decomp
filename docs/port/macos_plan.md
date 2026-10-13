@@ -146,8 +146,9 @@ Needs Homebrew `llvm` (22.x), `sdl3`, and the repository's `.venv` (`libclang` 1
   (no game-address rules); the renderer and the C++ (`port/src/gs`, ImGui) are ordinary Apple clang arm64.
 - **Data tables** (`.s`): `port/tools/macho.py` (Mach-O names, `.long _g - __mh_execute_header + 0x20000000`).
 - **Link** (`link.py`, `link_mac`): ld64, entry `__wrap_main`, every segment moved with `-segaddr` so that
-  `__TEXT` starts at 1 TB + 0x20000000. `make_state.py` reads ld64's map (symbols, not input sections; game addresses); `make_dat.py` is skipped (no
-  Mach-O support yet).
+  `__TEXT` starts at 1 TB + 0x20000000. `make_state.py` and `make_dat.py` read ld64's map (symbols, not input sections; game addresses; a table's
+  length from its object, since a symbol's size in the map runs on to the next one); `make_dat.py` signs the marked
+  program again (ad hoc). A `BT3_SKELETON=1` build fetches its tables from the disc and gives the same fight state.
 
 Memory model: W = `&__mh_execute_header - 0x20000000` = 1 TB. A game pointer (4 bytes) is an offset from W; the PS2
 regions are mapped at W + their address (`plat_mem.c`, Apple branch); the program's own globals are in the window
@@ -180,5 +181,5 @@ for the written-page tracking, and SIGBUS as well as SIGSEGV (macOS reports a wr
 The program's path comes from `_NSGetExecutablePath` (there is no /proc).
 
 Still to do: an online match Mac against Linux (the attract demo with `BT3_NET_HOST` crashes on Linux too: not a
-test; needs a pad recording, `BT3_PAD_TABLE`, played with `BT3_NET_SCRIPT`); `make_dat.py` for Mach-O; sound, input, netplay checks; `.app` package. Calls from hard-float port code (Apple clang) to game
+test; needs a pad recording, `BT3_PAD_TABLE`, played with `BT3_NET_SCRIPT`); sound, input, netplay checks; `.app` package. Calls from hard-float port code (Apple clang) to game
 functions are not covered by the signature list.
