@@ -28,7 +28,9 @@
  *   $BT3_A11Y_ASK=<n>                   asks for the gauges every n blanks, player 1's and player 2's in turn, as
  *                                       their keys would (tests: without a window no key can be pressed)
  *   $BT3_A11Y_LANG=<code>               the language, over a11y_lang
- *   a11y_<code>.txt                     the lines to say instead of the English ones (see "translations" below)
+ *   a11y_<code>.txt                     the lines to say instead of the English ones (see "translations" below);
+ *                                       a11y_es.txt comes with the program
+ *   a11y_<code>_own.txt                 the player's own lines, which win over those
  *   $BT3_A11Y_MISSING=<file>            the lines without a translation into this file instead, a new one each run
  *
  * The screen reader is chosen by trying them: NVDA, then JAWS, then the others in Prism's order. A screen reader
@@ -201,7 +203,7 @@ static PrismBackend *choose_backend(PrismContext *ctx) {
 /* ---- the speaker ---- */
 
 static volatile int sOn; /* set once by the game's thread before the speaker starts; read by the render thread */
-static int sSpanish, sRepeatKey, sGaugeKey[2], sCueVolume;
+static int sRepeatKey, sGaugeKey[2], sCueVolume;
 static int sTranslate;         /* the language is not English */
 static char sLang[4] = "en";   /* its code: two or three small letters */
 static int sFrame; /* blanks since the start (only for the log) */
@@ -275,21 +277,42 @@ static int SDLCALL speaker(void *unused) {
 
 /* ---- translations ----
  *
- * Out of English, a11y_<code>.txt in the program's folder gives lines to say instead of English ones, one per line:
- * the FNV-1a hash (64 bits, 16 hex digits) of the English line as it would be said (UTF-8, on one line: one of the
- * game's own as PortA11y_Utf8 makes it, or a label as a11y_game.c has it), a tab, and the line to say. Lines starting
- * with '#' are notes. Only the hash of the English is needed, so the file need not carry the game's text. Spanish
- * has the labels in a11y_game.c itself, and a11y_es.txt is only for where the Spanish translation of a disc did not
- * reach (the memory card's messages, the main menu guides' lines). A label with numbers or names put in it (%d, %s)
- * keeps them, in the same order, or the English is said. */
+ * Out of English, a11y_<code>.txt gives the lines to say instead of the English ones, one per line: the FNV-1a hash
+ * (64 bits, 16 hex digits) of the English line as it would be said (UTF-8, on one line: one of the game's own as
+ * PortA11y_Utf8 makes it, or a label as a11y_game.c has it), a tab, and the line to say. Lines starting with '#' are
+ * notes. Only the hash of the English is needed, so the file need not carry the game's text. A label with numbers or
+ * names put in it (%d, %s) keeps them, in the same order, or the English is said. A label that some language says
+ * two ways (Spanish "Aleatorio" for a stage, "Aleatoria" for a song) has a second key, the English, a bar and the
+ * sense ("Random|song"; trc in a11y_game.c): its line is taken when the file has one, else the plain key's.
+ *
+ * Every language goes this way, Spanish too: nothing but English is in the code. port/lang/a11y_es.txt has all the
+ * labels of a11y_game.c, each key above its line, and is the list to translate from; a release carries it beside
+ * the program (port/tools/package.py).
+ *
+ * Two files are read: a11y_<code>.txt, and a11y_<code>_own.txt, the player's own, whose lines win and which no
+ * release replaces: for where the translation of a disc did not reach (the memory card's messages, the main menu
+ * guides' lines) or a line one would rather hear another way. Both are looked for in the program's folder; the
+ * first also in ../lang/ from there (the repository's port/lang, for a program run from port/build).
+ *
+ * Either file may also have lines "~word<tab>words": in the game's own lines (not the labels) that whole word is
+ * said as the words after the tab. A full stop at the word's end ("~Abbr.<tab>Abbreviation") is taken with the word
+ * when one follows it. For a disc whose text abbreviates, or spells a name otherwise than the player wants. */
 
 typedef struct {
     uint64_t hash;
     const char *text;
+    int rank; /* 0: from the player's own file, 1: from the language's */
 } A11yLine;
 
-static A11yLine *sLines; /* by hash */
+typedef struct {
+    const char *from, *to;
+    int dot; /* a full stop right after the word goes with it */
+} A11yWord;
+
+static A11yLine *sLines; /* by hash, the player's own first */
 static int sLineCount;
+static A11yWord *sWords;
+static int sWordCount;
 static FILE *sMissing;
 static uint64_t sMissed[4096]; /* the lines already in sMissing */
 static int sMissedCount;
@@ -304,32 +327,31 @@ static uint64_t fnv1a(const char *s) {
 }
 
 static int by_hash(const void *a, const void *b) {
-    uint64_t x = ((const A11yLine *)a)->hash, y = ((const A11yLine *)b)->hash;
+    const A11yLine *x = a, *y = b;
 
-    return x < y ? -1 : x > y;
+    return x->hash < y->hash ? -1 : x->hash > y->hash ? 1 : x->rank - y->rank;
 }
 
-/* Reads a11y_<code>.txt (kept for the whole run: the lines point into it). */
-static void load_lines(void) {
-    char path[1024], *data, *s, *next, *tab;
-    const char *base = SDL_GetBasePath();
-    int count = 0, max = 1;
+/* Reads one file of lines (kept for the whole run: the lines point into it); 1 when it was there. */
+static int load_file(const char *path, int rank) {
+    char *data = SDL_LoadFile(path, NULL), *s, *next, *tab; /* (ends in a terminator) */
+    void *lines, *words;
+    int max = 1;
     size_t len;
 
-    if (base == NULL) {
-        return;
-    }
-    snprintf(path, sizeof(path), "%sa11y_%s.txt", base, sLang);
-    data = SDL_LoadFile(path, NULL); /* (ends in a terminator) */
     if (data == NULL) {
-        return;
+        return 0;
     }
     for (s = data; *s != '\0'; s++) {
         max += *s == '\n';
     }
-    if ((sLines = SDL_calloc(max, sizeof(*sLines))) == NULL) {
+    lines = SDL_realloc(sLines, (size_t)(sLineCount + max) * sizeof(*sLines));
+    sLines = lines != NULL ? lines : sLines;
+    words = SDL_realloc(sWords, (size_t)(sWordCount + max) * sizeof(*sWords));
+    sWords = words != NULL ? words : sWords;
+    if (lines == NULL || words == NULL) {
         SDL_free(data);
-        return;
+        return 0;
     }
     s = data;
     if ((uint8_t)s[0] == 0xEF && (uint8_t)s[1] == 0xBB && (uint8_t)s[2] == 0xBF) {
@@ -343,32 +365,71 @@ static void load_lines(void) {
             s[len - 1] = '\0';
         }
         tab = strchr(s, '\t');
-        if (s[0] != '#' && tab != NULL && tab - s == 16 && tab[1] != '\0') {
-            sLines[count].hash = strtoull(s, NULL, 16);
-            sLines[count].text = tab + 1;
-            count++;
+        if (tab == NULL || tab[1] == '\0') {
+            continue;
+        }
+        if (s[0] == '~') {
+            *tab = '\0';
+            sWords[sWordCount].dot = tab > s + 1 && tab[-1] == '.';
+            if (sWords[sWordCount].dot) {
+                tab[-1] = '\0';
+            }
+            sWords[sWordCount].from = s + 1;
+            sWords[sWordCount].to = tab + 1;
+            sWordCount += s[1] != '\0';
+        } else if (s[0] != '#' && tab - s == 16) {
+            sLines[sLineCount].hash = strtoull(s, NULL, 16);
+            sLines[sLineCount].text = tab + 1;
+            sLines[sLineCount].rank = rank;
+            sLineCount++;
         }
     }
-    qsort(sLines, count, sizeof(*sLines), by_hash);
-    sLineCount = count;
+    return 1;
 }
 
-/* The line a11y_<code>.txt has for an English one, or NULL; then the English goes to sMissing, once. */
-static const char *find_line(const char *en) {
-    A11yLine key, *line;
-    int i;
+/* Reads a11y_<code>_own.txt and a11y_<code>.txt. */
+static void load_lines(void) {
+    char path[1024];
+    const char *base = SDL_GetBasePath();
 
-    key.hash = fnv1a(en);
-    line = sLineCount > 0 ? bsearch(&key, sLines, sLineCount, sizeof(*sLines), by_hash) : NULL;
-    if (line != NULL) {
-        return line->text;
+    if (base == NULL) {
+        return;
     }
-    if (sMissing != NULL && sMissedCount < (int)(sizeof(sMissed) / sizeof(sMissed[0]))) {
-        for (i = 0; i < sMissedCount && sMissed[i] != key.hash; i++) {
+    snprintf(path, sizeof(path), "%sa11y_%s_own.txt", base, sLang);
+    load_file(path, 0);
+    snprintf(path, sizeof(path), "%sa11y_%s.txt", base, sLang);
+    if (!load_file(path, 1)) {
+        snprintf(path, sizeof(path), "%s../lang/a11y_%s.txt", base, sLang);
+        load_file(path, 1);
+    }
+    if (sLineCount > 0) {
+        qsort(sLines, sLineCount, sizeof(*sLines), by_hash);
+    }
+}
+
+/* The line the files have for an English one (or for a label's key), or NULL; then, with `report`, the English goes
+   to sMissing, once. */
+static const char *find_line(const char *en, int report) {
+    uint64_t hash = fnv1a(en);
+    int lo = 0, hi = sLineCount, mid, i;
+
+    while (lo < hi) { /* the first of that hash: the player's own, when both files have it */
+        mid = lo + (hi - lo) / 2;
+        if (sLines[mid].hash < hash) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if (lo < sLineCount && sLines[lo].hash == hash) {
+        return sLines[lo].text;
+    }
+    if (report && sMissing != NULL && sMissedCount < (int)(sizeof(sMissed) / sizeof(sMissed[0]))) {
+        for (i = 0; i < sMissedCount && sMissed[i] != hash; i++) {
         }
         if (i == sMissedCount) {
-            sMissed[sMissedCount++] = key.hash;
-            fprintf(sMissing, "%016llx\t%s\n", (unsigned long long)key.hash, en);
+            sMissed[sMissedCount++] = hash;
+            fprintf(sMissing, "%016llx\t%s\n", (unsigned long long)hash, en);
             fflush(sMissing);
         }
     }
@@ -380,7 +441,7 @@ static const char *find_line(const char *en) {
 static int translated_line(char *out, int cap, int n) {
     const char *text;
 
-    if (!sTranslate || n == 0 || (text = find_line(out)) == NULL) {
+    if (!sTranslate || n == 0 || (text = find_line(out, 1)) == NULL) {
         return n;
     }
     n = (int)strlen(text);
@@ -422,17 +483,32 @@ static int same_conversions(const char *a, const char *b) {
     }
 }
 
-/* A label of a11y_game.c (UTF-8, perhaps a format), in the language spoken: in Spanish as it is (a11y_game.c has
-   them), otherwise the line from a11y_<code>.txt for the English one when it keeps the same conversions, else the
-   English. */
-const char *PortA11y_Tr(const char *label) {
+/* A label of a11y_game.c (UTF-8, perhaps a format), in the language spoken: the line the files have for it when it
+   keeps the same conversions, else the English. With a sense, the line of the key "label|sense" first. */
+static const char *label_line(const char *label, const char *sense) {
+    char key[512];
     const char *text;
 
-    if (!sTranslate || sSpanish || label == NULL || label[0] == '\0' || (text = find_line(label)) == NULL ||
-        !same_conversions(label, text)) {
+    if (!sTranslate || label == NULL || label[0] == '\0') {
         return label;
     }
-    return text;
+    if (sense != NULL && (size_t)snprintf(key, sizeof(key), "%s|%s", label, sense) < sizeof(key) &&
+        (text = find_line(key, 0)) != NULL && same_conversions(label, text)) {
+        return text;
+    }
+    if ((text = find_line(label, 1)) != NULL && same_conversions(label, text)) {
+        return text;
+    }
+    return label;
+}
+
+const char *PortA11y_Tr(const char *label) {
+    return label_line(label, NULL);
+}
+
+/* The same for a label that some language says another way in this sense ("song": a feminine noun in Spanish). */
+const char *PortA11y_TrSense(const char *sense, const char *label) {
+    return label_line(label, sense);
 }
 
 /* sMissing for a11y_missing=1: a11y_untranslated.txt, added to, with the lines it has already counted as written. */
@@ -454,52 +530,37 @@ static FILE *open_missing(const char *base) {
     return open_utf8(path, "a");
 }
 
-/* In Spanish, the names the player's mod spells otherwise (the owner's choice) and the mod's abbreviations written
-   out, as whole words. `dot`: a period right after the match belongs to the abbreviation and goes too. */
-static const struct {
-    const char *from, *to;
-    int dot;
-} kOwnNames[] = {
-    {"Célula", "Cell", 0},
-    {"Shenron", "Shenlon", 0},
-    {"Aleator", "Aleatorio", 1},
-    {"Personaj", "Personaje", 1},
-    {"Volver a selecc. person", "Volver a la selección de personajes", 1},
-    {"Volver menú princip", "Volver al menú principal", 1},
-    {"Ver datos repet", "Ver datos de repetición", 1},
-    {"Guar. datos rep", "Guardar datos de repetición", 1},
-};
-
 /* A byte of a word: an ASCII letter or any byte of a letter outside ASCII. */
 static int word_byte(char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (uint8_t)c >= 0x80;
 }
 
-/* kOwnNames on `out` (n bytes, room for cap with the terminator); returns the new length. A replacement that does not
-   fit is left out. */
-static int own_names(char *out, int n, int cap) {
-    size_t k, from, to;
+/* The files' word replacements ("~word<tab>words") on `out` (n bytes, room for cap with the terminator); returns the
+   new length. A replacement that does not fit is left out. */
+static int own_words(char *out, int n, int cap) {
+    size_t from, to;
     char *p;
+    int k;
 
-    if (!sSpanish || cap <= 0) {
+    if (cap <= 0) {
         return n;
     }
-    for (k = 0; k < sizeof(kOwnNames) / sizeof(kOwnNames[0]); k++) {
-        to = strlen(kOwnNames[k].to);
-        for (p = strstr(out, kOwnNames[k].from); p != NULL; p = strstr(p, kOwnNames[k].from)) {
-            from = strlen(kOwnNames[k].from);
+    for (k = 0; k < sWordCount; k++) {
+        to = strlen(sWords[k].to);
+        for (p = strstr(out, sWords[k].from); p != NULL; p = strstr(p, sWords[k].from)) {
+            from = strlen(sWords[k].from);
             if ((p > out && word_byte(p[-1])) || word_byte(p[from])) {
                 p++;
                 continue;
             }
-            if (kOwnNames[k].dot && p[from] == '.') {
+            if (sWords[k].dot && p[from] == '.') {
                 from++;
             }
             if (n + (int)to - (int)from >= cap) {
                 break;
             }
             memmove(p + to, p + from, n - (size_t)(p - out) - from + 1);
-            memcpy(p, kOwnNames[k].to, to);
+            memcpy(p, sWords[k].to, to);
             n += (int)to - (int)from;
             p += to;
         }
@@ -555,7 +616,6 @@ static void start(void) {
         }
         SDL_free(loc);
     }
-    sSpanish = strcmp(sLang, "es") == 0;
     sTranslate = strcmp(sLang, "en") != 0;
     if (sTranslate) {
         load_lines();
@@ -589,11 +649,6 @@ int PortA11y_Begin(void) {
     }
     sFrame++;
     return sOn;
-}
-
-/* 1: the labels the game draws as pictures are said in Spanish. */
-int PortA11y_Spanish(void) {
-    return sSpanish;
 }
 
 /* Says a message (UTF-8). flags: A11Y_INTERRUPT, or 0 to queue it after the one before. */
@@ -829,5 +884,5 @@ int PortA11y_Utf8(char *out, int cap, const uint16_t *str) {
     if (cap > 0) {
         out[n] = '\0';
     }
-    return own_names(out, translated_line(out, cap, n), cap);
+    return own_words(out, translated_line(out, cap, n), cap);
 }

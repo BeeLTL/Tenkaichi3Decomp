@@ -28,9 +28,12 @@
 
 #define A11Y_INTERRUPT 1 /* gs/a11y.c */
 #define A11Y_TEXT 1024
-extern int PortA11y_Begin(void), PortA11y_Spanish(void);
+extern int PortA11y_Begin(void);
 extern const char *PortA11y_Tr(const char *label) __attribute__((format_arg(1))); /* checked like its label */
 #define tr(label) PortA11y_Tr(label) /* gs/a11y.c: a label in the language of a11y_<code>.txt, when it has one */
+extern const char *PortA11y_TrSense(const char *sense, const char *label) __attribute__((format_arg(2)));
+#define trc(sense, label) PortA11y_TrSense(sense, label) /* a label some language says another way in this sense
+                                                            (key "label|sense" of a11y_<code>.txt) */
 extern void PortA11y_Say(const char *text, int flags);
 extern void PortA11y_Note(const char *text);
 extern int PortA11y_Utf8(char *out, int cap, const uint16_t *str);
@@ -364,34 +367,24 @@ _Static_assert(sizeof(A11yMissionRecord) == 0xC && sizeof(A11ySaveSlot) == 0x10 
 #define SAVE_ITEMS 350
 extern A11ySave GAME_PTR gSaveData;
 
-/* Labels the game draws as pictures (the plates of pzs3us1/00449.bin and the title's), English then Spanish. */
-static const char *const kMainMenuItems[2][11] = { /* by item id: src/menu/menu_a.c, MainMenu_Init */
-    {"Dragon History", "Ultimate Battle", "Dragon World Tour", "Duel", "Dragon Net Battle", "Evolution Z",
-     "Ultimate Training", "Data Center", "Character Reference", "Options", "Shenron"},
-    {"Historia Dragón", "Batalla definitiva", "Torneo mundial Dragón", "Duelo", "Batalla Dragón en línea",
-     "Evolución Z", "Entrenamiento definitivo", "Centro de datos", "Referencia de personajes", "Opciones",
-     "Shenlon"},
+/* Labels the game draws as pictures (the plates of pzs3us1/00449.bin and the title's). All the labels of this file
+   are in English and said through tr(): the other languages are in a11y_<code>.txt (gs/a11y.c; Spanish in
+   port/lang/a11y_es.txt, which has every label here and must get the new ones). */
+static const char *const kMainMenuItems[11] = { /* by item id: src/menu/menu_a.c, MainMenu_Init */
+    "Dragon History", "Ultimate Battle", "Dragon World Tour", "Duel", "Dragon Net Battle", "Evolution Z",
+    "Ultimate Training", "Data Center", "Character Reference", "Options", "Shenron",
 };
-static const char *const kTitleItems[2][2] = {{"New Game", "Continue"}, {"Partida nueva", "Continuar"}};
-static const char *const kYesNo[2][2] = {{"Yes", "No"}, {"Sí", "No"}};
+static const char *const kTitleItems[2] = {"New Game", "Continue"};
+static const char *const kYesNo[2] = {"Yes", "No"};
 /* By stage id; the English as in gs/namefont.c (kStageNames, what the name pictures say). */
-static const char *const kStageNames[2][CHARSEL_STAGE_RANDOM + 1] = {
-    {"Wasteland - Noon", "Rocky Area - Noon", "Planet Namek", "Dying Namek", "World Tournament Stage - Noon",
-     "Kami's Lookout", "Cell Games Arena - Evening", "Supreme Kai's World", "Hyperbolic Time Chamber",
-     "City Ruins - Noon", "Mountain Road - Noon", "Islands", "Kame House", "Planet - Night", "Glacier",
-     "Ruined Earth", "Outer Space", "Penguin Village", "Hell", "Desert - Noon", "King's Castle", "Muscle Tower",
-     "Mount Paozu", "Wasteland - Evening", "Wasteland - Night", "Rocky Area - Evening", "Rocky Area - Night",
-     "World Tournament Stage - Evening", "Cell Game - Noon", "City Ruins - Evening", "City Ruins - Night",
-     "Desert - Evening", "Desert - Night", "Mountain Road - Evening", "Planet - Evening", "Random"},
-    /* As the Spanish mod's name pictures say them, with their abbreviations written out and "Cell" kept. */
-    {"Páramo, mediodía", "Área rocosa, mediodía", "Planeta Namek", "Namek agonizante",
-     "Escenario Torneo Mundial, mediodía", "Atalaya de Kami", "Pista Juegos Cell, tarde", "Mundo Kaiyoshin",
-     "Habitación del tiempo", "Ciudad en ruinas, mediodía", "Carretera montañosa, mediodía", "Islas",
-     "Kame House", "Planeta, noche", "Glaciar", "Tierra en ruinas", "Espacio exterior", "Aldea Pingüino",
-     "Infierno", "Desierto, mediodía", "Castillo del rey", "Torre Músculo", "Monte Paozu", "Yermos, tarde",
-     "Yermos, noche", "Área rocosa, tarde", "Área rocosa, noche", "Escenario Torneo Mundial, tarde",
-     "Juegos Cell, mediodía", "Ciudad en ruinas, tarde", "Ciudad en ruinas, noche", "Desierto, tarde",
-     "Desierto, noche", "Carretera montañosa, tarde", "Planeta, tarde", "Aleatorio"},
+static const char *const kStageNames[CHARSEL_STAGE_RANDOM + 1] = {
+    "Wasteland - Noon", "Rocky Area - Noon", "Planet Namek", "Dying Namek", "World Tournament Stage - Noon",
+    "Kami's Lookout", "Cell Games Arena - Evening", "Supreme Kai's World", "Hyperbolic Time Chamber",
+    "City Ruins - Noon", "Mountain Road - Noon", "Islands", "Kame House", "Planet - Night", "Glacier",
+    "Ruined Earth", "Outer Space", "Penguin Village", "Hell", "Desert - Noon", "King's Castle", "Muscle Tower",
+    "Mount Paozu", "Wasteland - Evening", "Wasteland - Night", "Rocky Area - Evening", "Rocky Area - Night",
+    "World Tournament Stage - Evening", "Cell Game - Noon", "City Ruins - Evening", "City Ruins - Night",
+    "Desert - Evening", "Desert - Night", "Mountain Road - Evening", "Planet - Evening", "Random",
 };
 /* By music-list value 0x00..0x13 (gs/namefont.c, kSongNames); titles, the same in both languages. */
 static const char *const kSongNames[20] = {
@@ -400,39 +393,31 @@ static const char *const kSongNames[20] = {
     "Shootout In Meteor", "Dynamite Battle", "Burnin' Up", "Wild Rush", "Evolution",
 };
 /* The grid's marker cells, when the name file has no line for them. */
-static const char *const kCellMarks[2][4] = {
-    {"Random", "Locked", "Custom characters", "Empty"},
-    {"Aleatorio", "Bloqueado", "Personajes personalizados", "Vacío"},
+static const char *const kCellMarks[4] = {
+    "Random", "Locked", "Custom characters", "Empty",
 };
 /* The duel menu (src/menu/menu_g_c.c, DuelMenu_ClipGoto): its plates by level and row, then the settings' values
    by row of their lists (DuelMenu_SetupValue). */
-static const char *const kDuelTop[2][4] = {
-    {"1P vs CPU", "1P vs 2P", "CPU vs CPU", "Battle Settings"},
-    {"Jugador 1 contra CPU", "Jugador 1 contra jugador 2", "CPU contra CPU", "Ajustes de batalla"},
+static const char *const kDuelTop[4] = {
+    "1P vs CPU", "1P vs 2P", "CPU vs CPU", "Battle Settings",
 };
-static const char *const kDuelType[2][3] = {
-    {"Single Battle", "Team Battle", "DP Battle"},
-    {"Combate individual", "Combate por equipos", "Combate PD"},
+static const char *const kDuelType[3] = {
+    "Single Battle", "Team Battle", "DP Battle",
 };
-static const char *const kDuelDp[2][3] = {{"10 DP", "15 DP", "20 DP"}, {"10 PD", "15 PD", "20 PD"}};
-static const char *const kDuelSettings[2][DUEL_SETTINGS] = {
-    {"Duel Time", "CPU Level", "Referee", "Transformation", "Stage Destruction", "Restore Defaults"},
-    {"Tiempo de duelo", "Dificultad de la CPU", "Árbitro", "Transformación", "Ajuste del mapa", "Predeterminado"},
+static const char *const kDuelDp[3] = {"10 DP", "15 DP", "20 DP"};
+static const char *const kDuelSettings[DUEL_SETTINGS] = {
+    "Duel Time", "CPU Level", "Referee", "Transformation", "Stage Destruction", "Restore Defaults",
 };
-static const char *const kDuelTime[2][5] = {
-    {"60", "90", "180", "240", "Infinite"},
-    {"60", "90", "180", "240", "Infinito"},
+static const char *const kDuelTime[5] = {
+    "60", "90", "180", "240", "Infinite",
 };
-static const char *const kDuelCpu[2][5] = {
-    {"Very Weak", "Weak", "Normal", "Strong", "Very Strong"},
-    {"Muy débil", "Débil", "Normal", "Fuerte", "Muy fuerte"},
+static const char *const kDuelCpu[5] = {
+    "Very Weak", "Weak", "Normal", "Strong", "Very Strong",
 };
-static const char *const kDuelReferee[2][7] = {
-    {"Ox-King", "Videl", "Supreme Kai", "Shenron", "Announcer 1", "Announcer 2", "Announcer 3"},
-    {"Rey Ox", "Videl", "Kaiyoshin", "Shenlon", "Locutor 1", "Locutor 2", "Locutor 3"},
+static const char *const kDuelReferee[7] = {
+    "Ox-King", "Videl", "Supreme Kai", "Shenron", "Announcer 1", "Announcer 2", "Announcer 3",
 };
 
-static int sEs;           /* Spanish labels */
 static int sAfterHeading; /* a screen's name or a window's text was just said */
 
 /* A screen's name or a window's text: it cuts what was being said. */
@@ -449,16 +434,16 @@ static int follow(void) {
     return flags;
 }
 
-/* Appends ", 2 of 5" (English) or ", 2 de 5" (Spanish) when there is more than one. */
+/* Appends ", 2 of 5" when there is more than one. */
 static void add_position(char *text, int cap, int index, int count) {
     size_t len = strlen(text);
 
     if (count > 1 && index >= 0 && index < count) {
-        snprintf(text + len, cap - len, tr(sEs ? ", %d de %d" : ", %d of %d"), index + 1, count);
+        snprintf(text + len, cap - len, tr(", %d of %d"), index + 1, count);
     }
 }
 
-/* "label, 2 of 5" (English) or "label, 2 de 5" (Spanish). */
+/* "label, 2 of 5". */
 static void say_item(const char *label, int index, int count, int flags) {
     char text[256];
 
@@ -521,7 +506,7 @@ static void dialog(void) {
         cursor = -1;
     }
     if (d->choices != 0 && (d->windowFlags & 2) && d->cursor != cursor && (d->cursor & ~1) == 0) {
-        say_item(tr(kYesNo[sEs][d->cursor]), d->cursor, 2, follow());
+        say_item(tr(kYesNo[d->cursor]), d->cursor, 2, follow());
         cursor = d->cursor;
     }
 }
@@ -540,10 +525,10 @@ static void title(void) {
         return;
     }
     if (t->state == 1 && state != 1) {
-        heading(tr(sEs ? "Presiona START" : "Press START button"));
+        heading(tr("Press START button"));
     }
     if (t->state == 2 && t->cursor != cursor && t->cursor >= 0 && t->cursor < 2 && t->itemCount >= 1) {
-        say_item(tr(kTitleItems[sEs][t->cursor]), t->cursor, t->itemCount, follow());
+        say_item(tr(kTitleItems[t->cursor]), t->cursor, t->itemCount, follow());
         cursor = t->cursor;
     }
     state = t->state;
@@ -571,11 +556,11 @@ static void main_menu(void) {
         return;
     }
     if (!open) {
-        heading(tr(sEs ? "Menú principal" : "Main Menu"));
+        heading(tr("Main Menu"));
         open = 1;
     }
     if (cur != item) {
-        say_item(tr(kMainMenuItems[sEs][cur]), index, m->itemCount, follow());
+        say_item(tr(kMainMenuItems[cur]), index, m->itemCount, follow());
         item = cur;
     }
 }
@@ -597,9 +582,8 @@ extern int gUbMenuPlate3Open; /* src/menu/menu_p_c.c: the third plate is open */
 #define UBMENU_SHUT_PLATE 2
 
 /* As the mod's plates say them; its shut third plate shows "???", and its open name is not seen yet. */
-static const char *const kUbMenuItems[2][UBMENU_PLATES] = {
-    {"Sim Dragon", "Mission 100", "Survival", "Disc Fusion"},
-    {"Sim Dragón", "Misión 100", "Supervivencia", "Fusión de disco"},
+static const char *const kUbMenuItems[UBMENU_PLATES] = {
+    "Sim Dragon", "Mission 100", "Survival", "Disc Fusion",
 };
 
 static void ub_menu(void) {
@@ -620,7 +604,7 @@ static void ub_menu(void) {
         index -= index > UBMENU_SHUT_PLATE;
     }
     if (m->cur != item) {
-        say_item(tr(kUbMenuItems[sEs][m->cur]), index, count, follow());
+        say_item(tr(kUbMenuItems[m->cur]), index, count, follow());
         item = m->cur;
     }
 }
@@ -741,15 +725,14 @@ static void mission_select(void) {
     n = 0;
     if (m->level == 0) {
         if (m->page != page && m->pageCount > 1) {
-            n = snprintf(text, sizeof(text), tr(sEs ? "Página %d de %d: "
-                                                    : "Page %d of %d: "), m->page + 1, m->pageCount);
+            n = snprintf(text, sizeof(text), tr("Page %d of %d: "), m->page + 1, m->pageCount);
         }
-        n += snprintf(text + n, sizeof(text) - n, tr(sEs ? "Misión %d" : "Mission %d"), cur + 1);
+        n += snprintf(text + n, sizeof(text) - n, tr("Mission %d"), cur + 1);
         if (text_line(line, sizeof(line), m->text, MISSEL_NAME_LINE + cur) > 0) {
             n += snprintf(text + n, sizeof(text) - n, ", %s", line);
         }
         if (gSaveData != NULL && gSaveData->mission[cur].cleared) {
-            snprintf(text + n, sizeof(text) - n, "%s", tr(sEs ? ", superada" : ", cleared"));
+            snprintf(text + n, sizeof(text) - n, "%s", tr(", cleared"));
         }
     } else {
         if (m->missions == NULL || m->opps == NULL) {
@@ -766,7 +749,7 @@ static void mission_select(void) {
             opps++;
         }
         snprintf(text + n, sizeof(text) - n, "%d %s", opps,
-                 tr(sEs ? (opps == 1 ? "rival" : "rivales") : (opps == 1 ? "opponent" : "opponents")));
+                 tr(opps == 1 ? "opponent" : "opponents"));
     }
     PortA11y_Say(text, follow());
     level = m->level;
@@ -809,18 +792,14 @@ extern A11yTourMenu GAME_PTR gTourMenu;
 #define TOUR_LEVELS 3
 #define TOUR_ENTRY_MAX 8
 
-static const char *const kTourTop[2][2] = {
-    {"Open tournament", "Free play"},
-    {"Torneo abierto", "Juego libre"},
+static const char *const kTourTop[2] = {
+    "Open tournament", "Free play",
 };
-static const char *const kTourNames[2][TOUR_COUNT] = {
-    {"World Tournament", "Cell Games", "Other World Tournament", "Yamcha Game", "Tenkaichi Budokai"},
-    {"Torneo de las Artes Marciales", "Juegos de Cell", "Torneo del Otro Mundo", "Juego de Yamcha",
-     "Tenkaichi Budokai"},
+static const char *const kTourNames[TOUR_COUNT] = {
+    "World Tournament", "Cell Games", "Other World Tournament", "Yamcha Game", "Tenkaichi Budokai",
 };
-static const char *const kTourLevels[2][TOUR_LEVELS] = {
-    {"Novice", "Advanced", "Expert"},
-    {"Principiante", "Avanzado", "Experto"},
+static const char *const kTourLevels[TOUR_LEVELS] = {
+    "Novice", "Advanced", "Expert",
 };
 
 static void tour_menu(void) {
@@ -847,32 +826,32 @@ static void tour_menu(void) {
     switch (m->level) {
     case TOURMENU_LV_TOP:
         if (cur >= 0 && cur < 2) {
-            say_item(tr(kTourTop[sEs][cur]), cur, 2, follow());
+            say_item(tr(kTourTop[cur]), cur, 2, follow());
         }
         break;
     case TOURMENU_LV_TOUR:
         if (cur < 0 || cur >= TOUR_COUNT) {
             break;
         }
-        n = snprintf(text, sizeof(text), "%s", tr(kTourNames[sEs][cur]));
+        n = snprintf(text, sizeof(text), "%s", tr(kTourNames[cur]));
         if (open && gSaveData != NULL && !(gSaveData->tourOpen & (1 << cur))) {
-            snprintf(text + n, sizeof(text) - n, "%s", tr(sEs ? ", cerrado" : ", closed"));
+            snprintf(text + n, sizeof(text) - n, "%s", tr(", closed"));
         } else if (open && gSaveData != NULL && m->info != NULL && gSaveData->tourLevel >= 0 &&
                    gSaveData->tourLevel < TOUR_LEVELS) {
-            snprintf(text + n, sizeof(text) - n, tr(sEs ? ", premios %d y %d" : ", prizes %d and %d"),
+            snprintf(text + n, sizeof(text) - n, tr(", prizes %d and %d"),
                      m->info[cur].prize[0][gSaveData->tourLevel], m->info[cur].prize[1][gSaveData->tourLevel]);
         }
         say_item(text, cur, TOUR_COUNT, follow());
         break;
     case TOURMENU_LV_LEVEL:
         if (cur >= 0 && cur < TOUR_LEVELS) {
-            snprintf(text, sizeof(text), tr(sEs ? "Dificultad: %s" : "Level: %s"), tr(kTourLevels[sEs][cur]));
+            snprintf(text, sizeof(text), tr("Level: %s"), tr(kTourLevels[cur]));
             say_item(text, open ? -1 : cur, TOUR_LEVELS, follow());
         }
         break;
     case TOURMENU_LV_NUM:
         if (cur >= 0 && cur < TOUR_ENTRY_MAX) {
-            snprintf(text, sizeof(text), tr(sEs ? "Participantes: %d" : "Entrants: %d"), cur + 1);
+            snprintf(text, sizeof(text), tr("Entrants: %d"), cur + 1);
             say_item(text, -1, 1, follow());
         }
         break;
@@ -909,13 +888,11 @@ extern A11yHistSel GAME_PTR gHistSel;
 /* Episodes of each saga: ModeMenu's itemMax (MD_SETUP in ModeMenu_Init). */
 static const int kHistEpisodes[HIST_SAGAS] = {3, 4, 7, 5, 16, 5, 4, 4};
 /* Provisional: the plates are pictures, not yet read from the disc. */
-static const char *const kHistMenu[2][2] = {
-    {"Choose a saga", "Level"},
-    {"Elegir saga", "Dificultad"},
+static const char *const kHistMenu[2] = {
+    "Choose a saga", "Level",
 };
-static const char *const kHistLevels[2][HIST_LEVELS] = {
-    {"Easy", "Normal", "Hard"},
-    {"Fácil", "Normal", "Difícil"},
+static const char *const kHistLevels[HIST_LEVELS] = {
+    "Easy", "Normal", "Hard",
 };
 
 static int bit_count(unsigned v) {
@@ -928,7 +905,7 @@ static int bit_count(unsigned v) {
 }
 
 static const char *hist_level(int level) {
-    return level >= 0 && level < HIST_LEVELS ? tr(kHistLevels[sEs][level]) : "";
+    return level >= 0 && level < HIST_LEVELS ? tr(kHistLevels[level]) : "";
 }
 
 static void hist_select(void) {
@@ -958,13 +935,13 @@ static void hist_select(void) {
         if (cur < 0 || cur > 1) {
             break;
         }
-        n = snprintf(text, sizeof(text), "%s", tr(kHistMenu[sEs][cur]));
+        n = snprintf(text, sizeof(text), "%s", tr(kHistMenu[cur]));
         if (cur == 1 && gSaveData != NULL) {
             snprintf(text + n, sizeof(text) - n, ": %s", hist_level(gSaveData->histLevel));
         }
         say_item(text, cur, 2, follow());
         if (!told) {
-            snprintf(text, sizeof(text), tr(sEs ? "Completado: %d por ciento" : "Completed: %d percent"), m->percent);
+            snprintf(text, sizeof(text), tr("Completed: %d percent"), m->percent);
             PortA11y_Say(text, 0);
             told = 1;
         }
@@ -978,27 +955,26 @@ static void hist_select(void) {
             real += m->items[i] != HISTSEL_ITEM_NONE;
         }
         if (id == HISTSEL_ITEM_NONE) {
-            say_item(tr(sEs ? "Vacío" : "Empty"), -1, 1, follow());
+            say_item(tr("Empty"), -1, 1, follow());
             break;
         }
         if (id == HISTSEL_ITEM_ENDING) {
-            say_item(tr(sEs ? "Ver el final" : "Watch the ending"), cur, real, follow());
+            say_item(tr("Watch the ending"), cur, real, follow());
             break;
         }
         n = snprintf(text, sizeof(text), "Saga %d", id + 1);
         if (gSaveData != NULL && id >= 0 && id < HIST_SAGAS) {
             if (gSaveData->slot[id].flags & 2) { /* MSLOT_NEW */
-                n += snprintf(text + n, sizeof(text) - n, tr(sEs ? ", nueva" : ", new"));
+                n += snprintf(text + n, sizeof(text) - n, tr(", new"));
             }
-            snprintf(text + n, sizeof(text) - n, tr(sEs ? ", %d de %d episodios superados"
-                                                        : ", %d of %d episodes cleared"),
+            snprintf(text + n, sizeof(text) - n, tr(", %d of %d episodes cleared"),
                      bit_count((unsigned)gSaveData->slot[id].val[1]), kHistEpisodes[id]);
         }
         say_item(text, cur, real, follow());
         break;
     default:
         if (cur >= 0 && cur < HIST_LEVELS) {
-            snprintf(text, sizeof(text), tr(sEs ? "Dificultad: %s" : "Level: %s"), hist_level(cur));
+            snprintf(text, sizeof(text), tr("Level: %s"), hist_level(cur));
             say_item(text, cur, HIST_LEVELS, follow());
         }
         break;
@@ -1056,14 +1032,14 @@ static void episode_list(void) {
     for (real = 0, i = 0; i < m->itemCount && i < 16; i++) {
         real += m->items[i] != m->itemMax;
     }
-    n = snprintf(text, sizeof(text), tr(sEs ? "Episodio %d" : "Episode %d"), id + 1);
+    n = snprintf(text, sizeof(text), tr("Episode %d"), id + 1);
     saga = gProgress != NULL ? ((int GAME_PTR)gProgress)[PROGRESS_SUB_MENU] : -1;
     if (gSaveData != NULL && saga >= 0 && saga < 9 && id >= 0 && id < 32) {
         if (gSaveData->slot[saga].val[2] & (1 << id)) {
-            n += snprintf(text + n, sizeof(text) - n, tr(sEs ? ", nuevo" : ", new"));
+            n += snprintf(text + n, sizeof(text) - n, trc("episode", ", new"));
         }
         if (gSaveData->slot[saga].val[1] & (1 << id)) {
-            snprintf(text + n, sizeof(text) - n, tr(sEs ? ", superado" : ", cleared"));
+            snprintf(text + n, sizeof(text) - n, trc("episode", ", cleared"));
         }
     }
     say_item(text, cur, real, follow());
@@ -1099,9 +1075,8 @@ extern A11yTrain GAME_PTR gTrain;
 #define TRAIN_CLASSES 3
 
 /* Provisional: they say what the plates lead to; the pictures are not yet read from the disc. */
-static const char *const kTrainTop[2][2] = {
-    {"Free practice, choose a character", "Lessons"},
-    {"Práctica libre, elegir personaje", "Lecciones"},
+static const char *const kTrainTop[2] = {
+    "Free practice, choose a character", "Lessons",
 };
 
 static void train_menu(void) {
@@ -1128,17 +1103,16 @@ static void train_menu(void) {
     switch (m->level) {
     case TRAIN_LV_TOP:
         if (cur >= 0 && cur < 2) {
-            say_item(tr(kTrainTop[sEs][cur]), cur, 2, follow());
+            say_item(tr(kTrainTop[cur]), cur, 2, follow());
         }
         break;
     case TRAIN_LV_CLASS:
         if (cur < 0 || cur >= TRAIN_CLASSES) {
             break;
         }
-        n = snprintf(text, sizeof(text), tr(sEs ? "Clase %d" : "Class %d"), cur + 1);
+        n = snprintf(text, sizeof(text), tr("Class %d"), cur + 1);
         if (gSaveData != NULL && m->count[cur] > 0 && m->count[cur] <= 15) {
-            snprintf(text + n, sizeof(text) - n, tr(sEs ? ", %d de %d lecciones superadas"
-                                                        : ", %d of %d lessons cleared"),
+            snprintf(text + n, sizeof(text) - n, tr(", %d of %d lessons cleared"),
                      bit_count((unsigned)gSaveData->trainClear[cur] & ((1U << m->count[cur]) - 1)), m->count[cur]);
         }
         say_item(text, cur, TRAIN_CLASSES, follow());
@@ -1148,10 +1122,10 @@ static void train_menu(void) {
             break;
         }
         if (!text_line(name, sizeof(name), m->text, m->nameLine[class][cur])) {
-            snprintf(name, sizeof(name), tr(sEs ? "Lección %d" : "Lesson %d"), cur + 1);
+            snprintf(name, sizeof(name), tr("Lesson %d"), cur + 1);
         }
         done = gSaveData != NULL && (gSaveData->trainClear[class] & (1 << cur));
-        snprintf(text, sizeof(text), "%s%s", name, done ? (tr(sEs ? ", superada" : ", cleared")) : "");
+        snprintf(text, sizeof(text), "%s%s", name, done ? tr(", cleared") : "");
         say_item(text, cur, m->count[class], follow());
         break;
     }
@@ -1196,11 +1170,11 @@ static void survival_select(void) {
     level = m->level;
     item = cur;
     if (!text_line(name, sizeof(name), m->text, SURV_NAME_LINE + cur)) {
-        snprintf(name, sizeof(name), tr(sEs ? "Recorrido %d" : "Course %d"), cur + 1);
+        snprintf(name, sizeof(name), tr("Course %d"), cur + 1);
     }
     if (m->level != 0) {
         snprintf(text, sizeof(text),
-                 tr(sEs ? "%s: X para empezar, triángulo para volver" : "%s: X to start, triangle to go back"), name);
+                 tr("%s: X to start, triangle to go back"), name);
         PortA11y_Say(text, follow());
         return;
     }
@@ -1210,8 +1184,7 @@ static void survival_select(void) {
     r = gSaveData != NULL ? &gSaveData->surv[cur] : NULL;
     if (r != NULL && r->defeated > 0) {
         snprintf(text + n, sizeof(text) - n,
-                 tr(sEs ? ". Récord: %d rivales derrotados, tiempo %d:%02d:%02d, puntaje %d"
-                        : ". Best: %d opponents beaten, time %d:%02d:%02d, score %d"),
+                 tr(". Best: %d opponents beaten, time %d:%02d:%02d, score %d"),
                  r->defeated, r->hours, r->minutes, r->seconds, r->score * 100);
     }
     PortA11y_Say(text, follow());
@@ -1248,9 +1221,8 @@ extern A11ySimTop GAME_PTR gSimTop;
 #define SIMTOP_PAGES 11
 
 /* Descriptive: the plates are pictures. */
-static const char *const kSimTopPlates[2][SIMTOP_PLATES] = {
-    {"Start", "Ranking", "How to play"},
-    {"Empezar", "Clasificación", "Cómo se juega"},
+static const char *const kSimTopPlates[SIMTOP_PLATES] = {
+    "Start", "Ranking", "How to play",
 };
 
 /* Row `row` of the ranking. Its portrait is the only thing that says who it was, so the character is left out. */
@@ -1258,11 +1230,11 @@ static void sim_rank_row(char *out, int cap, int row) {
     A11ySimRank GAME_PTR r = gSaveData != NULL ? &gSaveData->simRank[row] : NULL;
 
     if (r == NULL || r->score <= 0) {
-        snprintf(out, cap, tr(sEs ? "Puesto %d: sin registro" : "Rank %d: no record"), row + 1);
+        snprintf(out, cap, tr("Rank %d: no record"), row + 1);
         return;
     }
-    snprintf(out, cap, tr(sEs ? "Puesto %d: %d puntos%s" : "Rank %d: %d points%s"), row + 1, r->score * 100,
-             r->cleared ? (tr(sEs ? ", completado" : ", cleared")) : "");
+    snprintf(out, cap, tr("Rank %d: %d points%s"), row + 1, r->score * 100,
+             r->cleared ? trc("ranking", ", cleared") : "");
 }
 
 static void sim_top(void) {
@@ -1285,7 +1257,7 @@ static void sim_top(void) {
         }
         level = m->level;
         item = m->cur[0];
-        say_item(tr(kSimTopPlates[sEs][item]), item, SIMTOP_PLATES, follow());
+        say_item(tr(kSimTopPlates[item]), item, SIMTOP_PLATES, follow());
         break;
     case SIMTOP_LV_RANKING:
         if (m->top < 0 || m->top > SIMTOP_RANKS - SIMTOP_SHOWN || (level == SIMTOP_LV_RANKING && m->top == top)) {
@@ -1317,7 +1289,7 @@ static void sim_top(void) {
         level = m->level;
         page = m->page;
         n = text_line(text, sizeof(text) - 40, m->text, page);
-        snprintf(text + n, sizeof(text) - n, tr(sEs ? "%sPágina %d de %d" : "%sPage %d of %d"), n > 0 ? ". " : "",
+        snprintf(text + n, sizeof(text) - n, tr("%sPage %d of %d"), n > 0 ? ". " : "",
                  page + 1, SIMTOP_PAGES);
         PortA11y_Say(text, follow());
         break;
@@ -1336,9 +1308,9 @@ static void chara_name(char *out, int cap, uint32_t GAME_PTR nameText, uint32_t 
 
     if (text_line(out, cap, nameText, chara) == 0) {
         if (chara >= MCHR_RANDOM && chara < MCHR_RANDOM + 4) {
-            snprintf(out, cap, "%s", tr(kCellMarks[sEs][chara - MCHR_RANDOM]));
+            snprintf(out, cap, "%s", tr(kCellMarks[chara - MCHR_RANDOM]));
         } else {
-            snprintf(out, cap, tr(sEs ? "Personaje %d" : "Character %d"), chara);
+            snprintf(out, cap, tr("Character %d"), chara);
         }
         return;
     }
@@ -1373,7 +1345,7 @@ static void cached_name(char *out, int cap, int chara) {
     if (chara >= 0 && chara < MCHR_RANDOM && sNameCache[chara][0] != '\0') {
         snprintf(out, cap, "%s", sNameCache[chara]);
     } else {
-        snprintf(out, cap, tr(sEs ? "Personaje %d" : "Character %d"), chara);
+        snprintf(out, cap, tr("Character %d"), chara);
     }
 }
 
@@ -1432,14 +1404,14 @@ static void brk_entrant(char *out, int cap, A11yBracket GAME_PTR b, int e) {
     size_t len;
 
     if (e < 0 || e >= BRK_ENTRANTS) {
-        snprintf(out, cap, "%s", tr(sEs ? "nadie" : "nobody"));
+        snprintf(out, cap, "%s", tr("nobody"));
         return;
     }
     p = &b->ent[e];
     chara_name(out, cap, b->nameText, b->formText, (p->flags & TOUR_ENT_REC) ? BRK_REC_NAME_LINE : p->chara);
     if (p->flags & TOUR_ENT_PLAYER) {
         len = strlen(out);
-        snprintf(out + len, cap - len, tr(sEs ? " (jugador %d)" : " (player %d)"), p->player + 1);
+        snprintf(out + len, cap - len, tr(" (player %d)"), p->player + 1);
     }
 }
 
@@ -1461,7 +1433,7 @@ static void bracket(void) {
     mt = &b->m[b->match];
     if ((b->flags & BRK_MOVE_B) && !moving && (b->winSide == 0 || b->winSide == 1)) {
         brk_entrant(left, sizeof(left), b, mt->ent[b->winSide]);
-        snprintf(text, sizeof(text), tr(sEs ? "Gana %s" : "%s wins"), left);
+        snprintf(text, sizeof(text), tr("%s wins"), left);
         PortA11y_Say(text, A11Y_INTERRUPT);
     }
     moving = (b->flags & BRK_MOVE_B) != 0;
@@ -1479,10 +1451,9 @@ static void bracket(void) {
     if (mt->flags & TOUR_MATCH_FINAL) {
         n = snprintf(text, sizeof(text), "%s", "Final: ");
     } else {
-        n = snprintf(text, sizeof(text), tr(sEs ? "Ronda %d: " : "Round %d: "), b->round + 1);
+        n = snprintf(text, sizeof(text), tr("Round %d: "), b->round + 1);
     }
-    snprintf(text + n, sizeof(text) - n, tr(sEs ? "%s contra %s. X para seguir"
-                                                : "%s versus %s. X to go on"), left, right);
+    snprintf(text + n, sizeof(text) - n, tr("%s versus %s. X to go on"), left, right);
     PortA11y_Say(text, 0);
 }
 
@@ -1508,7 +1479,7 @@ static void char_side(A11yCharSel GAME_PTR cs, int i) {
         pos = s->col;
         char_name(what, sizeof(what), cs, s->chara);
         if (newRow && cs->rows[i] > 1) {
-            snprintf(what + strlen(what), sizeof(what) - strlen(what), tr(sEs ? ", fila %d de %d" : ", row %d of %d"),
+            snprintf(what + strlen(what), sizeof(what) - strlen(what), tr(", row %d of %d"),
                      s->row + 1, cs->rows[i]);
         }
         break;
@@ -1525,13 +1496,13 @@ static void char_side(A11yCharSel GAME_PTR cs, int i) {
         pos = s->customPlate;
         count = cs->customRows[i];
         if (pos == 0) {
-            snprintf(what, sizeof(what), "%s", tr(sEs ? "Sin objetos" : "No items"));
+            snprintf(what, sizeof(what), "%s", tr("No items"));
         } else {
-            snprintf(what, sizeof(what), tr(sEs ? "Juego de objetos %d" : "Item set %d"), pos);
+            snprintf(what, sizeof(what), tr("Item set %d"), pos);
         }
         break;
     case CHARSEL_ST_ITEMS:
-        snprintf(what, sizeof(what), "%s", tr(sEs ? "Panel de objetos" : "Item panel"));
+        snprintf(what, sizeof(what), "%s", tr("Item panel"));
         break;
     case CHARSEL_ST_ITEMINFO: /* the item's description window over the panel */
         sSide[i].state = s->state;
@@ -1539,7 +1510,7 @@ static void char_side(A11yCharSel GAME_PTR cs, int i) {
     case CHARSEL_ST_COLOR:
         pos = s->colorPlate;
         count = cs->colorCount[i];
-        snprintf(what, sizeof(what), tr(sEs ? "Traje %d" : "Costume %d"), pos + 1);
+        snprintf(what, sizeof(what), tr("Costume %d"), pos + 1);
         break;
     case CHARSEL_ST_CUSTOM:
         pos = s->customCol + s->customRow * MCHR_COLS;
@@ -1547,7 +1518,7 @@ static void char_side(A11yCharSel GAME_PTR cs, int i) {
         char_name(what, sizeof(what), cs, s->chara);
         break;
     case CHARSEL_ST_DONE:
-        snprintf(what, sizeof(what), "%s", tr(sEs ? "Listo" : "Ready"));
+        snprintf(what, sizeof(what), "%s", tr("Ready"));
         break;
     }
     if (s->state == sSide[i].state && pos == sSide[i].pos && s->row == sSide[i].row && s->chara == sSide[i].chara) {
@@ -1560,7 +1531,7 @@ static void char_side(A11yCharSel GAME_PTR cs, int i) {
     add_position(what, sizeof(what), pos, count);
     flags = follow();
     if (i != sSideSaid) { /* the other side spoke last: say whose this is, after it */
-        snprintf(text, sizeof(text), tr(sEs ? "Jugador %d: %s" : "Player %d: %s"), i + 1, what);
+        snprintf(text, sizeof(text), tr("Player %d: %s"), i + 1, what);
         if (sSideSaid != -1) {
             flags = 0;
         }
@@ -1574,12 +1545,12 @@ static void char_side(A11yCharSel GAME_PTR cs, int i) {
 /* A stage's name by id: the disc's, then the ones the port adds (plat_stages.h), then the grid's markers. */
 static const char *stage_name(int id) {
     if (id >= 0 && id <= CHARSEL_STAGE_RANDOM) {
-        return tr(kStageNames[sEs][id]);
+        return tr(kStageNames[id]);
     }
     if (id >= PORT_STAGE_FIRST && id - PORT_STAGE_FIRST < gPortExtraStageCount && id - PORT_STAGE_FIRST < PORT_STAGE_MAX) {
         return gPortStageNames[id - PORT_STAGE_FIRST];
     }
-    return tr(sEs ? "Bloqueado" : "Locked"); /* STGGRID_ID_LOCKED; the empty cells are not reached */
+    return tr("Locked"); /* STGGRID_ID_LOCKED; the empty cells are not reached */
 }
 
 /* A song's name by music-list value: the disc's, "random", the ones the port adds (plat_songs.h), else locked. */
@@ -1588,12 +1559,12 @@ static const char *song_name(int v) {
         return kSongNames[v];
     }
     if (v == CHARSEL_BGM_RANDOM) {
-        return tr(sEs ? "Aleatoria" : "Random");
+        return trc("song", "Random");
     }
     if (v >= PORT_SONG_FIRST_OFFSET && v - PORT_SONG_FIRST_OFFSET < gPortSongCount && v - PORT_SONG_FIRST_OFFSET < PORT_SONG_MAX) {
         return gPortSongNames[v - PORT_SONG_FIRST_OFFSET];
     }
-    return tr(sEs ? "Bloqueada" : "Locked"); /* 0x19, and the disc's four "********" */
+    return trc("song", "Locked"); /* 0x19, and the disc's four "********" */
 }
 
 /* The stage and music choice: the stage under the cursor, the music entry with the song that plays, and in the
@@ -1615,17 +1586,17 @@ static void stage_pick(A11yCharStage GAME_PTR st, int GAME_PTR bgmIds, int bgmCo
         return;
     }
     if (!open) {
-        heading(tr(sEs ? "Escenario y música" : "Stage and music"));
+        heading(tr("Stage and music"));
         open = 1;
     }
     if (st->state == stStage && st->col == CHARSEL_STAGE_BGM_COL) {
         v = st->bgmPlaying >= 0 && st->bgmPlaying < bgmCount ? bgmIds[st->bgmPlaying] : -1;
-        snprintf(text, sizeof(text), tr(sEs ? "Música: %s" : "Music: %s"), song_name(v));
+        snprintf(text, sizeof(text), tr("Music: %s"), song_name(v));
     } else if (st->state == stStage) {
         v = st->stage;
         snprintf(text, sizeof(text), "%s", stage_name(v));
         if ((st->row != row || state != stStage) && rows > 1) {
-            snprintf(text + strlen(text), sizeof(text) - strlen(text), tr(sEs ? ", fila %d de %d" : ", row %d of %d"),
+            snprintf(text + strlen(text), sizeof(text) - strlen(text), tr(", row %d of %d"),
                      st->row + 1, rows);
         }
     } else if (st->state == stBgm && st->bgm >= 0 && st->bgm < bgmCount) {
@@ -1660,7 +1631,7 @@ static void char_select(void) {
         return;
     }
     if (!open) {
-        heading(tr(sEs ? "Selección de personajes" : "Character select"));
+        heading(tr("Character select"));
         name_cache_fill(cs->nameText, cs->formText);
         open = 1;
         stage = 0;
@@ -1719,8 +1690,7 @@ static void fighter_pick(const A11yPick *p, int entrant, int entrants) {
         chara_name(what, sizeof(what), p->nameText, p->formText, p->image);
         if ((p->step != sPick.step || e->row != sPick.row) && p->rows > 1) {
             len = strlen(what);
-            snprintf(what + len, sizeof(what) - len, tr(sEs ? ", fila %d de %d"
-                                                            : ", row %d of %d"), e->row + 1, p->rows);
+            snprintf(what + len, sizeof(what) - len, tr(", row %d of %d"), e->row + 1, p->rows);
         }
         break;
     case PICK_STEP_FORM:
@@ -1736,18 +1706,18 @@ static void fighter_pick(const A11yPick *p, int entrant, int entrants) {
         pos = e->custom;
         count = p->customCount;
         if (pos == 0) {
-            snprintf(what, sizeof(what), "%s", tr(sEs ? "Sin objetos" : "No items"));
+            snprintf(what, sizeof(what), "%s", tr("No items"));
         } else {
-            snprintf(what, sizeof(what), tr(sEs ? "Juego de objetos %d" : "Item set %d"), pos);
+            snprintf(what, sizeof(what), tr("Item set %d"), pos);
         }
         break;
     case PICK_STEP_PANEL:
-        snprintf(what, sizeof(what), "%s", tr(sEs ? "Panel de objetos" : "Item panel"));
+        snprintf(what, sizeof(what), "%s", tr("Item panel"));
         break;
     case PICK_STEP_COLOR:
         pos = e->costume;
         count = p->colorCount;
-        snprintf(what, sizeof(what), tr(sEs ? "Traje %d" : "Costume %d"), pos + 1);
+        snprintf(what, sizeof(what), tr("Costume %d"), pos + 1);
         break;
     default: /* the item's help window over the panel (its text is drawn: shown_text) */
         sPick.step = p->step;
@@ -1759,8 +1729,7 @@ static void fighter_pick(const A11yPick *p, int entrant, int entrants) {
     }
     add_position(what, sizeof(what), pos, count);
     if (entrant != sPick.entrant && entrants > 1) {
-        snprintf(text, sizeof(text), tr(sEs ? "Participante %d de %d: %s"
-                                            : "Entrant %d of %d: %s"), entrant + 1, entrants,
+        snprintf(text, sizeof(text), tr("Entrant %d of %d: %s"), entrant + 1, entrants,
                  what);
     } else {
         snprintf(text, sizeof(text), "%s", what);
@@ -1774,8 +1743,8 @@ static void fighter_pick(const A11yPick *p, int entrant, int entrants) {
 }
 
 /* A one-fighter select opens: its name, and nothing told yet. */
-static void pick_open(const char *en, const char *es) {
-    heading(sEs ? es : tr(en));
+static void pick_open(const char *name) {
+    heading(tr(name));
     sPick.step = sPick.pos = sPick.row = sPick.image = sPick.entrant = -1;
 }
 
@@ -1793,7 +1762,7 @@ static void solo_select(void) {
         return;
     }
     if (!open) {
-        pick_open("Choose your fighter", "Elige a tu luchador");
+        pick_open("Choose your fighter");
         open = 1;
     }
     p.nameText = s->nameText;
@@ -1826,7 +1795,7 @@ static void entry_select(void) {
         return;
     }
     if (!open) {
-        pick_open("Tournament entry", "Inscripción al torneo");
+        pick_open("Tournament entry");
         open = 1;
     }
     p.nameText = s->nameText;
@@ -1952,7 +1921,7 @@ static void team_side(A11yTeamSel GAME_PTR ts, int i) {
         chara_name(what, sizeof(what), ts->nameText, ts->formText, chara);
         if (newRow && ts->rows[i] > 1) {
             len = strlen(what);
-            snprintf(what + len, sizeof(what) - len, tr(sEs ? ", fila %d de %d" : ", row %d of %d"), mb->row + 1,
+            snprintf(what + len, sizeof(what) - len, tr(", row %d of %d"), mb->row + 1,
                      ts->rows[i]);
         }
         break;
@@ -1969,13 +1938,13 @@ static void team_side(A11yTeamSel GAME_PTR ts, int i) {
         pos = mb->plate;
         count = ts->plateCount[i];
         if (pos == 0) {
-            snprintf(what, sizeof(what), "%s", tr(sEs ? "Sin objetos" : "No items"));
+            snprintf(what, sizeof(what), "%s", tr("No items"));
         } else {
-            snprintf(what, sizeof(what), tr(sEs ? "Juego de objetos %d" : "Item set %d"), pos);
+            snprintf(what, sizeof(what), tr("Item set %d"), pos);
         }
         break;
     case TEAMSEL_ST_PANEL:
-        snprintf(what, sizeof(what), "%s", tr(sEs ? "Panel de objetos" : "Item panel"));
+        snprintf(what, sizeof(what), "%s", tr("Item panel"));
         break;
     case TEAMSEL_ST_PANEL_HELP: /* the item's description window over the panel */
         sSide[i].state = s->state;
@@ -1983,22 +1952,22 @@ static void team_side(A11yTeamSel GAME_PTR ts, int i) {
     case TEAMSEL_ST_COLOR:
         pos = mb->color;
         count = ts->colorCount[i];
-        snprintf(what, sizeof(what), tr(sEs ? "Traje %d" : "Costume %d"), pos + 1);
+        snprintf(what, sizeof(what), tr("Costume %d"), pos + 1);
         break;
     case TEAMSEL_ST_TEAM:
         chara = -1;
         if (s->cur == TS_CUR_MENU) {
-            snprintf(what, sizeof(what), "%s", tr(sEs ? "Confirmar el equipo" : "Confirm the team"));
+            snprintf(what, sizeof(what), "%s", tr("Confirm the team"));
             pos = -1;
         } else {
             pos = s->cur;
             count = s->memberCount < TS_MEMBERS ? s->memberCount + 1 : TS_MEMBERS;
             if (s->cur < s->memberCount && mb->chara >= 0) {
                 chara = mb->chara;
-                len = (size_t)snprintf(what, sizeof(what), tr(sEs ? "Miembro %d: " : "Member %d: "), s->cur + 1);
+                len = (size_t)snprintf(what, sizeof(what), tr("Member %d: "), s->cur + 1);
                 chara_name(what + len, sizeof(what) - len, ts->nameText, ts->formText, chara);
             } else {
-                snprintf(what, sizeof(what), tr(sEs ? "Miembro %d: vacío" : "Member %d: empty"), s->cur + 1);
+                snprintf(what, sizeof(what), tr("Member %d: empty"), s->cur + 1);
             }
         }
         break;
@@ -2008,7 +1977,7 @@ static void team_side(A11yTeamSel GAME_PTR ts, int i) {
         chara_name(what, sizeof(what), ts->nameText, ts->formText, chara);
         break;
     case TEAMSEL_ST_DONE:
-        snprintf(what, sizeof(what), "%s", tr(sEs ? "Equipo listo" : "Team ready"));
+        snprintf(what, sizeof(what), "%s", tr("Team ready"));
         break;
     }
     if (s->state == sSide[i].state && pos == sSide[i].pos && mb->row == sSide[i].row && chara == sSide[i].chara &&
@@ -2018,12 +1987,12 @@ static void team_side(A11yTeamSel GAME_PTR ts, int i) {
     add_position(what, sizeof(what), pos, count);
     if (s->state == TEAMSEL_ST_TEAM && sSide[i].state != TEAMSEL_ST_TEAM && ts->battleType == TEAMSEL_DP) {
         len = strlen(what);
-        snprintf(what + len, sizeof(what) - len, tr(sEs ? ". DP del equipo: %d de %d" : ". Team DP: %d of %d"), s->cost,
+        snprintf(what + len, sizeof(what) - len, tr(". Team DP: %d of %d"), s->cost,
                  ts->dpMax);
     }
     if (s->state != TEAMSEL_ST_TEAM && s->cur != cur[i] && s->cur < TS_MEMBERS) {
         /* choosing another member: say which */
-        snprintf(text, sizeof(text), tr(sEs ? "Miembro %d: %s" : "Member %d: %s"), s->cur + 1, what);
+        snprintf(text, sizeof(text), tr("Member %d: %s"), s->cur + 1, what);
         snprintf(what, sizeof(what), "%s", text);
     }
     sSide[i].state = s->state;
@@ -2033,7 +2002,7 @@ static void team_side(A11yTeamSel GAME_PTR ts, int i) {
     cur[i] = s->cur;
     flags = follow();
     if (i != sSideSaid) { /* the other side spoke last: say whose this is, after it */
-        snprintf(text, sizeof(text), tr(sEs ? "Equipo %d: %s" : "Team %d: %s"), i + 1, what);
+        snprintf(text, sizeof(text), tr("Team %d: %s"), i + 1, what);
         if (sSideSaid != -1) {
             flags = 0;
         }
@@ -2059,7 +2028,7 @@ static void team_select(void) {
         return;
     }
     if (!open) {
-        heading(tr(sEs ? "Selección de equipos" : "Team select"));
+        heading(tr("Team select"));
         name_cache_fill(ts->nameText, ts->formText);
         open = 1;
         stage = 0;
@@ -2150,8 +2119,8 @@ static void replay_menu(void) {
     }
     if (!open) {
         heading(prog->replayFlags & ZAPROG_REPLAY_SAVE
-                    ? (tr(sEs ? "Guardar datos de repetición" : "Save replay data"))
-                    : (tr(sEs ? "Ver datos de repetición" : "View replay data")));
+                    ? tr("Save replay data")
+                    : tr("View replay data"));
         open = 1;
         cursor = -1;
     }
@@ -2164,10 +2133,10 @@ static void replay_menu(void) {
     }
     cursor = r->cursor;
     slot = &prog->replay[cursor];
-    len = snprintf(text, sizeof(text), tr(sEs ? "Repetición %d de %d: " : "Replay %d of %d: "), cursor + 1,
+    len = snprintf(text, sizeof(text), tr("Replay %d of %d: "), cursor + 1,
                    REPLAY_SLOTS);
     if (!(slot->flags & 1)) {
-        snprintf(text + len, sizeof(text) - len, "%s", tr(sEs ? "vacía" : "empty"));
+        snprintf(text + len, sizeof(text) - len, "%s", tr("empty"));
     } else {
         for (team = 0; team < 2; team++) {
             n = 0;
@@ -2178,7 +2147,7 @@ static void replay_menu(void) {
                 }
                 cached_name(name, sizeof(name), chara);
                 len += snprintf(text + len, sizeof(text) - len, "%s%s",
-                                n > 0 ? ", " : team > 0 ? (tr(sEs ? " contra " : " versus ")) : "", name);
+                                n > 0 ? ", " : team > 0 ? tr(" versus ") : "", name);
                 n++;
                 if (len >= (int)sizeof(text)) {
                     len = (int)sizeof(text) - 1;
@@ -2229,9 +2198,8 @@ extern A11yCharRef GAME_PTR gCharRef; /* NULL outside the screen */
 #define CHARREF_ST_VIEW_WAIT 8
 
 /* The items of a character's page: pictures, named here (menu_h_b.c, CharRef_StateDetails). */
-static const char *const kCharRefItems[2][CHARREF_ITEMS] = {
-    {"Profile", "Voice", "Chi-Chi's comment", "Model"},
-    {"Perfil", "Voz", "Comentario de Milk", "Modelo"},
+static const char *const kCharRefItems[CHARREF_ITEMS] = {
+    "Profile", "Voice", "Chi-Chi's comment", "Model",
 };
 
 /* Says a long text in two pieces if it does not fit one message, cut at a sentence or a word. */
@@ -2276,7 +2244,7 @@ static void char_ref(void) {
         return; /* the intro, or leaving */
     }
     if (!open) {
-        heading(tr(sEs ? "Referencia de personajes" : "Character reference"));
+        heading(tr("Character reference"));
         open = 1;
         state = cursor = item = costume = -1;
     }
@@ -2302,7 +2270,7 @@ static void char_ref(void) {
             snprintf(text, sizeof(text), "%s. ", name);
         }
         len = (int)strlen(text);
-        snprintf(text + len, sizeof(text) - len, "%s", tr(kCharRefItems[sEs][c->menuCursor]));
+        snprintf(text + len, sizeof(text) - len, "%s", tr(kCharRefItems[c->menuCursor]));
         add_position(text, sizeof(text), c->menuCursor, CHARREF_ITEMS);
         PortA11y_Say(text, follow());
         break;
@@ -2314,23 +2282,21 @@ static void char_ref(void) {
     case CHARREF_ST_VOICE:
         if (state != CHARREF_ST_VOICE) {
             len = text_line(text, sizeof(text) - 80, c->text[2], chara * 2);
-            snprintf(text + len, sizeof(text) - len, tr(sEs ? "%sX reproduce una frase, triángulo vuelve"
-                                                            : "%sX plays a line, triangle goes back"),
+            snprintf(text + len, sizeof(text) - len, tr("%sX plays a line, triangle goes back"),
                      len > 0 ? ". " : "");
             PortA11y_Say(text, follow());
         }
         break;
     case CHARREF_ST_COSTUME:
         if (state != CHARREF_ST_COSTUME || costume != c->costume) {
-            snprintf(text, sizeof(text), tr(sEs ? "Traje %d. X muestra el modelo" : "Costume %d. X shows the model"),
+            snprintf(text, sizeof(text), tr("Costume %d. X shows the model"),
                      c->costume + 1);
             PortA11y_Say(text, follow());
         }
         break;
     case CHARREF_ST_VIEW:
         if (state != CHARREF_ST_VIEW) {
-            PortA11y_Say(tr(sEs ? "Modelo en pantalla. Triángulo vuelve"
-                                : "Model shown. Triangle goes back"), follow());
+            PortA11y_Say(tr("Model shown. Triangle goes back"), follow());
         }
         break;
     }
@@ -2423,8 +2389,8 @@ extern A11yShop GAME_PTR gShop; /* NULL outside the screen */
 #define WITEM_HIDDEN 5
 #define WITEM_SOLD 0x20
 
-static const char *const kShopPlates[2][2] = {{"Buy", "Collection"}, {"Comprar", "Colección"}};
-static const char *const kShopConfirm[2][3] = {{"Buy", "Cancel", "Details"}, {"Comprar", "Cancelar", "Ver detalles"}};
+static const char *const kShopPlates[2] = {"Buy", "Collection"};
+static const char *const kShopConfirm[3] = {"Buy", "Cancel", "Details"};
 
 /* The shop: the plate, then in a list the tab, each item with its price or whether it is owned, the confirmation
    rows, what was bought and the details page. The money and the collection when the menu level comes back. */
@@ -2444,7 +2410,7 @@ static void shop(void) {
         return; /* a scripted step: the guide is talking */
     }
     if (!open) {
-        heading(tr(sEs ? "Tienda de objetos" : "Item shop"));
+        heading(tr("Item shop"));
         open = 1;
         level = plate = tab = cur = row = -1;
     }
@@ -2453,13 +2419,12 @@ static void shop(void) {
         if (s->cursor[0] < 0 || s->cursor[0] > 1 || (level == SHOP_LV_MENU && plate == s->cursor[0])) {
             break;
         }
-        snprintf(text, sizeof(text), "%s", tr(kShopPlates[sEs][s->cursor[0]]));
+        snprintf(text, sizeof(text), "%s", tr(kShopPlates[s->cursor[0]]));
         add_position(text, sizeof(text), s->cursor[0], 2);
         if (level != SHOP_LV_MENU) {
             len = (int)strlen(text);
             snprintf(text + len, sizeof(text) - len,
-                     tr(sEs ? ". Dinero: %d zeni. Colección: %d de %d, %d por ciento"
-                            : ". Money: %d zeni. Collection: %d of %d, %d percent"),
+                     tr(". Money: %d zeni. Collection: %d of %d, %d percent"),
                      gSaveData->money, s->owned, s->total, s->percent);
         }
         PortA11y_Say(text, follow());
@@ -2483,22 +2448,22 @@ static void shop(void) {
         owned = gSaveData->item[item] & SAVE_ITEM_OWNED;
         text[0] = '\0';
         if (level != s->level || tab != l->tab) {
-            snprintf(text, sizeof(text), tr(sEs ? "Pestaña %d de %d%s. " : "Tab %d of %d%s. "), l->tab + 1, SHOP_TABS,
-                     l->tab == 0 ? (tr(sEs ? ", todos" : ", all")) : "");
+            snprintf(text, sizeof(text), tr("Tab %d of %d%s. "), l->tab + 1, SHOP_TABS,
+                     l->tab == 0 ? tr(", all") : "");
         }
         len = (int)strlen(text);
         if (k == 1 && !owned) {
-            snprintf(text + len, sizeof(text) - len, "%s", tr(sEs ? "No obtenido" : "Not owned"));
+            snprintf(text + len, sizeof(text) - len, "%s", tr("Not owned"));
         } else {
             if (text_line(name, sizeof(name), s->itemText, item) == 0) {
-                snprintf(name, sizeof(name), tr(sEs ? "Objeto %d" : "Item %d"), item + 1);
+                snprintf(name, sizeof(name), tr("Item %d"), item + 1);
             }
             if (k == 1) {
                 snprintf(text + len, sizeof(text) - len, "%s", name);
             } else if (owned) {
-                snprintf(text + len, sizeof(text) - len, tr(sEs ? "%s, ya lo tienes" : "%s, owned"), name);
+                snprintf(text + len, sizeof(text) - len, tr("%s, owned"), name);
             } else if (!(it->flags & WITEM_HIDDEN) && (it->flags & WITEM_SOLD)) {
-                snprintf(text + len, sizeof(text) - len, tr(sEs ? "%s, %d zeni" : "%s, %d zeni"), name, it->price);
+                snprintf(text + len, sizeof(text) - len, tr("%s, %d zeni"), name, it->price);
             } else {
                 snprintf(text + len, sizeof(text) - len, "%s", name);
             }
@@ -2519,13 +2484,12 @@ static void shop(void) {
                        ? l->ids[l->tab][l->cur[l->tab]]
                        : -1;
             if (item >= 0 && item < SAVE_ITEMS && text_line(name, sizeof(name), s->itemText, item) > 0) {
-                snprintf(text, sizeof(text), tr(sEs ? "¿Comprar %s por %d zeni? Tienes %d. "
-                                                    : "Buy %s for %d zeni? You have %d. "),
+                snprintf(text, sizeof(text), tr("Buy %s for %d zeni? You have %d. "),
                          name, s->items[item].price, gSaveData->money);
             }
         }
         len = (int)strlen(text);
-        snprintf(text + len, sizeof(text) - len, "%s", tr(kShopConfirm[sEs][s->cursor[4]]));
+        snprintf(text + len, sizeof(text) - len, "%s", tr(kShopConfirm[s->cursor[4]]));
         add_position(text, sizeof(text), s->cursor[4], 3);
         PortA11y_Say(text, follow());
         row = s->cursor[4];
@@ -2533,10 +2497,9 @@ static void shop(void) {
     case SHOP_LV_BOUGHT:
         if (level != SHOP_LV_BOUGHT && s->item >= 0 && s->item < SAVE_ITEMS) {
             if (text_line(name, sizeof(name), s->itemText, s->item) == 0) {
-                snprintf(name, sizeof(name), tr(sEs ? "Objeto %d" : "Item %d"), s->item + 1);
+                snprintf(name, sizeof(name), tr("Item %d"), s->item + 1);
             }
-            snprintf(text, sizeof(text), tr(sEs ? "Compraste %s. Te quedan %d zeni. X para seguir"
-                                                : "Bought %s. %d zeni left. X to go on"),
+            snprintf(text, sizeof(text), tr("Bought %s. %d zeni left. X to go on"),
                      name, gSaveData->money);
             PortA11y_Say(text, follow());
         }
@@ -2558,14 +2521,14 @@ static void shop(void) {
 static const char *duel_value(int row, int v) {
     switch (row) {
     case 0:
-        return v >= 0 && v < 5 ? tr(kDuelTime[sEs][v]) : NULL;
+        return v >= 0 && v < 5 ? tr(kDuelTime[v]) : NULL;
     case 1:
-        return v >= 0 && v < 5 ? tr(kDuelCpu[sEs][v]) : NULL;
+        return v >= 0 && v < 5 ? tr(kDuelCpu[v]) : NULL;
     case 2:
-        return v >= 0 && v < 7 ? tr(kDuelReferee[sEs][v]) : NULL;
+        return v >= 0 && v < 7 ? tr(kDuelReferee[v]) : NULL;
     case 3: /* one value per side */
     case 4:
-        return (v & ~1) == 0 ? tr(kYesNo[sEs][v]) : NULL;
+        return (v & ~1) == 0 ? tr(kYesNo[v]) : NULL;
     }
     return NULL;
 }
@@ -2575,7 +2538,7 @@ static void duel_setting(char *out, int cap, int row) {
     const char *a, *b;
     size_t len;
 
-    snprintf(out, cap, "%s", tr(kDuelSettings[sEs][row]));
+    snprintf(out, cap, "%s", tr(kDuelSettings[row]));
     len = strlen(out);
     if (gSaveData == NULL || row >= 5) {
         return;
@@ -2584,7 +2547,7 @@ static void duel_setting(char *out, int cap, int row) {
         a = duel_value(3, gSaveData->rule[3]);
         b = duel_value(3, gSaveData->rule[4]);
         if (a != NULL && b != NULL) {
-            snprintf(out + len, cap - len, tr(sEs ? ": jugador 1 %s, jugador 2 %s" : ": 1P %s, 2P %s"), a, b);
+            snprintf(out + len, cap - len, tr(": 1P %s, 2P %s"), a, b);
         }
     } else if ((a = duel_value(row, gSaveData->rule[row == 4 ? 5 : row])) != NULL) {
         snprintf(out + len, cap - len, ": %s", a);
@@ -2615,13 +2578,13 @@ static void duel_menu(void) {
         return;
     }
     if (!open) {
-        heading(tr(sEs ? "Menú versus" : "Duel"));
+        heading(trc("screen", "Duel"));
         open = 1;
         level = lv;
         said[0] = '\0';
     }
     if (lv == DUEL_LEVEL_SETTING && level == DUEL_LEVEL_TOP) {
-        heading(tr(kDuelTop[sEs][3]));
+        heading(tr(kDuelTop[3]));
     }
     level = lv;
     text[0] = '\0';
@@ -2629,15 +2592,15 @@ static void duel_menu(void) {
     switch (lv) {
     case DUEL_LEVEL_TOP:
         count = 4;
-        label = cur >= 0 && cur < count ? tr(kDuelTop[sEs][cur]) : NULL;
+        label = cur >= 0 && cur < count ? tr(kDuelTop[cur]) : NULL;
         break;
     case DUEL_LEVEL_TYPE:
         count = 3;
-        label = cur >= 0 && cur < count ? tr(kDuelType[sEs][cur]) : NULL;
+        label = cur >= 0 && cur < count ? tr(kDuelType[cur]) : NULL;
         break;
     case DUEL_LEVEL_DP:
         count = 3;
-        label = cur >= 0 && cur < count ? tr(kDuelDp[sEs][cur]) : NULL;
+        label = cur >= 0 && cur < count ? tr(kDuelDp[cur]) : NULL;
         break;
     case DUEL_LEVEL_SETTING:
         count = DUEL_SETTINGS;
@@ -2653,7 +2616,7 @@ static void duel_menu(void) {
         count = m->valueCount;
         label = duel_value(m->sel[DUEL_LEVEL_SETTING], cur);
         if (label != NULL && m->sel[DUEL_LEVEL_SETTING] == 3) {
-            snprintf(text, sizeof(text), tr(sEs ? "Jugador %d: %s" : "%dP: %s"), m->column + 1, label);
+            snprintf(text, sizeof(text), tr("%dP: %s"), m->column + 1, label);
         }
         break;
     }
@@ -2719,22 +2682,18 @@ extern A11yOption GAME_PTR gOption; /* NULL outside the screen */
 #define OPT_ITEMS 20
 
 /* By OPT_ number; NULL: not a row. The three pages start at 7, 12 and 17. */
-static const char *const kOptionRows[2][OPT_ITEMS] = {
-    {NULL, "Save / Load", "Screen", "Sound", "Controller", "Exit", NULL, "Screen type", "Screen setting 2",
-     "Screen position", "Default", NULL, "Stereo / Mono", "Volume", "Sound test", "Voices", "Default",
-     "Button setup", "Vibration", "Default"},
-    {NULL, "Guardar y cargar", "Pantalla", "Sonido", "Control", "Salir", NULL, "Tipo de pantalla",
-     "Ajuste de pantalla 2", "Posición de la pantalla", "Restablecer", NULL, "Estéreo o mono", "Volumen",
-     "Prueba de sonido", "Voces", "Restablecer", "Asignación de botones", "Vibración", "Restablecer"},
+static const char *const kOptionRows[OPT_ITEMS] = {
+    NULL, "Save / Load", "Screen", "Sound", "Controller", "Exit", NULL, "Screen type", "Screen setting 2",
+    "Screen position", "Default", NULL, "Stereo / Mono", "Volume", "Sound test", "Voices", "Default",
+    "Button setup", "Vibration", "Default",
 };
-static const char *const kOptionSave[2][2] = {{"Save", "Load"}, {"Guardar", "Cargar"}};
-static const char *const kOptionScreenType[2][3] = {{"Type 1", "Type 2", "Type 3"}, {"Tipo 1", "Tipo 2", "Tipo 3"}};
-static const char *const kOptionScreen2[2][2] = {{"Choice 1", "Choice 2"}, {"Opción 1", "Opción 2"}};
-static const char *const kOptionStereo[2][2] = {{"Stereo", "Mono"}, {"Estéreo", "Mono"}};
-static const char *const kOptionVoice[2][2] = {{"English", "Japanese"}, {"Inglés", "Japonés"}};
-static const char *const kOptionOnOff[2][2] = {{"Off", "On"}, {"No", "Sí"}};
-static const char *const kOptionKeys[2][2] = {{"default buttons", "own buttons, X edits them"},
-                                              {"botones predeterminados", "botones propios, X para editarlos"}};
+static const char *const kOptionSave[2] = {"Save", "Load"};
+static const char *const kOptionScreenType[3] = {"Type 1", "Type 2", "Type 3"};
+static const char *const kOptionScreen2[2] = {"Choice 1", "Choice 2"};
+static const char *const kOptionStereo[2] = {"Stereo", "Mono"};
+static const char *const kOptionVoice[2] = {"English", "Japanese"};
+static const char *const kOptionOnOff[2] = {"Off", "On"};
+static const char *const kOptionKeys[2] = {"default buttons", "own buttons, X edits them"};
 
 /* The first row of a row's page and how many rows it has. */
 static int option_page(int row, int *count) {
@@ -2766,33 +2725,33 @@ static void option_open(char *text, int cap, A11yOption GAME_PTR o) {
     switch (o->state) {
     case OPT_ITEM_SAVE:
         if (two) {
-            snprintf(text, cap, "%s", tr(kOptionSave[sEs][v]));
+            snprintf(text, cap, "%s", tr(kOptionSave[v]));
             add_position(text, cap, v, 2);
         }
         break;
     case OPT_ITEM_TYPE:
         if (o->type >= 0 && o->type < 3) {
-            snprintf(text, cap, "%s", tr(kOptionScreenType[sEs][o->type]));
+            snprintf(text, cap, "%s", tr(kOptionScreenType[o->type]));
             add_position(text, cap, o->type, 3);
         }
         break;
     case OPT_ITEM_SCR2:
         if (two) {
-            snprintf(text, cap, "%s", tr(kOptionScreen2[sEs][v]));
+            snprintf(text, cap, "%s", tr(kOptionScreen2[v]));
             add_position(text, cap, v, 2);
         }
         break;
     case OPT_ITEM_STEREO:
         if (two) {
-            snprintf(text, cap, "%s", tr(kOptionStereo[sEs][v]));
+            snprintf(text, cap, "%s", tr(kOptionStereo[v]));
             add_position(text, cap, v, 2);
         }
         break;
     case OPT_ITEM_VOLUME:
         if (two && gSaveData != NULL) {
             /* 0..9, and the game wraps from 9 to 0 (Option_Input, src/menu/menu_x_c.c:646): the top is said */
-            snprintf(text, cap, tr(sEs ? "%s, %d de 9" : "%s, %d of 9"),
-                     v ? (tr(sEs ? "Efectos" : "Effects")) : (tr(sEs ? "Música" : "Music")),
+            snprintf(text, cap, tr("%s, %d of 9"),
+                     v ? tr("Effects") : tr("Music"),
                      v ? gSaveData->seVolume : gSaveData->bgmVolume);
         }
         break;
@@ -2804,26 +2763,26 @@ static void option_open(char *text, int cap, A11yOption GAME_PTR o) {
         break;
     case OPT_ITEM_VOICE:
         if (two) {
-            snprintf(text, cap, "%s", tr(kOptionVoice[sEs][v]));
+            snprintf(text, cap, "%s", tr(kOptionVoice[v]));
             add_position(text, cap, v, 2);
         }
         break;
     case OPT_ITEM_KEYS:
     case OPT_ITEM_VIB:
         if (two) {
-            snprintf(text, cap, tr(sEs ? "Jugador %d" : "Player %d"), v + 1);
+            snprintf(text, cap, tr("Player %d"), v + 1);
             add_position(text, cap, v, 2);
         }
         break;
     case OPT_ST_KEYS_PAD: /* 0 the default buttons, 1 the player's own, which X opens to edit (Option_Input) */
         if (two && (o->pad & ~1) == 0) {
-            snprintf(text, cap, tr(sEs ? "Jugador %d: %s" : "Player %d: %s"), o->pad + 1, tr(kOptionKeys[sEs][v]));
+            snprintf(text, cap, tr("Player %d: %s"), o->pad + 1, tr(kOptionKeys[v]));
         }
         break;
     case OPT_ST_VIB_EDIT:
         if (two && (o->pad & ~1) == 0) {
-            snprintf(text, cap, tr(sEs ? "Jugador %d, vibración: %s" : "Player %d, vibration: %s"), o->pad + 1,
-                     tr(kOptionOnOff[sEs][v]));
+            snprintf(text, cap, tr("Player %d, vibration: %s"), o->pad + 1,
+                     tr(kOptionOnOff[v]));
         }
         break;
     }
@@ -2845,7 +2804,7 @@ static void options(void) {
         return;
     }
     if (!open) {
-        heading(tr(sEs ? "Opciones" : "Options"));
+        heading(tr("Options"));
         open = 1;
         page = 1;
         volume = 0;
@@ -2859,21 +2818,20 @@ static void options(void) {
     if (volume && st != OPT_ITEM_VOLUME) {
         volume = 0;
         if (shown[0] != kept[0] || shown[1] != kept[1]) {
-            heading(tr(sEs ? "Cambio de volumen descartado, no se guardó con X"
-                           : "Volume change dropped, it was not kept with X"));
+            heading(tr("Volume change dropped, it was not kept with X"));
         }
     }
     text[0] = '\0';
     if (st == OPT_ST_TOP || st == OPT_ITEM_SCREEN || st == OPT_ITEM_SOUND || st == OPT_ITEM_CTRL) {
         first = option_page(o->cursor, &count);
-        if (first < 0 || o->cursor >= OPT_ITEMS || kOptionRows[sEs][o->cursor] == NULL) {
+        if (first < 0 || o->cursor >= OPT_ITEMS || kOptionRows[o->cursor] == NULL) {
             return;
         }
         if (first != page) {
-            heading(first == 1 ? (tr(sEs ? "Opciones" : "Options")) : tr(kOptionRows[sEs][st]));
+            heading(first == 1 ? tr("Options") : tr(kOptionRows[st]));
             page = first;
         }
-        snprintf(text, sizeof(text), "%s", tr(kOptionRows[sEs][o->cursor]));
+        snprintf(text, sizeof(text), "%s", tr(kOptionRows[o->cursor]));
         add_position(text, sizeof(text), o->cursor - first, count);
     } else {
         if (st == OPT_ITEM_VOLUME) {
@@ -2883,13 +2841,12 @@ static void options(void) {
                 kept[1] = o->seVolume;
                 if (!hinted) {
                     hinted = 1;
-                    heading(tr(sEs ? "Volumen. Izquierda y derecha cambian, X guarda, triángulo sale y deshace lo no guardado"
-                                   : "Volume. Left and right change it, X keeps it, triangle leaves and undoes what was not kept"));
+                    heading(tr("Volume. Left and right change it, X keeps it, triangle leaves and undoes what was not kept"));
                 }
             } else if (o->bgmVolume != kept[0] || o->seVolume != kept[1]) {
                 kept[0] = o->bgmVolume;
                 kept[1] = o->seVolume;
-                PortA11y_Say(tr(sEs ? "Guardado" : "Kept"), A11Y_INTERRUPT);
+                PortA11y_Say(tr("Kept"), A11Y_INTERRUPT);
             }
             if (gSaveData != NULL) {
                 shown[0] = gSaveData->bgmVolume;
@@ -3001,7 +2958,7 @@ static void btl_menu_item(char *out, int cap, A11yBtlMenu GAME_PTR m, int i) {
         }
     }
     if (out[0] == '\0') {
-        snprintf(out, cap, tr(sEs ? "Opción %d" : "Item %d"), i + 1);
+        snprintf(out, cap, trc("menu", "Item %d"), i + 1);
     }
 }
 
@@ -3027,7 +2984,7 @@ static void btl_menu(void) {
         return;
     }
     if (!named) {
-        heading(gPauseMenuWhich ? (tr(sEs ? "Fin de la pelea" : "Fight over")) : (tr(sEs ? "Pausa" : "Pause")));
+        heading(gPauseMenuWhich ? tr("Fight over") : tr("Pause"));
         named = 1;
     }
     if (m != said || m->cursor != saidCursor) {
@@ -3201,36 +3158,36 @@ static void msg_window(void) {
 #define TEAM_SIZE (0x644 / 4) /* gProgress, in ints: fighters to choose there (menu_o.h) */
 static const struct {
     int mode, item;
-    const char *text[2];
+    const char *text;
 } kModeNames[] = {
-    {6, 0, {"choose a saga", "elige una saga"}},
-    {7, -1, {"Episode list", "Lista de episodios"}},
-    {8, -1, {"Episode result", "Resultado del episodio"}},
-    {9, -1, {"Saga ending", "Final de la saga"}},
-    {10, -1, {"Save", "Guardar"}},
-    {13, 1, {NULL, NULL}},
-    {14, -1, {"Choose a mission", "Elige una misión"}},
-    {MODE_TEAM_PICK, -1, {"Choose your fighters, not read yet", "Elige a tus luchadores, todavía sin lectura"}},
-    {16, -1, {"Mission result", "Resultado de la misión"}},
-    {17, -1, {"Survival", "Supervivencia"}},
-    {19, -1, {"Survival result", "Resultado de supervivencia"}},
-    {20, -1, {"Sim Dragon", "Sim Dragón"}},
-    {22, -1, {"Sim Dragon, the day", "Sim Dragón, jornada"}},
-    {23, -1, {"Day result", "Resultado de la jornada"}},
-    {24, -1, {"Disc Fusion", "Fusión de disco"}},
-    {26, -1, {"Ranking", "Clasificación"}},
-    {27, -1, {"Result", "Resultado"}},
-    {28, -1, {"Choose a course", "Elige un recorrido"}},
-    {30, -1, {"Result", "Resultado"}},
-    {33, 2, {NULL, NULL}},
-    {35, -1, {"Tournament bracket", "Cuadro del torneo"}},
-    {40, -1, {"Team select, not read yet", "Selección por equipos, todavía sin lectura"}},
-    {44, 6, {NULL, NULL}},
-    {48, 5, {NULL, NULL}},
-    {53, 7, {NULL, NULL}},
-    {60, 8, {NULL, NULL}},
-    {62, 9, {NULL, NULL}},
-    {70, 10, {NULL, NULL}},
+    {6, 0, "choose a saga"},
+    {7, -1, "Episode list"},
+    {8, -1, "Episode result"},
+    {9, -1, "Saga ending"},
+    {10, -1, "Save"},
+    {13, 1, NULL},
+    {14, -1, "Choose a mission"},
+    {MODE_TEAM_PICK, -1, "Choose your fighters, not read yet"},
+    {16, -1, "Mission result"},
+    {17, -1, "Survival"},
+    {19, -1, "Survival result"},
+    {20, -1, "Sim Dragon"},
+    {22, -1, "Sim Dragon, the day"},
+    {23, -1, "Day result"},
+    {24, -1, "Disc Fusion"},
+    {26, -1, "Ranking"},
+    {27, -1, "Result"},
+    {28, -1, "Choose a course"},
+    {30, -1, "Result"},
+    {33, 2, NULL},
+    {35, -1, "Tournament bracket"},
+    {40, -1, "Team select, not read yet"},
+    {44, 6, NULL},
+    {48, 5, NULL},
+    {53, 7, NULL},
+    {60, 8, NULL},
+    {62, 9, NULL},
+    {70, 10, NULL},
 };
 #define MODE_DUEL_MENU 38
 #define MODE_DUEL_CHARSEL 39
@@ -3255,9 +3212,9 @@ static int mode_text(char *out, int cap, int mode) {
         if (kModeNames[i].mode != mode) {
             continue;
         }
-        n = snprintf(out, cap, "%s", kModeNames[i].item >= 0 ? tr(kMainMenuItems[sEs][kModeNames[i].item]) : "");
-        if (kModeNames[i].text[sEs] != NULL) {
-            snprintf(out + n, cap - n, "%s%s", n > 0 ? ", " : "", tr(kModeNames[i].text[sEs]));
+        n = snprintf(out, cap, "%s", kModeNames[i].item >= 0 ? tr(kMainMenuItems[kModeNames[i].item]) : "");
+        if (kModeNames[i].text != NULL) {
+            snprintf(out + n, cap - n, "%s%s", n > 0 ? ", " : "", tr(kModeNames[i].text));
         }
         return 1;
     }
@@ -3471,7 +3428,7 @@ static void gauge_units(char *out, int cap, int value, int per) {
     if (tenths % 10 == 0) {
         snprintf(out, cap, "%d", tenths / 10);
     } else {
-        snprintf(out, cap, "%d%c%d", tenths / 10, sEs ? ',' : '.', tenths % 10);
+        snprintf(out, cap, tr("%d.%d"), tenths / 10, tenths % 10); /* (the decimal mark is the language's) */
     }
 }
 
@@ -3498,15 +3455,14 @@ static void fight_gauges(void) {
     gauge_units(hpMax, sizeof(hpMax), BtlCharApi_GetHpMax(side), GAUGE_HP_BAR);
     gauge_units(ki, sizeof(ki), BtlCharApi_GetKi(side), GAUGE_KI_BAR);
     n = (size_t)snprintf(text, sizeof(text),
-                         tr(sEs ? "Jugador %d: vida %s de %s barras, ki %s de %d, blast %d de %d"
-                                : "Player %d: health %s of %s bars, ki %s of %d, blast %d of %d"),
+                         tr("Player %d: health %s of %s bars, ki %s of %d, blast %d of %d"),
                          side + 1, hp, hpMax, ki, GAUGE_KI_BARS, BtlCharApi_GetBlast(side) / GAUGE_BLAST,
                          BtlCharApi_GetBlastMax(side) / GAUGE_BLAST);
     if (BtlSide_IsPoweredUp(side) && n < sizeof(text)) {
-        n += (size_t)snprintf(text + n, sizeof(text) - n, tr(sEs ? ", en máximo poder" : ", max power"));
+        n += (size_t)snprintf(text + n, sizeof(text) - n, tr(", max power"));
     }
     if ((alive = BtlSide_CountAlive(side)) > 1 && n < sizeof(text)) {
-        snprintf(text + n, sizeof(text) - n, tr(sEs ? ", %d luchadores en pie" : ", %d fighters still up"), alive);
+        snprintf(text + n, sizeof(text) - n, tr(", %d fighters still up"), alive);
     }
     PortA11y_Say(text, A11Y_INTERRUPT);
 }
@@ -3612,7 +3568,6 @@ void PortA11y_GameTick(void) {
         sFightVoices = v < 0 ? 0 : v > 100 ? 100 : v;
     }
     sBlank++;
-    sEs = PortA11y_Spanish();
     battle_watch();
     screen_change();
     dialog();
