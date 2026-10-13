@@ -184,15 +184,9 @@ static GsTex texture_get(int ctx) {
     if (bits <= 8) {
         gen = (gen ^ clut_hash(cbp, cpsm, bits == 8 ? 256 : 16)) * 16777619u;
     }
-    if (tw <= 512 && th <= 512) {
-        gen ^= (uint32_t)(SCALE > 4 ? SCALE : 4) * 0x9E3779B9u;
-        gen ^= (uint32_t)MenuText_GetFont() * 0x85EBCA6Bu; /* vector labels track resolution and font changes */
-    }
-    gen ^= (uint32_t)MenuText_GetSharedFont() * 0xC2B2AE35u;
-    if (MenuText_GetSharedFont()) {
-        gen ^= (uint32_t)(SCALE > 4 ? SCALE : 4) * 0x27D4EB2Du;
-        gen ^= MenuText_SharedGeneration() * 0x165667B1u; /* atlas layout follows registration and H calibration */
-    }
+    /* a font instead of the game's lettering (menu_text.c): the labels and glyph sheets it draws follow the font
+       and the resolution. Nothing is added with both settings on "Original". */
+    gen ^= MenuText_TexKey((int)tw, (int)th, bits <= 8, (int)tbp, (int)cbp, MenuText_RasterScale(SCALE));
     if (sTexPackOn && TexPack_Count() != 0) {
         gen ^= 0x5BD1E995u; /* with the pack and without it are different textures: switching it takes effect at once */
     }
@@ -277,15 +271,20 @@ static GsTex texture_get(int ctx) {
     }
     if (!replaced && px != NULL) {
         int mw, mh;
-        uint8_t *text = MenuText_RenderGlyphs((uint8_t *)px, (int)tw, (int)th, (int)tbp, (int)cbp,
-                                            SCALE > 4 ? SCALE : 4, &mw, &mh);
+        uint64_t font_t0 = gpu_now();
+        int textScale = MenuText_RasterScale(SCALE);
+        uint8_t *text = MenuText_RenderGlyphs((uint8_t *)px, (int)tw, (int)th, (int)tbp, (int)cbp, textScale, &mw, &mh);
         sharedText = text != NULL;
-        if (text == NULL) { text = MenuText_Render((uint8_t *)px, (int)tw, (int)th, SCALE > 4 ? SCALE : 4, &mw, &mh); }
+        if (text == NULL) { text = MenuText_Render((uint8_t *)px, (int)tw, (int)th, bits <= 8, textScale, &mw, &mh); }
         if (text != NULL) {
             free(px);
             px = (uint32_t *)text;
             rw = (uint32_t)mw; rh = (uint32_t)mh;
             menuText = 1;
+        }
+        if (getenv("BT3_FONT_LOG") != NULL) { /* what a font setting costs: every decoded texture, and the time the text took */
+            fprintf(stderr, "font: frame %u: %ux%u %s %.3f ms\n", gGsFrame, (unsigned)tw, (unsigned)th, text != NULL ? "drawn" : "left",
+                    (double)(gpu_now() - font_t0) / 1e6);
         }
     }
     gGpuTexNs += gpu_now() - tex_t0;

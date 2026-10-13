@@ -20,7 +20,6 @@ static bool meter_on(void);
 static int sGL; // 1: the OpenGL back end draws the window (ImGui's OpenGL3 backend, no SDL GPU device)
 
 extern "C" {
-extern int gsScale; // gs_draw.c: resolution for dynamic menu text
 extern volatile int gPortNetMenuRequest;
 void Port_NetOptions(int rollback, int delay); // gs/net.c
 void Port_NetRulesSet(int type, int dp, int time); // gs/net.c: the host's battle type, DP limit row, time limit
@@ -1684,7 +1683,7 @@ static unsigned sFontNext;
 
 static const FontName *font_name(int style, const char *text) {
     int choice = MenuText_GetFont();
-    int resolution = choice ? (gsScale > 4 ? gsScale : 4) : 1;
+    int resolution = choice ? 4 : 1; // (a font's strip: 4 times the disc's, for a window larger than the game's picture)
     if (text == NULL || text[0] == '\0' || (choice == 0 && !NameFont_Ready())) { // (not ready: asked again next frame)
         return NULL;
     }
