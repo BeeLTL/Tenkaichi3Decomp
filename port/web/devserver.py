@@ -15,7 +15,7 @@ Usage: python port/web/devserver.py [--port 8080] [--root DIR] [--mount /prefix=
 import argparse, http.server, json, os, pathlib, re, shutil, sys, urllib.parse
 
 TYPES = {".wasm": "application/wasm", ".js": "text/javascript", ".mjs": "text/javascript", ".html": "text/html",
-         ".json": "application/json", ".txt": "text/plain; charset=utf-8", ".css": "text/css", ".png": "image/png",
+         ".json": "application/json", ".txt": "text/plain; charset=utf-8", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml",
          ".data": "application/octet-stream", ".bin": "application/octet-stream"}
 
 class Handler(http.server.BaseHTTPRequestHandler):
