@@ -185,6 +185,11 @@ def main():
         if not wrong:
             continue
         src = o.with_suffix(".sf.ll") if o.with_suffix(".sf.ll").exists() else o.with_suffix(".ll")
+        sig = o.with_suffix(".sig.ll")
+        # a repair already made to this same build of the object (a later pass of the link: the stubs it added can
+        # bring new mismatches) is kept: the new repairs go on top of it, not on the unrepaired IR
+        if sig.exists() and src.exists() and sig.stat().st_mtime >= src.stat().st_mtime:
+            src = sig
         if not src.exists():
             report.append(f"{o.name}: NO IR to repair: {', '.join(sorted(wrong))}")
             failed += 1
@@ -195,7 +200,6 @@ def main():
             report.append(f"{o.name}: FAILED: {e}")
             failed += 1
             continue
-        sig = o.with_suffix(".sig.ll")
         sig.write_text(text, encoding="latin-1", newline="\n")
         tmp = o.with_suffix(".sig.o")  # (emcc deletes its output on failure: the object is replaced only on success)
         r = subprocess.run(["emcc", "-c", "-O2", str(sig), "-o", str(tmp)], capture_output=True, text=True)

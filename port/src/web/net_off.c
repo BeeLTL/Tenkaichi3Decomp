@@ -19,6 +19,9 @@ int Port_NetWarp(void) { return 0; }
 int Port_NetResim(void) { return 0; }
 int Port_NetMe(void) { return 0; }
 int Port_NetVoiceAlt(void) { return 0; }
+unsigned Port_NetSeed(void) { return 0; }       /* (0: the game's generator is left as it is) */
+int Port_NetFixedStart(void) { return 0; }      /* (no session: the start-up follows the player's settings) */
+void Port_TestSlow(int what, int amount) { (void)what; (void)amount; } /* (net.c's slow-machine testing: not here) */
 const char *Port_NetName(int player) { (void)player; return ""; }
 int Port_NetStats(int *out) { (void)out; return 0; }
 void Port_NetBeginTick(unsigned tick) { (void)tick; }

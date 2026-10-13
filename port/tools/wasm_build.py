@@ -80,6 +80,11 @@ def compile_soft(src, o, extra=(), r2l=True, flags=GAME, forced=FORCED, ee=True)
         text, n, bad = wasm_sf.fix(ll.read_text(encoding="latin-1"))
     if bad:
         return False, "float operations without a PS2 routine: " + "; ".join(l for _, l in bad[:3]), n
+    # A variable defined without a value in the game's files (`s32 gPortSeSilent;`, -fcommon: a "common" symbol)
+    # becomes a weak one: WebAssembly objects have no common symbols (LLVM's wasm tools crash reading one), and a
+    # weak definition keeps their meaning (the same name in several files is one variable; a definition with a value
+    # elsewhere wins).
+    text = COMMON.sub(r"\1weak \2", text)
     sf = o.with_suffix(".sf.ll")
     sf.write_text(text, encoding="latin-1", newline="\n")
     r = run([EMCC, "-c"] + OPT + [sf, "-o", o])
@@ -95,6 +100,7 @@ def compile_soft(src, o, extra=(), r2l=True, flags=GAME, forced=FORCED, ee=True)
         return False, f"f32 instructions in the object: {left or r.stderr[-300:]}", n
     return True, "", n
 
+COMMON = __import__("re").compile(r"^(@[\w.$]+ = )common ((?:hidden |protected )?global )", __import__("re").M)
 LINE_MARK = __import__("re").compile(r'^(# \d+ ")([^"\n]*)"', __import__("re").M)
 F32_OP = __import__("re").compile(r"\bf32\.(add|sub|mul|div|eq|ne|lt|le|gt|ge|convert_\w+|trunc\w*|demote_f64|min|max|sqrt|nearest|floor|ceil)\b")
 
