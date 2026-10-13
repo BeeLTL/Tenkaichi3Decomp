@@ -369,7 +369,17 @@ static int pad_read(int socket, unsigned char *data) {
     return 18;
 }
 int sceVibGetProfile() { return 0; }
-int sceVibSetActParam() { return 0; }
+/* The game's motor command for a port, sent every frame (Pad_SendActuator, src/sys/pad.c): two bytes, bit 0 = the
+   small motor, bits 1..7 = the large motor's power. To the player's controller (gs/gs_input.c). Only read here:
+   nothing of it goes back into the game. */
+int sceVibSetActParam(int socket, int profileSize, unsigned char *profile, int dataSize, unsigned char *data) {
+    extern void Port_PadVibrate(int socket, int small, int large);
+    (void)profileSize; (void)profile;
+    if (dataSize >= 1 && data != NULL) {
+        Port_PadVibrate(socket, data[0] & 1, data[0] >> 1);
+    }
+    return 0;
+}
 
 /* ---- MPEG movies: port/src/plat_movie.c ---- */
 
