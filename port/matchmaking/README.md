@@ -59,6 +59,134 @@ are not touched. Without the variable, or at 0, everyone is let in.
 - It closes the service, not the game: two copies of an old release can still play each other by typing an
   address (Host on a port / Join by address), and the source is open, so a changed copy can claim any number.
 
+## The build key: only official releases (from the release after 0.1.33)
+
+Anyone can build the game from this repository and point it at this Worker, which then spends its keeper's
+allowance (the relay above all) and puts a changed game into quick match. So an official release can be built with
+a **build key**, a secret of that one release, and signs every request with it; the Worker, once it has been told
+the keys, can refuse what is not signed. All of it is off until the keys are set: a game built without a key sends
+what it always sent, and a Worker without `BUILD_KEYS` answers as it always did.
+
+**What it is not.** The key is inside every copy of the release (scrambled, so that it is not found by listing the
+program's texts, and no better hidden than that): someone who takes the program apart has it. It keeps out a
+build made from the source, not a determined person, and it is no check against cheating. That is why each
+release has its own key and the Worker can forget one: a key that got out is worth something only until the
+release it belongs to is retired.
+
+**What a signed request carries**, as headers:
+
+    X-BT3-Release: 134                  the release (0.1.34), as `rel` in the body
+    X-BT3-Time:    1791900000           seconds since 1970
+    X-BT3-Sign:    <64 hex digits>      HMAC-SHA256(key, text), in lower-case hex
+
+and `text` is these six lines joined by a line feed (none after the last):
+
+    BT3-SIGN-1
+    POST
+    /v1/quick                           the path
+    134                                 the release, exactly as in the header
+    1791900000                          the time, exactly as in the header
+    <64 hex digits>                     SHA-256 of the body, exactly the bytes that are sent
+
+The key is the text itself, as bytes (not decoded from hex). `port/src/gs/net_sign.c` is the game's side.
+
+**The Worker's settings** (Settings -> Variables and Secrets):
+
+| Name | Kind | |
+|---|---|---|
+| `BUILD_KEYS` | secret | the keys, as JSON: `{"134":"<key of 0.1.34>","135":"<key of 0.1.35>"}`. Not set: nothing is checked |
+| `REQUIRE_KEY` | variable | what a failed check means: `off` (or not set), `quick`, `all` |
+| `MIN_RELEASE` | variable | as before; a key of a release below it is not accepted either |
+
+| `REQUIRE_KEY` | quick match (`/v1/quick`) | room codes, relay, queue counts | `/v1/hello` |
+|---|---|---|---|
+| no `BUILD_KEYS` at all | open | open | open |
+| not set, or `off` | open; checked, logged, counted | open; checked, logged | open |
+| `quick` | **signed only** | open; checked, logged | open |
+| `all` | **signed only** | **signed only** | open |
+
+A refused request is answered with status 403 and `{"error":"build key","why":"...","now":<the Worker's time>}`.
+`why` is `none` (nothing was signed), `release` (the Worker has no key for that release; or it is below
+`MIN_RELEASE`; or the header's release is not the body's), `sign` (not this key's signature of this request: a wrong
+key, a changed body, another path), or `time` (signed for a time more than five minutes from the Worker's clock).
+The game then says "Quick match needs an official release of the game." (in the online window, where a failed
+search is reported), or for a room code "Room codes need an official release of the game. Playing by address
+still works."
+
+- **Clocks.** Players' clocks are often minutes or hours off. `/v1/hello`, which the game asks when its online
+  screen opens, now also says the Worker's time, and the game signs by that; a request still refused for its time
+  is sent once more by the `now` in the refusal. Only if that fails too does the player read "This computer's
+  clock is wrong: set its date and time, then try again." Only a holder of the key is told `time`: the signature
+  is checked first.
+- **What it does not stop.** A signed request can be sent again unchanged for five minutes (the Worker keeps no
+  record of signatures; the limits per address still count it). It cannot be changed: body, path, release and time
+  are all in what is signed.
+- **A `BUILD_KEYS` that cannot be read** (not JSON) gives the Worker no keys, so with `quick` or `all` it refuses
+  everyone. Hence the first stage, `off`, and the check below.
+- Nothing logs a key or a signature. A failed check is logged as `build key: quick from release 133: none,
+  refused` (or `let in`), and counted per day.
+- `REQUIRE_KEY` without `BUILD_KEYS` does nothing. Deleting `BUILD_KEYS` therefore opens the Worker again.
+
+**Seeing what it does.** With `ADMIN_KEY` set (see the relay's ceiling below), the status request also answers
+
+    "buildKey":{"releases":[134],"require":"off","today":{"ok":212,"none":40,"release":0,"sign":0,"time":3}}
+
+the releases it has a key for (never a key), the stage, and how today's new rooms, joins and searches checked
+out; `"problem"` is there when `BUILD_KEYS` or `REQUIRE_KEY` is not as it should be.
+
+### Step by step, for the keeper
+
+Nothing below needs a tool but a browser, and Python for one line. `<key>` stands for the key you make; it is
+written nowhere in this repository and should not be pasted anywhere but the two places named.
+
+**Once: the Worker's code.** Workers & Pages -> the Worker -> Edit code: replace everything with the new
+`worker.js`, Deploy. (No change to the database.) Nothing changes for anyone yet.
+
+**(a) Make a key.** On your own computer:
+
+    python3 -c "import secrets; print(secrets.token_hex(32))"
+
+It prints 64 letters and digits. Keep it in your password manager, under the release's number. Make a new one for
+every release; never reuse one.
+
+**(b) Give it to the build.** On GitHub: the repository -> Settings -> Secrets and variables -> Actions -> New
+repository secret. Name `BT3_BUILD_KEY`, value `<key>`. (Later releases: the pencil beside the secret, paste the
+new key.) GitHub never shows it again and hides it in logs. Only a tag's build (`v0.1.34`) is given it; the
+build's log then has the line `build key: given`, else `build key: none`.
+
+**(c) Tell the Worker.** Cloudflare: Workers & Pages -> the Worker -> Settings -> Variables and Secrets -> Add.
+Type **Secret**, name `BUILD_KEYS`, value (one line, with the quotes, the number being the release: 0.1.34 is 134):
+
+    {"134":"<key>"}
+
+Deploy. Cloudflare does not show a secret again either: keep this whole line in your password manager, because
+adding a release means pasting the whole line again with one more entry. Do this **before** the release is
+published: a release whose key the Worker does not know is refused once (d) is on.
+
+**(d) Switch it on, in stages.** The variable `REQUIRE_KEY` (type Text, not secret):
+
+1. Leave it out (or `off`) at first. Publish the release. Nothing is refused; look at the status request's
+   `buildKey` after a day: `releases` must list your release, there must be no `problem`, and `ok` should grow
+   as players update. `sign` or `release` counts from the new release mean (b) and (c) do not hold the same key.
+2. `quick`: quick match only for signed releases. Set `MIN_RELEASE` to the first release that has a key at the
+   same time: older releases have no key, and unless they are told to update they show their own words for an
+   answer they do not know ("The matchmaking service does not know quick match yet.").
+3. `all`, if you want room codes and the relay closed to other builds as well.
+
+Going back is the same variable: `off` refuses nothing, at once.
+
+**(e) At each new release.** 1. Make a new key (a). 2. Replace the GitHub secret with it (b). 3. Add it to the
+line in your password manager and paste the whole line as `BUILD_KEYS` again (c), e.g.
+`{"134":"<key of 0.1.34>","135":"<key of 0.1.35>"}`. 4. Raise `PORT_RELEASE`, tag, let the workflow build, check
+its log says `build key: given`. 5. Before publishing the draft, a check that costs nothing: the Linux program
+started with `BT3_SIGN_TEST=1` prints `sign: build key yes ...` and ends (`build key none`: it has no key).
+
+**Retiring a key** (a release was taken apart, or is simply old): raise `MIN_RELEASE` above that release (its
+players are told to update), or paste `BUILD_KEYS` again without its entry (its players are told they need an
+official release). The first is the kinder one; do both if the key is known to be out.
+
+**A fork** that runs its own Worker makes its own keys, or none: without the secrets everything is as it was.
+
 ## What it keeps
 
 For at most ten minutes per room: the room code, the two player names, the addresses each game reported about
@@ -151,7 +279,11 @@ it at once. A billing notification in the dashboard is worth setting.
 ## Testing a change
 
 `node port/matchmaking/test.mjs` runs the Worker's code against a small stand-in for its database: who is told
-which addresses, and the limits. Nothing is sent anywhere.
+which addresses, the limits, and the build key's checks in each stage. Nothing is sent anywhere.
+
+`python3 port/matchmaking/test_sign.py port/build/bt3_64` checks the game's side of the build key against
+Python's `hmac` and `hashlib`, and looks at the headers the program really sends, on a listener on 127.0.0.1 (see
+the top of that file; with `BT3_BUILD_KEY` set to the made-up key the program was built with, or without one).
 
 ## Trying it by hand
 

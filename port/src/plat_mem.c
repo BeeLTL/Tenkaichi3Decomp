@@ -134,6 +134,10 @@ int __wrap_main(int argc, char **argv) {
 
     sArgc = argc;
     sArgv = argv;
+    if (getenv("BT3_SIGN_TEST") != NULL) { /* testing the build key's signature (gs/net_match.c): prints and ends */
+        extern int Match_SignTest(void);
+        return Match_SignTest();
+    }
     if (getenv("BT3_CRASH_TEST") != NULL) { /* testing the crash report */
         *(volatile int *)(uintptr_t)8 = 0;
     }
@@ -217,6 +221,10 @@ int __wrap_main(int argc, char **argv) {
 
     sArgc = argc;
     sArgv = argv;
+    if (getenv("BT3_SIGN_TEST") != NULL) { /* testing the build key's signature (gs/net_match.c): prints and ends */
+        extern int Match_SignTest(void);
+        return Match_SignTest();
+    }
     pthread_attr_init(&attr);
     pthread_attr_setstack(&attr, (void *)(uintptr_t)STACK_BASE, STACK_SIZE);
     if (pthread_create(&th, &attr, game_thread, NULL) != 0) {
