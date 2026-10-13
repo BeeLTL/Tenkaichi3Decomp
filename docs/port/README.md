@@ -3340,3 +3340,38 @@ step above). The replay check is unchanged.
 Not checked: Windows (Direct3D 12), macOS (Metal) and the OpenGL back end; other shiny characters; the scene in
 which the user saw the shadow layers (not in the recording).
 
+## Input lag: measured, and "Low input lag" (2026-10-14)
+
+Asked by the user: how large is the input lag, can it be lowered, or is it fixed by the game?
+
+`BT3_LAG_LOG=1` prints when things happen, in microseconds: `V` a vertical blank (after its wait), `W` the game
+arriving at a blank's wait, `R` a pad read, `E` the window's events taken (a controller's state is renewed then),
+`S` a picture handed to the window, `L` the owed blanks waited for (below). Measured with a recording of the user's
+(a fight against Perfect Cell), replayed at real speed without a window on an integrated graphics chip:
+
+- A fight's tick is two vertical blanks, 33.4 ms; a menu's is one.
+- The game's own order in a tick: read the pads, compute, give the drawing commands, THEN wait for the blanks,
+  then the picture is shown. Computing took 1.1 ms and showing 2 ms here, the wait the other 30.
+- So from a pad read to its picture: 33.35 ms (median). The controller's state was 1.1 ms old when read.
+- The game adds no tick of its own on top: with a recording cut off before a stick push and one that has it, the
+  very first picture after the read differs (movement; other actions have their own start-up frames).
+
+What is the game's: the 30 ticks a second of a fight (a press waits up to 33 ms, 17 on average, for the next
+read) and each action's start-up. What was the port's to give: the 30 ms of waiting between computing a tick and
+showing it. The console has the same wait and then draws and shows at the following blanks, so the port was already
+ahead of it.
+
+"Low input lag (experimental)" (F1 > Video; setting `late_input`; `BT3_LATE_INPUT=0/1`), off by default: a blank
+the game asks for is not waited for there but owed (at most two) and waited for just before the next pad read
+(plat_stub.c `late_wait`), where the controllers' state is renewed first (`PortInput_Fresh`). The tick is as long
+as before; the pads are read at its end instead of its start. Nothing of the game's state changes: the same reads
+and blanks in the same order. Not in an online session, and not with in-between pictures.
+
+Measured the same way with it on: read to picture 3.0 ms (median; 99% 3.5 ms), the controller's state 0.01 ms
+old, the tick 33.37 ms as before. The recording's pictures are the same with it on and off (seven compared), and
+the replay check is unchanged.
+
+Not checked: with a window on a real display, and by feel; the sound (the game's sound step runs at each blank,
+and those now come two at once in a fight); V-sync on; Windows and macOS; a machine too slow to compute and show
+a tick in time, where the picture then comes late instead of the game's start of the tick.
+

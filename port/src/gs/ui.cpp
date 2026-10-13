@@ -31,6 +31,8 @@ int Port_AspectMilli(void);
 void Match_UpdateAsk(void);                    // net_match.c: asks GitHub for the newest release, once
 int Match_UpdateLatest(void);                  // ... its number (0.1.33 is 133), 0 while unknown
 int Port_Menus43(void);                       // plat_stub.c: the menus are shown at 4:3 in a wider picture
+int Port_LateInput(void);                     // plat_stub.c: "Low input lag", the blanks are waited for before the pad read
+void Port_LateInputSet(int on);
 void Port_Menus43Set(int on);
 int Port_HudLayout(void);                      // gs_draw.c: 2 = the HUD is about the middle of the screen
 int GsDraw_HudShown(void);                     // ... and 1 while the game is drawing the HUD's side panels
@@ -1000,6 +1002,15 @@ static void video_tab(PortVideo &v) {
         ImGui::SetItemTooltip("When this machine cannot show a picture in time, the game normally runs slower.\n"
                               "With this on it stays at full speed and leaves pictures out instead (choppier,\n"
                               "not slower). It helps where the graphics chip is the slow part. On by default.");
+        {
+            bool late = Port_LateInput() != 0;
+            if (ImGui::Checkbox("Low input lag (experimental)", &late)) { Port_LateInputSet(late); }
+            ImGui::SetItemTooltip("The game reads the controller, computes, and then waits before the picture is shown:\n"
+                                  "about 33 ms in a fight. With this on the wait comes first, so the picture follows\n"
+                                  "your press by the few milliseconds the machine needs. The game itself is unchanged.\n"
+                                  "Not used online or with in-between pictures. Off by default: on a machine that\n"
+                                  "cannot keep up it may stutter where the original order would not.");
+        }
     }
     SDL_DisplayID *displays = SDL_GetDisplays(&count);
     if (v.display > count) { v.display = 0; }

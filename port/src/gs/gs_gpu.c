@@ -531,6 +531,7 @@ static void vk_frame_end(void) {
         vsync_apply(sVsyncPending);
         sVsyncPending = -1;
     }
+    { extern void Port_LagMark(int what); Port_LagMark('E'); }
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) {
             exit(0);
@@ -1080,7 +1081,7 @@ static void vk_frame_end(void) {
         }
     }
     sEndT[4] = gpu_now();
-    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_SubmitGPUCommandBuffer(cmd); { extern void Port_LagMark(int what); Port_LagMark('S'); }
     {   /* BT3_GS_VERBOSE: once a second, where the end of the frame spends its time */
         static uint64_t sum[5];
         static int count;
@@ -1218,7 +1219,7 @@ static int vk_target_read(int i, uint8_t *rgba) {
     dst.transfer_buffer = tb;
     SDL_DownloadFromGPUTexture(cp, &src, &dst);
     SDL_EndGPUCopyPass(cp);
-    fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd); { extern void Port_LagMark(int what); Port_LagMark('S'); }
     SDL_WaitForGPUFences(sDev, true, &fence, 1);
     SDL_ReleaseGPUFence(sDev, fence);
     px = SDL_MapGPUTransferBuffer(sDev, tb, false);
@@ -1251,7 +1252,7 @@ static void vk_target_copy(int src, int dst) {
     bl.load_op = SDL_GPU_LOADOP_DONT_CARE;
     bl.filter = SDL_GPU_FILTER_NEAREST;
     SDL_BlitGPUTexture(cmd, &bl);
-    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_SubmitGPUCommandBuffer(cmd); { extern void Port_LagMark(int what); Port_LagMark('S'); }
 }
 
 GsBackend sVulkanBackend = {

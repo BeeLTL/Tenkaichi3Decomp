@@ -708,6 +708,12 @@ void PortInput_VibrationTest(int player) {
     }
 }
 
+/* The controllers' and the keyboard's state as it is at this moment (plat_stub.c, "Low input lag": the pads are
+   read long after the window's events were last taken). The events themselves stay queued for the window. */
+void PortInput_Fresh(void) {
+    SDL_PumpEvents();
+}
+
 int Port_PadRead(int socket, unsigned char *data) {
     unsigned btn = 0;
     unsigned char rx = 0x80, ry = 0x80, lx = 0x80, ly = 0x80;
