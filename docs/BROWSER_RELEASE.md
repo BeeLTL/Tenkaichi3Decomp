@@ -13,7 +13,7 @@
 |---|---|
 | A current **Chrome or Edge** | The page needs JavaScript Promise Integration (JSPI) and WebGL 2, and says so at start if one is missing. Tested: Chrome 154 on Windows 11. Firefox and Safari: **not tested** |
 | **Python 3** | [python.org](https://www.python.org/downloads/); on Windows tick "Add python.exe to PATH" when installing |
-| **7-Zip** | [7-zip.org](https://www.7-zip.org/), to read the disc image (`7z` must be on the PATH) |
+| **7-Zip** | [7-zip.org](https://www.7-zip.org/), to read the disc image (found where its installer puts it, or on the PATH) |
 | Your own disc image | The unmodified USA release (SLUS-21678), as an `.iso`; about 4 GB of free space for the unpacked data |
 | For the WebGPU renderer (optional) | A browser with WebGPU enabled: open the page with `?gpu=webgpu` |
 
@@ -43,71 +43,30 @@ In the game, **F1** (or START + SELECT on a controller) opens the settings. Keyb
 
 **Your own server instead:** `python devserver.py --port 8080 --root web --mount gamedata=<data folder>`. Another server must support HTTP Range requests (the game reads its files in byte ranges); without folder listings, added stages, songs and texture packs are reported as unavailable.
 
-## Building from source
-
-```bash
-source /c/project/Tenkaichi3Web/env.sh
-```
-
-```bash
-python port/tools/wasm_build.py game
-```
-
-```bash
-python port/tools/wasm_build.py port
-```
-
-```bash
-python port/tools/wasm_build.py data
-```
-
-```bash
-python port/tools/wasm_build.py link
-```
-
-The output goes to `port/build/web/`. The toolchain and tests are in [BROWSER_BUILD.md](BROWSER_BUILD.md).
-
-## Renderers
-
-| Renderer | How | State |
-|---|---|---|
-| **WebGL 2** | default | the reference: the same picture as the PC port's OpenGL renderer |
-| **WebGPU** | `?gpu=webgpu` | complete; identical game trace, its own screenshots per renderer. Smooth motion up to 60 pictures a second |
-
 ## What works
 
-- **Game:** boot, intro movie, menus and battles. The game's own simulation gives a trace identical, line for line, to the native PC build's.
-- **Settings panel in the page:** resolution, aspect ratio, HUD layout, menus in 4:3, effects, audio levels, controls, game speed, skip logos / intro / copyright page, Unlock everything.
+- **Game:** boot, intro movie, menus, battles, two players. The game's own simulation runs exactly as in the PC version.
+- **Two renderers:** WebGL 2 (the default) and WebGPU (open the page with `?gpu=webgpu`); both draw the same picture.
+- **Settings** (F1, or START + SELECT on a controller), a window over the game: resolution, aspect ratio, HUD layout, menus in 4:3, effects, audio levels, controls, game speed, skip logos / intro / copyright page, Unlock everything.
 - **Controllers:** a picture of the controller to change any button's key or controller button, guided set-up that lights the button to press, keyboard presets, a live view and a test. A notification when a controller connects or disconnects.
-- **Settings** open as a window over the game (F1).
-- **Touch controls:** an on-screen d-pad, analog stick and buttons over the game, played as player 1, shown on touch screens. They have size, opacity, left- or right-handed layouts, and a layout editor. Their preferences are kept apart from settings and saves.
-- **Saves:** kept in the browser (IndexedDB), with a backup version, recovery, and export and import as a `.zip`.
-- **Performance dashboard** and a diagnostics export.
-- **Added stages, songs and texture packs:** in the data folder's `stages`, `songs` and `textures` folders, read over HTTP.
+- **Touch controls:** an on-screen d-pad, analog stick and buttons over the game, played as player 1, shown on touch screens. Size, opacity, left- or right-handed layouts, and a layout editor.
+- **Saves:** kept in the browser, with a backup version, and export and import as a `.zip`.
+- **Texture packs, added stages and songs:** in the data folder's `textures`, `stages` and `songs` folders.
+- **Performance view** and a diagnostics export (Settings, Developer).
 
 ## Known limitations
 
-- **Not available in the browser:**
-  - online play;
-  - the native settings window (ImGui) and the options only it offers: side bars and "Check for updates";
-  - the Vulkan renderer.
-- **The game-data check is not run** (it would read all 3 GB). The log, the crash report and the dashboard say so.
-- **Smooth motion** is off with WebGL 2 (measured: uneven), and up to 60 pictures a second with WebGPU.
-- **Not verified in the browser:**
-  - playing an added song;
-  - physical controllers (simulated ones are tested);
-  - touch controls on a real phone or tablet: tested only with simulated touch input on a desktop browser.
-  - the sound's quality: the automated test (`port/tests/web/audio.js`) checks that music, effects and voices come out, and that the volume settings reach them, not how they sound.
-- **Saves** live in the browser's storage: clearing site data or a private window loses them. Export a copy.
-- **Not tested at all:** Firefox and Safari, mobile browsers, and the 32-bit native builds, rendering on a real GPU and the PS2 matching build. The last three are native, outside this release.
+- **Not in the browser version:** online play and the Vulkan renderer (both are in the PC version).
+- **Smooth motion** is off with WebGL 2, and up to 60 pictures a second with WebGPU.
+- **Saves** live in the browser's storage: clearing the site's data, or a private window, loses them. Export a copy.
+- **Not tested yet:** real controllers and real phones or tablets (simulated ones are tested), Firefox and Safari, playing an added song. The sound is checked to come out, not how it sounds.
 
-## Verification of this release
+Full list of what was tested: [BROWSER_FEATURE_MATRIX.md](https://github.com/BeeLTL/Tenkaichi3Decomp/blob/browser-port/docs/BROWSER_FEATURE_MATRIX.md).
 
-The detailed results, with the commands used, are in these documents:
-- [UPSTREAM_REVIEW_0.1.32_0.1.33.md](UPSTREAM_REVIEW_0.1.32_0.1.33.md): the merges;
-- [BROWSER_MIGRATION_PLAN.md](BROWSER_MIGRATION_PLAN.md): M0–M9;
-- [BROWSER_FEATURE_MATRIX.md](BROWSER_FEATURE_MATRIX.md): features and tests.
+## Building from source
+
+See [BROWSER_BUILD.md](https://github.com/BeeLTL/Tenkaichi3Decomp/blob/browser-port/docs/BROWSER_BUILD.md): the toolchain (Emscripten 6.0.12), the four build steps and the tests.
 
 ## Licence
 
-The project's code is MIT (`LICENSE`); third-party licences are in [BROWSER_ONLY_AUDIT.md](BROWSER_ONLY_AUDIT.md) §3.1. The game itself, and its data, belong to their owners and are not part of this release.
+The project's code is MIT. The licences of the libraries in the program (SDL3, Dawn's WebGPU header, Emscripten's runtime, newlib's maths library, xxHash) are in the package's `licenses` folder. The game itself, and its data, belong to their owners and are not part of this release.
