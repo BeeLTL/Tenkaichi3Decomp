@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "namefont.h"
+#include "../port_addr.h"
 
 #define SHEET_W 512
 #define SHEET_H 256
@@ -105,8 +106,8 @@ static uint8_t *sheet_decode(const uint8_t *e) {
     static uint8_t mem[SHEET_W * SHEET_H];
     uint64_t tex0;
     uint32_t pixSize = rd32(e + 0x08), clutSize = rd32(e + 0x0C), pixBlt = rd32(e + 0x18), clutBlt = rd32(e + 0x1C);
-    const uint8_t *pix = (const uint8_t *)(uintptr_t)rd32(e + 0x38);
-    const uint8_t *clut = (const uint8_t *)(uintptr_t)rd32(e + 0x3C);
+    const uint8_t *pix = (const uint8_t *)Port_Ptr(rd32(e + 0x38));
+    const uint8_t *clut = (const uint8_t *)Port_Ptr(rd32(e + 0x3C));
     uint8_t *out;
     int x, y;
 
@@ -168,7 +169,7 @@ void Port_NameFontSheets(int stage, int song, int songLit) {
     memset(got, 0, sizeof(got));
     for (s = 0; s < NF_STYLES && !bad; s++) {
         for (i = 0; i < kNeed[s] && addr[s] != 0; i++) {
-            got[s][i] = sheet_decode((const uint8_t *)(uintptr_t)addr[s] + i * 0x40);
+            got[s][i] = sheet_decode((const uint8_t *)Port_Ptr(addr[s]) + i * 0x40);
             if (got[s][i] == NULL) {
                 break;
             }

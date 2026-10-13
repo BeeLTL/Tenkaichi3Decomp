@@ -61,13 +61,22 @@ static int sPendingCount;
 
 static uint64_t gpu_now(void) { return SDL_GetTicksNS(); }
 
+#ifdef __APPLE__ /* Metal: the shaders as MSL (undefined.py translates the SPIR-V with spirv-cross, entry point main0) */
+#define SHADER_FORMAT SDL_GPU_SHADERFORMAT_MSL
+#define SHADER_ENTRY "main0"
+#define SHADER_CODE(name) name##Msl, sizeof(name##Msl) - 1
+#else
+#define SHADER_FORMAT SDL_GPU_SHADERFORMAT_SPIRV
+#define SHADER_ENTRY "main"
+#define SHADER_CODE(name) name##Spv, sizeof(name##Spv)
+#endif
 static SDL_GPUShader *shader(const unsigned char *code, size_t size, SDL_GPUShaderStage stage, int samplers, int ubos) {
     SDL_GPUShaderCreateInfo ci;
     SDL_zero(ci);
     ci.code = code;
     ci.code_size = size;
-    ci.entrypoint = "main";
-    ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
+    ci.entrypoint = SHADER_ENTRY;
+    ci.format = SHADER_FORMAT;
     ci.stage = stage;
     ci.num_samplers = (Uint32)samplers;
     ci.num_uniform_buffers = (Uint32)ubos;
@@ -378,7 +387,7 @@ static int vk_init(void) {
         fprintf(stderr, "bt3: SDL_Init: %s\n", SDL_GetError());
         return 0;
     }
-    sDev = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, getenv("BT3_GPU_DEBUG") != NULL, NULL);
+    sDev = SDL_CreateGPUDevice(SHADER_FORMAT, getenv("BT3_GPU_DEBUG") != NULL, NULL);
     sWindow = GsDraw_WindowCreate(0); /* the shared window: shape, display and full screen decided there */    if (sWindow == NULL || !SDL_ClaimWindowForGPUDevice(sDev, sWindow)) {
         fprintf(stderr, "bt3: no GPU window: %s\n", SDL_GetError());
         return 0;
@@ -386,9 +395,9 @@ static int vk_init(void) {
     /* The game paces itself at 30 frames per second; waiting for the display's own refresh on top of that
        (VSYNC) costs up to a refresh period per frame. Prefer MAILBOX (no tearing, no wait), then IMMEDIATE. */
     vsync_apply(Port_Setting("vsync", 0)); /* (the setting "V-sync" asks for the wait all the same) */
-    sVs = shader(kGsVertSpv, sizeof(kGsVertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
-    sFs = shader(kGsFragSpv, sizeof(kGsFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
-    sFsNz = shader(kGsnzFragSpv, sizeof(kGsnzFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
+    sVs = shader(SHADER_CODE(kGsVert), SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
+    sFs = shader(SHADER_CODE(kGsFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
+    sFsNz = shader(SHADER_CODE(kGsnzFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 1);
     if (sVs == NULL || sFs == NULL || sFsNz == NULL) {
         fprintf(stderr, "bt3: shaders: %s\n", SDL_GetError());
         return 0;
@@ -416,9 +425,9 @@ static int vk_init(void) {
         si.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
         sSamplers[i] = SDL_CreateGPUSampler(sDev, &si);
     }
-    sVu0Vs = shader(kVu0VertSpv, sizeof(kVu0VertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
-    sVu4Vs = shader(kVu4VertSpv, sizeof(kVu4VertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
-    sVu6Vs = shader(kVu6VertSpv, sizeof(kVu6VertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+    sVu0Vs = shader(SHADER_CODE(kVu0Vert), SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+    sVu4Vs = shader(SHADER_CODE(kVu4Vert), SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+    sVu6Vs = shader(SHADER_CODE(kVu6Vert), SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     bi.size = MAX_VU_VERTS * 48;
     sVuVbuf = SDL_CreateGPUBuffer(sDev, &bi);
     ti.size = MAX_VU_VERTS * 48;
@@ -447,8 +456,8 @@ static int vk_init(void) {
         sPendingCount++;
     }
     {   /* native outline: destination minus source on the colour channels */
-        SDL_GPUShader *vs = sFxVs = shader(kFxVertSpv, sizeof(kFxVertSpv), SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
-        SDL_GPUShader *fs = shader(kOutlineFragSpv, sizeof(kOutlineFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+        SDL_GPUShader *vs = sFxVs = shader(SHADER_CODE(kFxVert), SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
+        SDL_GPUShader *fs = shader(SHADER_CODE(kOutlineFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
         SDL_GPUColorTargetDescription cd;
         SDL_GPUGraphicsPipelineCreateInfo ci;
         SDL_zero(cd);
@@ -476,7 +485,7 @@ static int vk_init(void) {
             return 0;
         }
         /* native alpha key: the tint blended by its own alpha, colour channels only */
-        fs = shader(kAlphakeyFragSpv, sizeof(kAlphakeyFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
+        fs = shader(SHADER_CODE(kAlphakeyFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
         cd.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
         cd.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
         cd.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
@@ -487,7 +496,7 @@ static int vk_init(void) {
             return 0;
         }
     }
-    sDclutFs = shader(kDclutFragSpv, sizeof(kDclutFragSpv), SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
+    sDclutFs = shader(SHADER_CODE(kDclutFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
     copies_create();
     if (!Ui_Init(sWindow, sDev, NULL)) {
         fprintf(stderr, "bt3: the settings window could not be set up\n");
