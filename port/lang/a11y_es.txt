@@ -515,3 +515,9 @@ ea95648875dd6d42	Opción %d
 4d3dc239edc30f60	, en máximo poder
 # , %d fighters still up
 dfd76cb726caaa09	, %d luchadores en pie
+# Close the game? Progress that was not saved is lost.
+0560a602fbaf05f4	¿Cerrar el juego? Se pierde el progreso que no se haya guardado.
+# Left and right choose, Enter confirms, Escape goes back to the game
+22301f9513285cb5	Izquierda y derecha eligen, Intro confirma, Escape vuelve al juego
+# Back to the game
+6376cd42a8789562	De vuelta al juego

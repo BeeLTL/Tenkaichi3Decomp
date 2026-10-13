@@ -424,14 +424,16 @@ static const char *find_line(const char *en, int report) {
     if (lo < sLineCount && sLines[lo].hash == hash) {
         return sLines[lo].text;
     }
-    if (report && sMissing != NULL && sMissedCount < (int)(sizeof(sMissed) / sizeof(sMissed[0]))) {
+    if (report && sMissing != NULL) {
+        SDL_LockMutex(sLock); /* (the render thread asks too: PortA11y_Label) */
         for (i = 0; i < sMissedCount && sMissed[i] != hash; i++) {
         }
-        if (i == sMissedCount) {
+        if (i == sMissedCount && sMissedCount < (int)(sizeof(sMissed) / sizeof(sMissed[0]))) {
             sMissed[sMissedCount++] = hash;
             fprintf(sMissing, "%016llx\t%s\n", (unsigned long long)hash, en);
             fflush(sMissing);
         }
+        SDL_UnlockMutex(sLock);
     }
     return NULL;
 }
@@ -504,6 +506,12 @@ static const char *label_line(const char *label, const char *sense) {
 
 const char *PortA11y_Tr(const char *label) {
     return label_line(label, NULL);
+}
+
+/* The same for the program's other windows (gs/ui.cpp, on the render thread): the label as it is until the speaker
+   is on, which is when the files have been read. */
+const char *PortA11y_Label(const char *label) {
+    return sOn ? label_line(label, NULL) : label;
 }
 
 /* The same for a label that some language says another way in this sense ("song": a feminine noun in Spanish). */

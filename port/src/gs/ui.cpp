@@ -428,9 +428,25 @@ int Ui_QuitAsk(void) {
     return 1;
 }
 
+// The screen reader (a11y.c): it cannot see this window's question, which is drawn and not one of the game's screens,
+// so the question, the button under the keyboard's focus and the keys are said here. Nothing while it is off.
+extern "C" {
+void PortA11y_Say(const char *text, int flags); // flags 1: cuts what is being said
+const char *PortA11y_Label(const char *label);  // the label in the reader's language
+}
+
+static void say_quit_button(int which, int flags) {
+    char text[128], pos[32];
+    snprintf(pos, sizeof(pos), PortA11y_Label(", %d of %d"), which + 1, 2);
+    snprintf(text, sizeof(text), "%s%s", PortA11y_Label(which == 0 ? "Exit" : "Cancel"), pos);
+    PortA11y_Say(text, flags);
+}
+
 static void build_quit(void) {
+    static int said = -1; // the button last said: 0 Exit, 1 Cancel
     ImGuiIO &io = ImGui::GetIO();
     bool stay = sQuitNo;
+    int focus = -1;
 
     sQuitNo = false;
     if (!ImGui::IsPopupOpen("Exit game")) {
@@ -449,12 +465,21 @@ static void build_quit(void) {
         if (ImGui::Button("Exit", ImVec2(140.0f, 0.0f))) {
             exit(0);
         }
+        focus = ImGui::IsItemFocused() ? 0 : focus;
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(140.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
             stay = true;
         }
+        focus = ImGui::IsItemFocused() ? 1 : focus;
         if (ImGui::IsWindowAppearing()) {
             ImGui::SetItemDefaultFocus(); // (on Cancel: a second press of the same button does not close the game)
+            PortA11y_Say(PortA11y_Label(kAsk), 1);
+            say_quit_button(1, 0);
+            PortA11y_Say(PortA11y_Label("Left and right choose, Enter confirms, Escape goes back to the game"), 0);
+            said = 1;
+        } else if (focus >= 0 && focus != said) {
+            say_quit_button(focus, 1);
+            said = focus;
         }
         if (stay) {
             ImGui::CloseCurrentPopup();
@@ -464,6 +489,7 @@ static void build_quit(void) {
     if (stay) {
         sQuit = false;
         input_owner();
+        PortA11y_Say(PortA11y_Label("Back to the game"), 1);
     }
 }
 
