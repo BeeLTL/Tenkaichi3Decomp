@@ -1071,6 +1071,12 @@ FontCmd *Font_NewCmd(s32 arg, s32 digits, s32 x, s32 y, s32 homeX, s32 kind) {
     cmd->tag = gFontStyle.tag;
     cmd->tagArg = gFontStyle.tagArg;
     cmd->vramBase = -1;
+#ifdef PORT
+    {
+        extern void PortA11y_FontText(s32 kind, s32 arg, s32 flags); /* PC build: the screen reader (port/src/a11y_game.c) */
+        PortA11y_FontText(kind, arg, cmd->flags);
+    }
+#endif
     return cmd;
 }
 

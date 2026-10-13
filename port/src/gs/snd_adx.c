@@ -390,11 +390,13 @@ int gPortMusicPercent = 100, gPortSePercent = 100, gPortVoicePercent = 100, gPor
    fitted to the speed, because the game counts its length in vertical blanks. */
 int gPortMusicFollows = -1; /* (-1: not read from the settings yet) */
 
+extern float PortA11y_StreamGain(const void *player); /* a11y.c: the voices are lower in the menus */
+
 static void apply_volume(Player *p) {
     if (p->stream != NULL) {
         int ch = (int)(p - sPlayers); /* (the game makes its six players in the order of include/sys/adx.h) */
         int percent = ch == 0 ? gPortMusicPercent : ch == 1 ? gPortStagePercent : ch == 4 || ch == 5 ? gPortVoicePercent : gPortSePercent;
-        SDL_SetAudioStreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)percent / 100.0f);
+        SDL_SetAudioStreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)percent / 100.0f * PortA11y_StreamGain(p));
     }
 }
 
@@ -568,7 +570,9 @@ void ADXT_StartAfs(void *adxt, int patid, int fid) {
     if (adxt != NULL) {
         int found = Port_FilePath(patid, fid, NULL, path, sizeof(path));
         if (found) {
+            extern void PortA11y_StreamStart(const char *path); /* a11y_game.c: a voice with its line shown as text */
             start(adxt, path);
+            PortA11y_StreamStart(path);
         }
         if (found || (by_ticks() && Port_NetActive() && disc_blanks(path) != 0)) { /* (a match: counted even when this copy lacks the file) */
             view_start(adxt, path, found);
