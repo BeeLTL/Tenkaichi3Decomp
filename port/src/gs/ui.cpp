@@ -14,6 +14,7 @@
 #include "namefont.h"
 #include "../port_release.h"
 #include "menu_text.h"
+#include "../quit_dialog.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -382,11 +383,12 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
             sForceTab = -1;
             gPortNetMenuRequest = 1;
         }
-        if (sForceTab == 8) { // testing: the exit question over the settings
+        if (sForceTab == 8) { // testing: the exit question
             sForceTab = -1;
             sQuit = true;
+            PortQuit_Request();
         }
-        sOpen = true;
+        sOpen = !sQuit;
         gPortOverlayOpen = 1;
     }
     return 1;
@@ -422,22 +424,27 @@ static bool pad_pressed(ImGuiKey key) {
            !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) && ImGui::IsKeyPressed(key, false);
 }
 
+extern "C" void PortA11y_Say(const char *text, int flags);
+extern "C" const char *PortA11y_Label(const char *label);
+static void say_quit_button(int which, int flags);
+
 int Ui_QuitAsk(void) {
     if (!sReady) {
         return 0;
     }
+    if (sQuit) { return 1; }
+    if (sOpen) { set_open(false); }
     sQuit = true;
+    PortQuit_Request();
     input_owner();
+    PortA11y_Say(PortA11y_Label("Close the game? Progress that was not saved is lost."), 1);
+    say_quit_button(1, 0);
+    PortA11y_Say(PortA11y_Label("Left and right choose, Enter confirms, Escape goes back to the game"), 0);
     return 1;
 }
 
 // The screen reader (a11y.c): it cannot see this window's question, which is drawn and not one of the game's screens,
 // so the question, the button under the keyboard's focus and the keys are said here. Nothing while it is off.
-extern "C" {
-void PortA11y_Say(const char *text, int flags); // flags 1: cuts what is being said
-const char *PortA11y_Label(const char *label);  // the label in the reader's language
-}
-
 static void say_quit_button(int which, int flags) {
     char text[128], pos[32];
     snprintf(pos, sizeof(pos), PortA11y_Label(", %d of %d"), which + 1, 2);
@@ -491,6 +498,7 @@ static void build_quit(void) {
     }
     if (stay) {
         sQuit = false;
+        PortQuit_Dismiss();
         input_owner();
         PortA11y_Say(PortA11y_Label("Back to the game"), 1);
     }
@@ -860,7 +868,7 @@ static void build_net(void) {
 }
 
 void Ui_Toggle(void) {
-    if (sReady) {
+    if (sReady && !sQuit) {
         set_open(!sOpen);
     }
 }
@@ -888,7 +896,30 @@ int Ui_Event(const SDL_Event *ev) {
         ImGui_ImplSDL3_ProcessEvent(ev);
         return 0;
     }
-    if (sQuit) { // the exit question: Esc again takes it away; the rest is the question's
+    if (sQuit && PortQuit_Active()) { // game dialog: keyboard and controller operate its native Yes / No plates
+        if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat) {
+            SDL_Scancode key = ev->key.scancode;
+            if (key == SDL_SCANCODE_ESCAPE) { PortQuit_Action(PORT_QUIT_CANCEL); }
+            else if (key == SDL_SCANCODE_RETURN || key == SDL_SCANCODE_KP_ENTER || key == SDL_SCANCODE_SPACE) {
+                PortQuit_Action(PORT_QUIT_CONFIRM);
+            } else if (key == SDL_SCANCODE_LEFT || key == SDL_SCANCODE_RIGHT ||
+                       key == SDL_SCANCODE_UP || key == SDL_SCANCODE_DOWN) {
+                if (PortQuit_Ready()) { say_quit_button(1 - PortQuit_Cursor(), 1); }
+                PortQuit_Action(PORT_QUIT_MOVE);
+            }
+        } else if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+            SDL_GamepadButton button = (SDL_GamepadButton)ev->gbutton.button;
+            if (button == SDL_GAMEPAD_BUTTON_SOUTH) { PortQuit_Action(PORT_QUIT_CONFIRM); }
+            else if (button == SDL_GAMEPAD_BUTTON_EAST) { PortQuit_Action(PORT_QUIT_CANCEL); }
+            else if (button == SDL_GAMEPAD_BUTTON_DPAD_LEFT || button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT ||
+                     button == SDL_GAMEPAD_BUTTON_DPAD_UP || button == SDL_GAMEPAD_BUTTON_DPAD_DOWN) {
+                if (PortQuit_Ready()) { say_quit_button(1 - PortQuit_Cursor(), 1); }
+                PortQuit_Action(PORT_QUIT_MOVE);
+            }
+        }
+        return 1;
+    }
+    if (sQuit) { // fallback when the native dialog resource cannot be loaded
         if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode == SDL_SCANCODE_ESCAPE) {
             sQuitNo = sQuitNo || !ev->key.repeat; // (taken away where it is drawn)
             return 1;
@@ -1591,7 +1622,7 @@ static void build(void) {
         }
         ImGui::Separator();
         if (ImGui::Button("Exit game")) {
-            sQuit = true;
+            Ui_QuitAsk();
         }
         if ((io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0) {
             ImGui::SameLine();
@@ -1771,6 +1802,11 @@ static void font_draw(ImDrawList *dl, const FontName *n, float x, float y, float
 // Builds this frame's picture of the overlay (the settings or the online window, the line over the picture).
 // false: there is nothing to draw. The same for both back ends; each then draws ImGui's data its own way.
 static bool frame_build(void) {
+    if (sQuit && !PortQuit_Active() && !PortQuit_Failed()) {
+        sQuit = false;
+        input_owner();
+        PortA11y_Say(PortA11y_Label("Back to the game"), 1);
+    }
     if (sReady && gPortNetWindowClose) { // back from an online session: the window it was started from closes
         gPortNetWindowClose = 0;
         gPortNetMenuRequest = 0;
@@ -1840,7 +1876,7 @@ static bool frame_build(void) {
             build();
         }
     }
-    if (sQuit) {
+    if (sQuit && PortQuit_Failed()) {
         build_quit();
     }
     if (meter) {
