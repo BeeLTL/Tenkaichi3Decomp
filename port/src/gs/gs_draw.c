@@ -310,6 +310,12 @@ static GsTex tbo_texture(uint32_t id) {
             const uint8_t *c = row + x * 4;
             uint32_t a = ((uint32_t)c[3] * 128 + 127) / 255; /* the GS's alpha: 0x80 is opaque */
             px[y * w + x] = (uint32_t)c[0] | ((uint32_t)c[1] << 8) | ((uint32_t)c[2] << 16) | (a << 24);
+            /* the window: its inside is bands of two teals, which fall anywhere under the lines at the sizes it is
+               drawn (src/menu/port_tbo.c, Tb_Panel). Every teal pixel is the darker one; the frame (grey, nearly
+               black) is not teal and stays, its round corners with it. */
+            if (id == TBO_KIT_WINDOW && c[3] == 255 && c[0] < 60 && c[1] >= 60 && c[1] <= 125 && c[2] + 10 >= c[1] && c[2] <= c[1] + 15) {
+                px[y * w + x] = 27u | (86u << 8) | (92u << 16) | (a << 24);
+            }
         }
     }
     SDL_DestroySurface(rgba);

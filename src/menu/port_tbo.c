@@ -1369,13 +1369,8 @@ static void Tb_Pill(s32 id, f32 x0, f32 y0, f32 x1, f32 y1, s32 alpha) {
     Tb_Sprite(id, x1 - cap, y0, x1, y1, 1.0f - cu, 0.0f, 1.0f, 1.0f, TB_PLAIN, alpha);
 }
 
-/* A piece of the kit as a box: its corners keep their shape, its sides and middle stretch. */
-static void Tb_Rect(f32 x0, f32 y0, f32 x1, f32 y1, u32 top, u32 bottom);
-
-/* kit_window's frame is this many of the picture's pixels thick (465 x 224: the inside from 11 to 453 and to 212).
-   Inside it, its light stripes fall anywhere under the lines at the sizes it is drawn: the inside is covered in the
-   picture's own dark teal, the frame stays. */
-#define TB_WINDOW_FRAME 11.5f
+/* A piece of the kit as a box: its corners keep their shape, its sides and middle stretch. (kit_window's inside is
+   made one teal when it is read: port/src/gs/gs_draw.c, tbo_texture.) */
 
 static void Tb_Panel(s32 id, f32 x0, f32 y0, f32 x1, f32 y1, s32 alpha) {
     f32 w = Tb_PicW(id);
@@ -1414,12 +1409,6 @@ static void Tb_Panel(s32 id, f32 x0, f32 y0, f32 x1, f32 y1, s32 alpha) {
         for (i = 0; i < 3; i++) {
             Tb_Sprite(id, xs[i], ys[j], xs[i + 1], ys[j + 1], us[i], vs[j], us[i + 1], vs[j + 1], TB_PLAIN, alpha);
         }
-    }
-    if (id == TBO_KIT_WINDOW) {
-        f32 fx = TB_WINDOW_FRAME * cx / c;
-        f32 fy = TB_WINDOW_FRAME * cy / c;
-
-        Tb_Rect(x0 + fx, y0 + fy, x1 - fx, y1 - fy, Mm_Rgba(27, 86, 92, alpha), Mm_Rgba(27, 86, 92, alpha));
     }
 }
 
