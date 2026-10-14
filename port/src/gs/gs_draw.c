@@ -171,6 +171,101 @@ static const char *const kTboNames[TBO_ART_COUNT] = {TBO_ART_LIST(TBO_NAME)};
 static GsTex sTboTex[TBO_ART_COUNT];
 static unsigned char sTboMissing[TBO_ART_COUNT]; /* not found or not readable: not looked for again */
 
+/* Makes a texture of RGBA pixels (the GS's alpha) with its smaller copies, each half the one before, averaged by
+   2 x 2: these pictures are mostly shown smaller than they are (letters, the crest), and one sample of the full
+   picture per pixel shimmers. Takes `px`; 0 if no texture could be had. */
+static GsTex tbo_upload(uint32_t *px, uint32_t w, uint32_t h) {
+    uint32_t *lv[12];
+    uint32_t lw[12], lh[12], x, y;
+    int levels = 1, k;
+    GsTex tex;
+
+    lv[0] = px;
+    lw[0] = w;
+    lh[0] = h;
+    while (px != NULL && levels < 12 && (lw[levels - 1] > 1 || lh[levels - 1] > 1)) {
+        uint32_t pw = lw[levels - 1], ph = lh[levels - 1], nw = pw > 1 ? pw / 2 : 1, nh = ph > 1 ? ph / 2 : 1;
+        uint32_t *src = lv[levels - 1], *dst = malloc((size_t)nw * nh * 4);
+        if (dst == NULL) {
+            break;
+        }
+        for (y = 0; y < nh; y++) {
+            for (x = 0; x < nw; x++) {
+                uint32_t x0 = x * 2 < pw ? x * 2 : pw - 1, x1 = x * 2 + 1 < pw ? x * 2 + 1 : pw - 1;
+                uint32_t y0 = y * 2 < ph ? y * 2 : ph - 1, y1 = y * 2 + 1 < ph ? y * 2 + 1 : ph - 1;
+                uint32_t c[4] = {src[y0 * pw + x0], src[y0 * pw + x1], src[y1 * pw + x0], src[y1 * pw + x1]}, out = 0, ch;
+                uint32_t aw = 0;
+                for (k = 0; k < 4; k++) {
+                    aw += c[k] >> 24;
+                }
+                for (ch = 0; ch < 24; ch += 8) { /* colour weighted by alpha: no dark rims round what is cut out */
+                    uint32_t sum = 0;
+                    for (k = 0; k < 4; k++) {
+                        sum += ((c[k] >> ch) & 0xFF) * ((c[k] >> 24) + (aw == 0 ? 1 : 0));
+                    }
+                    out |= (aw != 0 ? sum / aw : sum / 4) << ch;
+                }
+                dst[y * nw + x] = out | ((aw + 2) / 4) << 24;
+            }
+        }
+        lv[levels] = dst;
+        lw[levels] = nw;
+        lh[levels] = nh;
+        levels++;
+    }
+    if (px != NULL && sBackend->texSlotsLeft() < levels) {
+        for (k = 1; k < levels; k++) {
+            free(lv[k]);
+        }
+        levels = 1;
+    }
+    tex = px != NULL ? sBackend->texCreate(w, h, GS_TEXFMT_RGBA8, levels) : 0;
+    if (tex == 0) {
+        for (k = 0; k < levels; k++) {
+            free(lv[k]);
+        }
+        return 0;
+    }
+    for (k = 0; k < levels; k++) {
+        sBackend->texUpload(tex, k, lw[k], lh[k], GS_TEXFMT_RGBA8, lv[k], lw[k] * lh[k] * 4);
+    }
+    return tex;
+}
+
+/* The lines of letters (gs/tbo_text.c): each place's texture and what it shows; a texture drawn in this frame is
+   kept until the next (the line changed under it: the old one is shown once more). */
+extern uint32_t TboText_Version(uint32_t id);
+extern uint32_t *TboText_Pixels(uint32_t id, uint32_t *version, uint32_t *w, uint32_t *h);
+static struct {
+    GsTex tex;
+    uint32_t version, frame;
+} sTboText[TBO_TEXT_SLOTS];
+
+static GsTex tbo_text_texture(uint32_t id) {
+    uint32_t slot = id - TBO_TEXT_BASE, version = TboText_Version(id), w, h, *px;
+    GsTex tex;
+
+    if (sTboText[slot].tex != 0 && (sTboText[slot].version == version || sTboText[slot].frame == gGsFrame)) {
+        sTboText[slot].frame = gGsFrame;
+        return sTboText[slot].tex;
+    }
+    if (sBackend->texSlotsLeft() <= 0) {
+        return sTboText[slot].tex != 0 ? sTboText[slot].tex : gsWhite;
+    }
+    px = TboText_Pixels(id, &version, &w, &h);
+    tex = px != NULL ? tbo_upload(px, w, h) : 0;
+    if (tex == 0) {
+        return sTboText[slot].tex != 0 ? sTboText[slot].tex : gsWhite;
+    }
+    if (sTboText[slot].tex != 0) {
+        sBackend->texDestroy(sTboText[slot].tex);
+    }
+    sTboText[slot].tex = tex;
+    sTboText[slot].version = version;
+    sTboText[slot].frame = gGsFrame;
+    return tex;
+}
+
 static GsTex tbo_texture(uint32_t id) {
     char path[1024];
     SDL_Surface *png, *rgba;
@@ -178,6 +273,9 @@ static GsTex tbo_texture(uint32_t id) {
     GsTex tex;
     const char *base;
 
+    if (id >= TBO_TEXT_BASE && id < TBO_TEXT_BASE + TBO_TEXT_SLOTS) {
+        return tbo_text_texture(id);
+    }
     if (id >= TBO_ART_COUNT || sTboMissing[id]) {
         return gsWhite;
     }
@@ -215,62 +313,9 @@ static GsTex tbo_texture(uint32_t id) {
         }
     }
     SDL_DestroySurface(rgba);
-    {
-        /* With its smaller copies (each half the one before, averaged by 2 x 2): these pictures are mostly shown
-           smaller than they are (letters, the crest), and one sample of the full picture per pixel shimmers. */
-        uint32_t *lv[12];
-        uint32_t lw[12], lh[12];
-        int levels = 1, k;
-
-        lv[0] = px;
-        lw[0] = w;
-        lh[0] = h;
-        while (px != NULL && levels < 12 && (lw[levels - 1] > 1 || lh[levels - 1] > 1)) {
-            uint32_t pw = lw[levels - 1], ph = lh[levels - 1], nw = pw > 1 ? pw / 2 : 1, nh = ph > 1 ? ph / 2 : 1;
-            uint32_t *src = lv[levels - 1], *dst = malloc((size_t)nw * nh * 4);
-            if (dst == NULL) {
-                break;
-            }
-            for (y = 0; y < nh; y++) {
-                for (x = 0; x < nw; x++) {
-                    uint32_t x0 = x * 2 < pw ? x * 2 : pw - 1, x1 = x * 2 + 1 < pw ? x * 2 + 1 : pw - 1;
-                    uint32_t y0 = y * 2 < ph ? y * 2 : ph - 1, y1 = y * 2 + 1 < ph ? y * 2 + 1 : ph - 1;
-                    uint32_t c[4] = {src[y0 * pw + x0], src[y0 * pw + x1], src[y1 * pw + x0], src[y1 * pw + x1]}, out = 0, ch;
-                    uint32_t aw = 0;
-                    for (k = 0; k < 4; k++) {
-                        aw += c[k] >> 24;
-                    }
-                    for (ch = 0; ch < 24; ch += 8) { /* colour weighted by alpha: no dark rims round what is cut out */
-                        uint32_t sum = 0;
-                        for (k = 0; k < 4; k++) {
-                            sum += ((c[k] >> ch) & 0xFF) * ((c[k] >> 24) + (aw == 0 ? 1 : 0));
-                        }
-                        out |= (aw != 0 ? sum / aw : sum / 4) << ch;
-                    }
-                    dst[y * nw + x] = out | ((aw + 2) / 4) << 24;
-                }
-            }
-            lv[levels] = dst;
-            lw[levels] = nw;
-            lh[levels] = nh;
-            levels++;
-        }
-        if (px != NULL && sBackend->texSlotsLeft() < levels) {
-            for (k = 1; k < levels; k++) {
-                free(lv[k]);
-            }
-            levels = 1;
-        }
-        tex = px != NULL ? sBackend->texCreate(w, h, GS_TEXFMT_RGBA8, levels) : 0;
-        if (tex == 0) {
-            for (k = 0; k < levels; k++) {
-                free(lv[k]);
-            }
-            return gsWhite;
-        }
-        for (k = 0; k < levels; k++) {
-            sBackend->texUpload(tex, k, lw[k], lh[k], GS_TEXFMT_RGBA8, lv[k], lw[k] * lh[k] * 4);
-        }
+    tex = tbo_upload(px, w, h);
+    if (tex == 0) {
+        return gsWhite;
     }
     sTboTex[id] = tex;
     fprintf(stderr, "bt3: tbo: %s (%ux%u)\n", kTboNames[id], (unsigned)w, (unsigned)h);

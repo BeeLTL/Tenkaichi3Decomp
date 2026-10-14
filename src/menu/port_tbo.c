@@ -67,13 +67,14 @@ static void Mm_Quad(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2, f32 x3, f32 
     Dma_EndDirect(p);
 }
 
-/* (The PC keyboard is the pad here, as everywhere: its keys move and press on the keypads.) */
-static void Port_TextMode(s32 on) {
-    (void)on;
-}
-static s32 Port_TextRead(void) {
-    return 0;
-}
+/* The PC keyboard (port/src/gs/gs_input.c): on a keypad it types (a character at a time: 8 backspace, 13 enter,
+   27 escape (back), 0 none) and the arrow keys and the controller move on it. On the other screens it is the pad,
+   and Esc asks to close the game, as everywhere. */
+extern void PortTbo_TextMode(int on);
+extern int PortTbo_TextRead(void);
+extern void PortTbo_Copy(const char *text); /* onto the clipboard ("Copy Code") */
+#define Port_TextMode PortTbo_TextMode
+#define Port_TextRead PortTbo_TextRead
 static void Port_EscQuit(s32 on) {
     (void)on;
 }
@@ -390,6 +391,7 @@ static char sTbBgCode[CODE_LEN + 1];
 static void Tb_Prompt(s32 kind, char *label);
 static void Tb_Pill(s32 id, f32 x0, f32 y0, f32 x1, f32 y1, s32 alpha);
 static void Tb_Text(f32 x, f32 y, char *s, f32 scale, f32 width, s32 style);
+static f32 Tb_TextTop(f32 middle, f32 scale);
 static void Tb_Align(s32 align);
 static f32 Tb_Beat(s32 period);
 
@@ -453,8 +455,8 @@ static void Tb_Note(char *line) {
 }
 
 static void Tb_SetMode(s32 mode) {
-    sTb->typing = 0;
-    Port_TextMode(0); /* (the keyboard types only when asked, on a keypad: else I is triangle, K cross ...) */
+    sTb->typing = mode == TB_JOIN || mode == TB_NAME; /* the keyboard types on a keypad (elsewhere I is triangle ...) */
+    Port_TextMode(sTb->typing);
     sTb->mode = mode;
     sTb->modeT = 0;
 }
@@ -634,6 +636,9 @@ static void Tb_WaitUpdate(s32 live) {
     Pad *pad = &gPad[0];
 
     if (!sTb->found) {
+        if (sTb->host == 1 && Port_LobbyCode()[0] != 0) {
+            Tb_Prompt(0, "Copy Code");
+        }
         Tb_Prompt(1, "Train While Waiting");
         Tb_Prompt(4, "Cancel");
     }
@@ -643,7 +648,11 @@ static void Tb_WaitUpdate(s32 live) {
     if (!live || sTb->found) {
         return;
     }
-    if (pad->gamePressed & PADG_SQUARE) { /* the fighters of the sparring fight first; the search goes on */
+    if ((pad->gamePressed & PADG_CROSS) && sTb->host == 1 && Port_LobbyCode()[0] != 0) { /* the code, to paste to the rival */
+        PortTbo_Copy(Port_LobbyCode());
+        Snd_PlaySe(1, 1);
+        Tb_Note("COPIED: PASTE THE CODE TO YOUR RIVAL");
+    } else if (pad->gamePressed & PADG_SQUARE) { /* the fighters of the sparring fight first; the search goes on */
         Snd_PlaySe(1, 1);
         sTb->spCur = 2;
         Tb_SetMode(TB_SPAR);
@@ -943,10 +952,6 @@ static s32 Tb_PadUpdate(s32 rows, char (*keys)[KEY_COLS + 1], const TbKeyBtn *b,
     return 0;
 }
 
-/* Circle: the PC keyboard types (letters, backspace, enter; escape stops typing) or is the pad again. */
-static void Tb_TypingToggle(void) {
-}
-
 /* Draws a keypad at (x, y): its keys, the cursor and the buttons' row. */
 static void Tb_Keypad(f32 x, f32 y, s32 rows, char (*keys)[KEY_COLS + 1], const TbKeyBtn *b, s32 nb) {
     char one[2] = {0, 0};
@@ -968,7 +973,7 @@ static void Tb_Keypad(f32 x, f32 y, s32 rows, char (*keys)[KEY_COLS + 1], const 
             }
             one[0] = keys[r][c];
             Tb_Align(1);
-            Tb_Text(kx + 16.0f, ky + 2.0f, one, 0.72f, 0.0f, on ? 1 : 0);
+            Tb_Text(kx + 16.0f, Tb_TextTop(ky + 14.0f, 0.72f), one, 0.72f, 0.0f, on ? 1 : 0);
             Tb_Align(0);
         }
     }
@@ -979,7 +984,7 @@ static void Tb_Keypad(f32 x, f32 y, s32 rows, char (*keys)[KEY_COLS + 1], const 
 
         Tb_Pill(on ? TBO_KIT_SEL : b[k].act == TB_KEY_OK ? TBO_KIT_GOLD : TBO_KIT_BAR, x0, by, x1, by + 28.0f, 0x80);
         Tb_Align(1);
-        Tb_Text((x0 + x1) * 0.5f, by + 4.0f, b[k].label, 0.6f, x1 - x0 - 12.0f, on ? 1 : b[k].act == TB_KEY_OK ? 2 : 0);
+        Tb_Text((x0 + x1) * 0.5f, Tb_TextTop(by + 14.0f, 0.6f), b[k].label, 0.6f, x1 - x0 - 12.0f, on ? 1 : b[k].act == TB_KEY_OK ? 2 : 0);
         Tb_Align(0);
     }
 }
@@ -1027,17 +1032,16 @@ static void Tb_JoinUpdate(s32 live) {
         if (c == 13) {
             Tb_JoinTry();
             return;
-        } else if (c == 27) {
-            sTb->typing = 0;
-            Port_TextMode(0);
+        } else if (c == 27) { /* Esc: back, as triangle */
             Snd_PlaySe(1, 2);
+            Tb_SetMode(TB_HUB);
+            return;
         } else if (c == 8) {
             Tb_CodeBack();
         } else {
             Tb_CodeAdd(c);
         }
     }
-    Tb_TypingToggle();
     c = Tb_PadUpdate(KEY_ROWS, sTbKeys, sTbJoinBtn, 2);
     if (c > 0) {
         Tb_CodeAdd(c);
@@ -1120,10 +1124,9 @@ static void Tb_NameUpdate(s32 live) {
     while (sTb->typing && (c = Port_TextRead()) != 0) {
         if (c == 13) {
             done = 1;
-        } else if (c == 27) {
-            sTb->typing = 0;
-            Port_TextMode(0);
-            Snd_PlaySe(1, 2);
+        } else if (c == 27) { /* Esc: cancel, as triangle */
+            done = -1;
+            break;
         } else if (c == 8) {
             Tb_NameBack();
         } else {
@@ -1131,7 +1134,6 @@ static void Tb_NameUpdate(s32 live) {
         }
     }
     if (!done) {
-        Tb_TypingToggle();
         c = Tb_PadUpdate(NAME_ROWS, sTbNameKeys[sTb->lower], sTbNameBtn, 4);
         if (c > 0) {
             Tb_NameAdd(c);
@@ -1170,13 +1172,13 @@ static void Tb_NameUpdate(s32 live) {
    the renderer reads them, port/src/gs/gs_draw.c tbo_texture), on a 4:3 page in the middle of the window so that
    nothing is stretched on a wide one; the tournament grounds fill the whole window behind it. Positions below are
    in the game's 512 x 448 units of that page (a unit is 7:6 wide, hence the 0.857s). */
-extern int Port_AspectMilli(void); /* port/src/plat_stub.c: the window's width / height * 1000 */
+extern int Port_PageAspectMilli(void); /* port/src/plat_stub.c: the shape the menus are shown in (4:3 with "4:3 in menus", else the window's), width / height * 1000 */
 
 static f32 sTbPx, sTbPy, sTbPw = 512.0f, sTbPh = 448.0f; /* the page on the screen, set once a frame */
 static s32 sTbAlign;                                      /* 0 a line starts at its x, 1 is centred on it, 2 ends there */
 
 static void Tb_PageSet(void) {
-    f32 aspect = (f32)Port_AspectMilli() / 1000.0f;
+    f32 aspect = (f32)Port_PageAspectMilli() / 1000.0f;
     f32 page = 4.0f / 3.0f;
 
     if (aspect >= page) { /* wider: the whole height, the grounds at the sides */
@@ -1192,6 +1194,20 @@ static void Tb_PageSet(void) {
 
 static f32 Tb_X(f32 x) {
     return sTbPx + x * sTbPw / 512.0f;
+}
+
+#define TB_BAR_LEFT -30.0f /* the hub's bars start here (off the page: on a 4:3 screen, off its edge) */
+
+/* Where the window's left edge is, in the page's units (0 on a 4:3 window, less on a wider one). */
+static f32 Tb_Left(void) {
+    return -sTbPx * 512.0f / sTbPw;
+}
+
+/* The left of the crest and the title: in line with the bars, but on the screen. */
+static f32 Tb_TitleLeft(void) {
+    f32 l = Tb_Left() + 6.0f;
+
+    return l > TB_BAR_LEFT ? l : TB_BAR_LEFT;
 }
 
 static f32 Tb_Y(f32 y) {
@@ -1268,7 +1284,7 @@ static f32 Tb_PicH(s32 id) {
 
 /* The tournament grounds over the whole window: the middle of the 16:9 picture, as wide as the window is. */
 static void Tb_Backdrop(void) {
-    f32 aspect = (f32)Port_AspectMilli() / 1000.0f;
+    f32 aspect = (f32)Port_PageAspectMilli() / 1000.0f;
     f32 pic = Tb_PicW(TBO_BG) / Tb_PicH(TBO_BG);
     f32 u = aspect < pic ? aspect / pic : 1.0f;
     f32 v = aspect < pic ? 1.0f : pic / aspect;
@@ -1359,27 +1375,31 @@ static void Tb_Rect(f32 x0, f32 y0, f32 x1, f32 y1, u32 top, u32 bottom) {
     Tb_Quad(x0, y0, x1, y0, x0, y1, x1, y1, top, top, bottom, bottom);
 }
 
-/* ---- the letters (font.png: Arial Rounded MT Bold, fills above, outlines below) ---- */
+/* ---- the letters: lines written with the TrueType fonts of the font list (port/src/gs/tbo_text.c): the headings
+   and buttons in the Menu font, the hosts' talk in the Dialogue / UI font (F1 > UI; on "Original" the first font of
+   fonts.tsv for each) ---- */
+extern int PortTbo_TextId(const char *text, int kind);      /* a line's number for Tb_Sprite, -1: not written */
+extern int PortTbo_TextInfo(int id, int what);              /* its measures, in thousandths of its capitals */
+extern int PortTbo_TextMeasure(const char *text, int kind); /* how far the pen goes, without keeping it */
+
 static void Tb_Align(s32 align) {
     sTbAlign = align;
 }
 
-#define TB_CELL_UNITS 27.5f /* a letter's cell at scale 1, in the page's units */
+#define TB_CELL_UNITS 27.5f    /* a line's height at scale 1, in the page's units */
+#define TB_CAP_OF_CELL 0.49f   /* its capitals' height, and */
+#define TB_BASE_OF_CELL 0.744f /* its baseline, from its top */
+#define TB_UNIT_X 0.857f       /* a unit across is 7:6 of a unit down: letters keep their shape */
 
 static f32 Tb_TextWidth(char *str, f32 scale) {
-    f32 k = TB_CELL_UNITS * scale / (f32)TBO_FONT_CELL * 0.857f;
-    f32 w = 0.0f;
-    s32 i;
+    return (f32)PortTbo_TextMeasure(str, 0) / 1000.0f * TB_CELL_UNITS * scale * TB_CAP_OF_CELL * TB_UNIT_X;
+}
 
-    for (i = 0; str[i] != 0; i++) {
-        s32 c = (u8)str[i];
+/* Where a line of `scale` starts (its y) for its capitals to be centred on `middle`. */
+static f32 Tb_TextTop(f32 middle, f32 scale) {
+    f32 cell = TB_CELL_UNITS * scale;
 
-        if (c < 32 || c > 126) {
-            c = '?';
-        }
-        w += (f32)sTboGlyph[c - 32][3] / 16.0f * k;
-    }
-    return w;
+    return middle - cell * (TB_BASE_OF_CELL - TB_CAP_OF_CELL * 0.5f);
 }
 
 /* Colour of Mm_Rgba (0..255 per channel) as a tint of the white letters (0x80 = as they are). */
@@ -1400,29 +1420,50 @@ static u32 Tb_Mix(u32 a, u32 b, f32 t) {
     return out;
 }
 
+/* A line's picture (the line filled above, outlined below) over the page: the pen starting at x, the baseline at
+   `base`, capitals `cap` units high, squeezed across by `fit`. bands 0: the outline in `line`; else the fill from
+   `top` to `bottom` in that many bands. */
+static void Tb_Line(s32 id, f32 x, f32 base, f32 cap, f32 fit, u32 top, u32 bottom, u32 line, s32 bands, s32 alpha) {
+    f32 ky = cap / 1000.0f;
+    f32 kx = ky * fit * TB_UNIT_X;
+    f32 x0 = x - (f32)PortTbo_TextInfo(id, 4) * kx;
+    f32 x1 = x0 + (f32)PortTbo_TextInfo(id, 1) * kx;
+    f32 y0 = base - (f32)PortTbo_TextInfo(id, 3) * ky;
+    f32 h = (f32)PortTbo_TextInfo(id, 2) * ky;
+    s32 band;
+
+    if (bands == 0) {
+        Tb_Sprite(id, x0, y0, x1, y0 + h, 0.0f, 0.5f, 1.0f, 1.0f, Tb_Tint(line), alpha);
+        return;
+    }
+    for (band = 0; band < bands; band++) {
+        f32 t0 = (f32)band / (f32)bands;
+        f32 t1 = (f32)(band + 1) / (f32)bands;
+
+        Tb_Sprite(id, x0, y0 + h * t0, x1, y0 + h * t1, 0.0f, t0 * 0.5f, 1.0f, t1 * 0.5f,
+                  Tb_Tint(Tb_Mix(top, bottom, ((f32)band + 0.5f) / (f32)bands)), alpha);
+    }
+}
+
 /* A line of letters: filled from `top` to `bottom` (a gradient), outlined in `line`; squeezed to `width` if it is
    wider (0: no limit). The alpha is the top colour's. */
 static void Tb_TextEx(f32 x, f32 y, char *str, f32 scale, f32 width, u32 top, u32 bottom, u32 line) {
-    f32 k = TB_CELL_UNITS * scale / (f32)TBO_FONT_CELL;
-    f32 kx = k * 0.857f;
-    f32 w = Tb_TextWidth(str, scale);
-    f32 fw = (f32)TBO_FONT_W;
-    f32 fh = (f32)TBO_FONT_H;
+    f32 cell = TB_CELL_UNITS * scale;
+    f32 cap = cell * TB_CAP_OF_CELL;
+    f32 fit = 1.0f;
+    f32 w;
     s32 alpha = (s32)((top >> 24) & 0xFF);
-    s32 pass;
-    s32 band;
-    s32 i;
+    s32 id;
 
-    if (str[0] == 0) {
+    if (str[0] == 0 || (id = PortTbo_TextId(str, 0)) < 0) {
         return;
     }
+    w = (f32)PortTbo_TextInfo(id, 0) / 1000.0f * cap * TB_UNIT_X;
     if (width > 0.0f && w > width) {
-        f32 fit = width / w;
-
+        fit = width / w;
         if (fit < 0.6f) {
             fit = 0.6f;
         }
-        kx *= fit;
         w *= fit;
     }
     if (sTbAlign == 1) {
@@ -1430,76 +1471,28 @@ static void Tb_TextEx(f32 x, f32 y, char *str, f32 scale, f32 width, u32 top, u3
     } else if (sTbAlign == 2) {
         x -= w;
     }
-    for (pass = 0; pass < 2; pass++) { /* the outlines under all the fills */
-        f32 cx = x;
-
-        for (i = 0; str[i] != 0; i++) {
-            s32 c = (u8)str[i];
-            const u16 *g;
-            f32 gx0;
-            f32 gx1;
-
-            if (c < 32 || c > 126) {
-                c = '?';
-            }
-            g = sTboGlyph[c - 32];
-            gx0 = cx - (f32)TBO_FONT_PAD * kx;
-            gx1 = gx0 + (f32)g[2] * kx;
-            if (c != ' ') {
-                if (pass == 0) {
-                    Tb_Sprite(TBO_FONT, gx0, y, gx1, y + (f32)TBO_FONT_CELL * k, (f32)g[0] / fw, ((f32)g[1] + fh * 0.5f) / fh, (f32)(g[0] + g[2]) / fw,
-                              ((f32)g[1] + (f32)TBO_FONT_CELL + fh * 0.5f) / fh, Tb_Tint(line), alpha);
-                } else {
-                    for (band = 0; band < 3; band++) { /* the gradient in three bands */
-                        f32 t0 = (f32)band / 3.0f;
-                        f32 t1 = (f32)(band + 1) / 3.0f;
-
-                        Tb_Sprite(TBO_FONT, gx0, y + (f32)TBO_FONT_CELL * k * t0, gx1, y + (f32)TBO_FONT_CELL * k * t1, (f32)g[0] / fw,
-                                  ((f32)g[1] + (f32)TBO_FONT_CELL * t0) / fh, (f32)(g[0] + g[2]) / fw, ((f32)g[1] + (f32)TBO_FONT_CELL * t1) / fh,
-                                  Tb_Tint(Tb_Mix(top, bottom, ((f32)band + 0.5f) / 3.0f)), alpha);
-                    }
-                }
-            }
-            cx += (f32)g[3] / 16.0f * kx;
-        }
-    }
+    Tb_Line(id, x, y + cell * TB_BASE_OF_CELL, cap, fit, top, bottom, line, 0, alpha); /* the outline under the fill */
+    Tb_Line(id, x, y + cell * TB_BASE_OF_CELL, cap, fit, top, bottom, line, 3, alpha);
 }
 
-/* ---- the talk box's letters: the game's own font (msgfont.png), spaced and sized as the game draws it in the main
-   menu's box (a game pixel to a unit; each letter as far on as it is wide) ---- */
-static s32 Tb_MsgChar(s32 c) {
-    return c < 32 || c > 126 ? '?' - 32 : c - 32;
-}
+/* ---- the talk box's letters: capitals 11.5 units high, the baseline 18.25 down (about the size of the main
+   menu's own), white with a thin dark edge ---- */
+#define TB_MSG_CAP 11.5f
+#define TB_MSG_BASE 18.25f
 
 static f32 Tb_MsgWidth(char *str, f32 scale) {
-    f32 w = 0.0f;
-    s32 i;
-
-    for (i = 0; str[i] != 0; i++) {
-        w += (f32)sTboMsgW[Tb_MsgChar((u8)str[i])] * scale;
-    }
-    return w;
+    return (f32)PortTbo_TextMeasure(str, 1) / 1000.0f * TB_MSG_CAP * scale * TB_UNIT_X;
 }
 
 static void Tb_Msg(f32 x, f32 y, char *str, f32 scale, s32 alpha) {
-    f32 cw = (f32)TBO_MSG_CELL_W;
-    f32 ch = (f32)TBO_MSG_CELL_H;
-    f32 pw = (f32)(TBO_MSG_CELL_W + TBO_MSG_GAP);
-    f32 ph = (f32)(TBO_MSG_CELL_H + TBO_MSG_GAP);
-    f32 aw = pw * (f32)TBO_MSG_COLS;
-    f32 ah = ph * 6.0f;
-    s32 i;
+    s32 id;
 
-    for (i = 0; str[i] != 0; i++) {
-        s32 k = Tb_MsgChar((u8)str[i]);
-        f32 u0 = (f32)(k % TBO_MSG_COLS) * pw;
-        f32 v0 = (f32)(k / TBO_MSG_COLS) * ph;
-
-        if (str[i] != ' ') { /* (the cell has a pixel of rim left of the letter) */
-            Tb_Sprite(TBO_MSGFONT, x - scale, y, x - scale + cw * scale, y + ch * scale, u0 / aw, v0 / ah, (u0 + cw) / aw, (v0 + ch) / ah, TB_PLAIN, alpha);
-        }
-        x += (f32)sTboMsgW[k] * scale;
+    if (str[0] == 0 || (id = PortTbo_TextId(str, 1)) < 0) {
+        return;
     }
+    Tb_Line(id, x, y + TB_MSG_BASE * scale, TB_MSG_CAP * scale, 1.0f, 0, 0, Mm_Rgba(16, 20, 40, 255), 0, alpha);
+    Tb_Line(id, x, y + TB_MSG_BASE * scale, TB_MSG_CAP * scale, 1.0f, Mm_Rgba(255, 255, 255, 255),
+            Mm_Rgba(255, 255, 255, 255), 0, 1, alpha);
 }
 
 /* ---- the pad's buttons ---- */
@@ -1561,7 +1554,7 @@ static void Tb_PromptsDraw(void) {
         f32 x = Tb_PromptX(k);
 
         Tb_Button(sTbPromptKind[k], x + bw * 0.5f, 425.0f, 19.0f);
-        Tb_Msg(x + bw + 5.0f, 416.0f, sTbPromptLabel[k], 1.0f, 0x80);
+        Tb_Msg(x + bw + 5.0f, 425.0f - (TB_MSG_BASE - TB_MSG_CAP * 0.5f), sTbPromptLabel[k], 1.0f, 0x80); /* its capitals beside the button's middle */
     }
 }
 
@@ -1659,10 +1652,10 @@ static void Tb_DrawHub(void) {
         f32 x1 = Tb_HubRowEnd(i) + slide;
 
         if (i != sTb->hubCur) {
-            Tb_Pill(TBO_KIT_BAR, -30.0f + slide, y, x1, y + 24.0f, sTbHubReady[i] ? 0x80 : 0x60);
+            Tb_Pill(TBO_KIT_BAR, TB_BAR_LEFT + slide, y, x1, y + 24.0f, sTbHubReady[i] ? 0x80 : 0x60);
         }
     }
-    Tb_Pill(TBO_KIT_SEL, -30.0f + slide, sTb->hubY - 3.0f, Tb_HubRowEnd(sTb->hubCur) + 22.0f + slide, sTb->hubY + 27.0f, 0x80);
+    Tb_Pill(TBO_KIT_SEL, TB_BAR_LEFT + slide, sTb->hubY - 3.0f, Tb_HubRowEnd(sTb->hubCur) + 22.0f + slide, sTb->hubY + 27.0f, 0x80);
     Tb_Icon(TBO_CREST, 20.0f + slide + 2.0f * Tb_Beat(40), sTb->hubY + 12.0f, 24.0f, 0x80);
     for (i = 0; i < HUB_COUNT; i++) {
         if (!sTbHubReady[i]) {
@@ -1679,14 +1672,16 @@ static void Tb_DrawHubText(void) {
     for (i = 0; i < HUB_COUNT; i++) {
         f32 y = Tb_HubRowY(i);
 
+        /* each label's capitals in the middle of its bar (the bar under the cursor: hubY - 3 to hubY + 27) */
         if (i == sTb->hubCur) {
-            Tb_Text(36.0f + slide, sTb->hubY + 2.0f, sTbHubName[i], 0.84f, 0.0f, 1);
+            Tb_Text(36.0f + slide, Tb_TextTop(sTb->hubY + 12.0f, 0.84f), sTbHubName[i], 0.84f, 0.0f, 1);
         } else {
-            Tb_Text(36.0f + slide, y + 4.0f, sTbHubName[i], 0.7f, 0.0f, sTbHubReady[i] ? 0 : 4);
+            Tb_Text(36.0f + slide, Tb_TextTop(y + 12.0f, 0.7f), sTbHubName[i], 0.7f, 0.0f, sTbHubReady[i] ? 0 : 4);
         }
         if (!sTbHubReady[i]) {
             Tb_Align(1);
-            Tb_Text(Tb_HubRowEnd(i) - 26.0f + slide + (i == sTb->hubCur ? 18.0f : 0.0f), y + 7.0f, "SOON", 0.42f, 0.0f, 4);
+            Tb_Text(Tb_HubRowEnd(i) - 26.0f + slide + (i == sTb->hubCur ? 18.0f : 0.0f), Tb_TextTop(Tb_HubRowY(i) + 12.0f, 0.42f), "SOON", 0.42f,
+                    0.0f, 4);
             Tb_Align(0);
         }
     }
@@ -1726,14 +1721,14 @@ static void Tb_DrawCreateText(void) {
     value[CR_OPEN][0] = 0;
     Tb_Pill(TBO_KIT_GOLD, 70.0f, 70.0f, 244.0f, 90.0f, 0x80);
     Tb_Align(1);
-    Tb_Text(157.0f, 73.0f, "ROOM SETTINGS", 0.56f, 0.0f, 2);
+    Tb_Text(157.0f, Tb_TextTop(80.0f, 0.56f), "ROOM SETTINGS", 0.56f, 0.0f, 2);
     Tb_Align(0);
     for (i = 0; i < CR_COUNT; i++) {
         f32 y = 100.0f + 34.0f * (f32)i;
 
-        Tb_Text(36.0f, y + 5.0f, label[i], 0.66f, 120.0f, i == sTb->crCur ? 1 : 0);
+        Tb_Text(36.0f, Tb_TextTop(y + 13.0f, 0.66f), label[i], 0.66f, 120.0f, i == sTb->crCur ? 1 : 0);
         Tb_Align(2);
-        Tb_Text(266.0f, y + 7.0f, value[i], 0.54f, 130.0f, 3);
+        Tb_Text(266.0f, Tb_TextTop(y + 13.0f, 0.54f), value[i], 0.54f, 130.0f, 3);
         Tb_Align(0);
     }
 }
@@ -1763,9 +1758,6 @@ static void Tb_DrawJoinText(void) {
     }
     Tb_Align(0);
     Tb_Keypad(24.0f, 138.0f, KEY_ROWS, sTbKeys, sTbJoinBtn, 2);
-    if (sTb->typing) {
-        Tb_Text(26.0f, 54.0f, "TYPING ON THE KEYBOARD", 0.5f, 0.0f, 5);
-    }
 }
 
 static void Tb_DrawWait(void) {
@@ -1824,7 +1816,7 @@ static void Tb_DrawWaitText(void) {
         Tb_Text(22.0f, 190.0f, "THE HOST...", 0.46f, 150.0f, 0);
     }
     if (!sTb->found) {
-        Tb_Text(42.0f, 269.0f, "TRAIN WHILE WAITING", 0.5f, 134.0f, 1);
+        Tb_Text(42.0f, Tb_TextTop(278.0f, 0.5f), "TRAIN WHILE WAITING", 0.5f, 134.0f, 1);
     }
     Tb_Align(1);
     if (sTb->found) {
@@ -1879,7 +1871,7 @@ static void Tb_DrawName(void) {
     static char line[40];
 
     Tb_Panel(TBO_KIT_WINDOW, 64.0f, 62.0f, 448.0f, 340.0f, 0x80);
-    Tb_Text(84.0f, 70.0f, sTb->typing ? "TYPING ON THE KEYBOARD" : "TYPE YOUR NAME", 0.6f, 0.0f, sTb->typing ? 5 : 2);
+    Tb_Text(84.0f, 70.0f, "TYPE YOUR NAME", 0.6f, 0.0f, 2);
     Tb_Pill(TBO_KIT_BAR, 84.0f, 94.0f, 428.0f, 124.0f, 0x80);
     sprintf(line, "%s%s", sTb->typed, (sTb->frames / 16) & 1 ? "_" : " ");
     Tb_Text(100.0f, 97.0f, line, 0.86f, 310.0f, 1);
@@ -1962,9 +1954,9 @@ static void Tb_DrawProfileText(void) {
     for (i = 0; i < PR_COUNT; i++) {
         f32 y = 110.0f + 34.0f * (f32)i;
 
-        Tb_Text(36.0f, y + 5.0f, label[i], 0.66f, 110.0f, i == sTb->prCur ? 1 : 0);
+        Tb_Text(36.0f, Tb_TextTop(y + 13.0f, 0.66f), label[i], 0.66f, 110.0f, i == sTb->prCur ? 1 : 0);
         Tb_Align(2);
-        Tb_Text(266.0f, y + 7.0f, value[i], 0.54f, 140.0f, 3);
+        Tb_Text(266.0f, Tb_TextTop(y + 13.0f, 0.54f), value[i], 0.54f, 140.0f, 3);
         Tb_Align(0);
     }
 }
@@ -2037,7 +2029,7 @@ static void Tb_DrawText(void) {
     s32 len = Tb_Len(say);
     s32 k;
 
-    Tb_TextEx(52.0f, 15.0f, title[sTb->mode], sTb->mode == TB_HUB ? 0.92f : 1.1f, 244.0f, Mm_Rgba(0xFF, 0xF0, 0x50, 0x80),
+    Tb_TextEx(Tb_TitleLeft() + 44.0f, 15.0f, title[sTb->mode], sTb->mode == TB_HUB ? 0.92f : 1.1f, 244.0f, Mm_Rgba(0xFF, 0xF0, 0x50, 0x80),
               Mm_Rgba(0xF4, 0x40, 0x10, 0x80), Mm_Rgba(0x70, 0x10, 0x08, 0x80));
     switch (sTb->mode) {
     case TB_HUB:
@@ -2069,7 +2061,7 @@ static void Tb_DrawText(void) {
     Tb_Text(484.0f, 17.0f, sTb->mode == TB_WAIT || sTb->mode == TB_SPAR ? "SEARCHING" : "ONLINE", 0.48f, 0.0f, 5);
     Tb_Align(0);
     Tb_Text(322.0f, 34.0f, "TENKAICHI BUDOKAI ONLINE", 0.38f, 160.0f, 3);
-    /* the hosts' line in the game's letters, cut at spaces into lines of what fits (two at most) */
+    /* the hosts' line in the talk font, cut at spaces into lines of what fits (two at most) */
     {
         f32 room = 424.0f;
         s32 n = 0;
@@ -2080,15 +2072,29 @@ static void Tb_DrawText(void) {
             s32 brk = -1;
             f32 w = 0.0f;
 
-            while (end < len && w + (f32)sTboMsgW[Tb_MsgChar((u8)say[end])] <= room) {
-                w += (f32)sTboMsgW[Tb_MsgChar((u8)say[end])];
-                if (say[end] == ' ') {
-                    brk = end;
+            /* the most whole words that fit (a first word longer than the line is taken whole) */
+            for (;;) {
+                s32 next = end;
+                char part[80];
+
+                while (next < len && say[next] == ' ') {
+                    next++;
                 }
-                end++;
-            }
-            if (end < len && brk > at) {
-                end = brk;
+                while (next < len && say[next] != ' ') {
+                    next++;
+                }
+                k = next - at < 79 ? next - at : 79;
+                memcpy(part, say + at, k);
+                part[k] = 0;
+                w = Tb_MsgWidth(part, 1.0f);
+                if (brk >= 0 && w > room) {
+                    break;
+                }
+                brk = next;
+                end = next;
+                if (next >= len || k == 79) {
+                    break;
+                }
             }
             k = end - at < 79 ? end - at : 79;
             memcpy(lines[n], say + at, k);
@@ -2185,7 +2191,7 @@ s32 PortTbo_Run(void) {
         }
         Tb_PageSet();
         Tb_Backdrop();
-        Tb_Icon(TBO_CREST, 26.0f, 32.0f, 42.0f, 0x80); /* the tournament's crest beside the title */
+        Tb_Icon(TBO_CREST, Tb_TitleLeft() + 18.0f, 32.0f, 42.0f, 0x80); /* the tournament's crest beside the title */
         Tb_Draw();
         Tb_DrawText();
         Tb_PromptsDraw();

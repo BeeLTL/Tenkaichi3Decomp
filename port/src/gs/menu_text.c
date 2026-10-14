@@ -1536,3 +1536,146 @@ int MenuText_MapGlyph(int tbp, int cbp, int width, int height,
     pthread_mutex_unlock(&sLock);
     return found;
 }
+
+/* --------------------------------------------------------------------- lines for the PC's own screens */
+
+/* Tenkaichi Budokai Online (src/menu/port_tbo.c, gs/tbo_text.c) writes its lines with the fonts of this list: its
+   headings and buttons with the Menu font, its talk box with the Dialogue / UI font, and with a setting on
+   "Original" with the first font of fonts.tsv for that use (any font of the list if none is for it). Each of the
+   two kinds keeps its own copy of its font, opened when first needed and again when the setting changes. */
+static Face sLineFace[2];
+static int sLineChoice[2];       /* the font in sLineFace (0: none) */
+static uint32_t sLineGeneration; /* changes when one of the two changes */
+
+static int line_choice(int kind) {
+    int choice = kind == 0 ? sFontChoice : sSharedChoice, i;
+    menu_text_fonts();
+    if (choice > 0 && choice <= sFontCount && sFonts[choice - 1].usage != 0) { return choice; }
+    for (i = 0; i < sFontCount; i++) {
+        if (sFonts[i].usage & (kind == 0 ? 1 : 2)) { return i + 1; }
+    }
+    for (i = 0; i < sFontCount; i++) {
+        if (sFonts[i].usage != 0) { return i + 1; }
+    }
+    return 0;
+}
+
+/* (with the lock held) */
+static Face *line_face(int kind) {
+    int tries;
+    for (tries = 0; tries < 4; tries++) { /* (a font that cannot be used is taken off the list: the next one) */
+        int choice = line_choice(kind);
+        if (choice == sLineChoice[kind]) { break; }
+        face_close(&sLineFace[kind]);
+        sLineChoice[kind] = 0;
+        sLineGeneration++;
+        if (choice == 0) { break; }
+        if (font_open(&sLineFace[kind], choice)) { sLineChoice[kind] = choice; }
+    }
+    return sLineChoice[kind] != 0 ? &sLineFace[kind] : NULL;
+}
+
+/* The next character of UTF-8 text, 0 at its end; a malformed or control character is a question mark. */
+static unsigned line_next(const unsigned char **text) {
+    const unsigned char *p = *text;
+    unsigned c = *p++, minimum = 0;
+    int n = 0, i;
+    if (c == 0) { return 0; }
+    if (c >= 0xC2 && c <= 0xDF) { n = 1; c &= 31; minimum = 0x80; }
+    else if (c >= 0xE0 && c <= 0xEF) { n = 2; c &= 15; minimum = 0x800; }
+    else if (c >= 0xF0 && c <= 0xF4) { n = 3; c &= 7; minimum = 0x10000; }
+    else if (c >= 0x80) { *text = p; return '?'; }
+    for (i = 0; i < n; i++) {
+        if ((*p & 0xC0) != 0x80) { *text = p; return '?'; }
+        c = (c << 6) | (*p++ & 63);
+    }
+    *text = p;
+    if (c < minimum || c < 32 || (c >= 0x7F && c <= 0x9F) || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) { return '?'; }
+    return c;
+}
+
+/* Lays out (and with `out`, draws) a line: capitals `cap` pixels high, `pad` pixels of room on every side. The
+   picture is `*w` x `*h` coverage bytes (0..255), the baseline `*base` rows down, the pen starting `pad` pixels in;
+   returns how far the pen goes, in pixels (0: no font, or nothing to write). A character the font does not have is
+   a question mark. */
+#define LINE_CHARS 160
+static int line_layout(int kind, const char *text, int cap, int pad, uint8_t **out, int *w, int *h, int *base) {
+    const unsigned char *p = (const unsigned char *)text;
+    Face *f = line_face(kind);
+    int glyphs[LINE_CHARS], count = 0, i, ascent, descent, gap, adv, lsb, prev = 0, width, height, top;
+    float scale, x = 0.0f, pen[LINE_CHARS];
+    unsigned c;
+
+    if (f == NULL || text == NULL || cap < 4 || cap > 256 || pad < 0 || pad > 64) { return 0; }
+    scale = (float)cap / (float)f->capUnits;
+    while ((c = line_next(&p)) != 0 && count < LINE_CHARS) {
+        int g = face_glyph(f, c);
+        if (g == 0) { g = face_glyph(f, '?'); }
+        if (g == 0) { continue; }
+        if (prev != 0 && f->info.kern) { x += (float)face_kern(f, prev, g) * scale; }
+        pen[count] = x;
+        glyphs[count++] = g;
+        stbtt_GetGlyphHMetrics(&f->info, g, &adv, &lsb);
+        x += (float)adv * scale;
+        prev = g;
+    }
+    if (count == 0 || x > 4096.0f) { return 0; }
+    stbtt_GetFontVMetrics(&f->info, &ascent, &descent, &gap);
+    top = (int)ceilf((float)ascent * scale);
+    width = (int)ceilf(x) + 2 * pad;
+    height = top + (int)ceilf((float)-descent * scale) + 2 * pad;
+    if (height < cap + 2 * pad) { height = cap + 2 * pad; }
+    *w = width; *h = height; *base = pad + top;
+    if (out != NULL) {
+        uint8_t *px = calloc((size_t)width * height, 1);
+        *out = px;
+        for (i = 0; px != NULL && i < count; i++) {
+            int gw, gh, ox, oy, gx, gy;
+            float shift = pen[i] - floorf(pen[i]);
+            unsigned char *g = face_bitmap(f, glyphs[i], scale, scale, shift, 0.0f, &gw, &gh, &ox, &oy);
+            if (g == NULL) { continue; }
+            for (gy = 0; gy < gh; gy++) {
+                int y = *base + oy + gy;
+                if (y < 0 || y >= height) { continue; }
+                for (gx = 0; gx < gw; gx++) {
+                    int xx = pad + (int)floorf(pen[i]) + ox + gx;
+                    uint8_t v = g[(size_t)gy * gw + gx];
+                    if (xx >= 0 && xx < width && v > px[(size_t)y * width + xx]) { px[(size_t)y * width + xx] = v; }
+                }
+            }
+            free(g);
+        }
+    }
+    return (int)ceilf(x);
+}
+
+uint32_t MenuText_LineGeneration(void) {
+    uint32_t r;
+    pthread_mutex_lock(&sLock);
+    line_face(0);
+    line_face(1);
+    r = sLineGeneration;
+    pthread_mutex_unlock(&sLock);
+    return r;
+}
+
+int MenuText_LineMeasure(int kind, const char *text, int cap, int pad, int *w, int *h, int *base) {
+    int r;
+    if (kind < 0 || kind > 1) { return 0; }
+    pthread_mutex_lock(&sLock);
+    r = line_layout(kind, text, cap, pad, NULL, w, h, base);
+    pthread_mutex_unlock(&sLock);
+    return r;
+}
+
+uint8_t *MenuText_LineRender(int kind, const char *text, int cap, int pad, int *w, int *h, int *base) {
+    uint8_t *px = NULL;
+    if (kind < 0 || kind > 1) { return NULL; }
+    pthread_mutex_lock(&sLock);
+    if (line_layout(kind, text, cap, pad, &px, w, h, base) == 0) {
+        free(px);
+        px = NULL;
+    }
+    pthread_mutex_unlock(&sLock);
+    return px;
+}

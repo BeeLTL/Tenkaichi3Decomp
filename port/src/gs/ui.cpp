@@ -30,6 +30,9 @@ int Port_NetSpeedStandard(void);                   // what a quick match runs at
 void Port_NetNameSet(const char *name);         // gs/net.c: this player's name for the match
 int Port_IsWide(void);                         // plat_stub.c: the picture is wider than 4:3
 int Port_AspectMilli(void);
+extern "C" int gPortTboTyping;                     // gs_input.c: a keypad of Tenkaichi Budokai Online takes text
+extern "C" int PortInput_TboEvent(const SDL_Event *ev);
+extern "C" void PortInput_TboClipboard(void);      // ... and its "Copy Code": onto the clipboard, from this thread
 void Match_UpdateAsk(void);                    // net_match.c: asks GitHub for the newest release, once
 int Match_UpdateLatest(void);                  // ... its number (0.1.33 is 133), 0 while unknown
 int Port_Menus43(void);                       // plat_stub.c: the menus are shown at 4:3 in a wider picture
@@ -956,6 +959,9 @@ int Ui_Event(const SDL_Event *ev) {
     if (ev->type == SDL_EVENT_GAMEPAD_ADDED || ev->type == SDL_EVENT_GAMEPAD_REMOVED) { // (also while it is closed: its list of controllers)
         ImGui_ImplSDL3_ProcessEvent(ev);
         return 0;
+    }
+    if (!sOpen && !sQuit && !sChat && PortInput_TboEvent(ev)) { // typed on a keypad of Tenkaichi Budokai Online
+        return 1;
     }
     if (sQuit && PortQuit_Active()) { // game dialog: keyboard and controller operate its native Yes / No plates
         if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat) {
@@ -2045,6 +2051,16 @@ static void chat_draw(void) {
 // Builds this frame's picture of the overlay (the settings or the online window, the line over the picture).
 // false: there is nothing to draw. The same for both back ends; each then draws ImGui's data its own way.
 static bool frame_build(void) {
+    PortInput_TboClipboard();
+    { // a keypad of Tenkaichi Budokai Online takes text: the system's text input is on for it (letters as typed)
+        static SDL_Window *on = NULL;
+        SDL_Window *want = gPortTboTyping && !sOpen && !sQuit && !sChat ? SDL_GetKeyboardFocus() : NULL;
+        if (want != on) {
+            if (on != NULL) { SDL_StopTextInput(on); }
+            if (want != NULL) { SDL_StartTextInput(want); }
+            on = want;
+        }
+    }
     if (sQuit && !PortQuit_Active() && !PortQuit_Failed()) {
         sQuit = false;
         input_owner();

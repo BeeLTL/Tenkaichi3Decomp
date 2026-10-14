@@ -20,14 +20,12 @@
     X(TBO_KIT_WINDOW, "kit_window")         /* a window, */ \
     X(TBO_KIT_GOLD, "kit_gold")             /* the gold capsule, */ \
     X(TBO_KIT_STEEL, "kit_steel")           /* the steel capsule */ \
-    X(TBO_FONT, "font")                     /* the letters: fills above, outlines below */ \
     X(TBO_BTN_CROSS, "btn_cross")           /* the pad's buttons, in the order of the prompts' kinds */ \
     X(TBO_BTN_SQUARE, "btn_square") \
     X(TBO_BTN_TRIANGLE, "btn_triangle") \
     X(TBO_BTN_LEFTRIGHT, "btn_leftright") \
     X(TBO_BTN_CIRCLE, "btn_circle") \
-    X(TBO_BTN_START, "btn_start") \
-    X(TBO_MSGFONT, "msgfont")               /* the game's own talk-box letters, made large */
+    X(TBO_BTN_START, "btn_start")
 
 #define TBO_ART_ENUM(id, name) id,
 enum { TBO_ART_LIST(TBO_ART_ENUM) TBO_ART_COUNT };
@@ -37,5 +35,10 @@ enum { TBO_ART_LIST(TBO_ART_ENUM) TBO_ART_COUNT };
    the game never uses); the picture's number is in the palette address (CBP), the size given is 1024 x 1024 so
    that UVs 0..1024 cover the whole picture whatever its own size. */
 #define TBO_PSM 0x05
+
+/* The lines of letters (port/src/gs/tbo_text.c) are drawn the same way: numbers TBO_TEXT_BASE and on, one per line
+   the screens write, the picture made from a TrueType font of the font list. */
+#define TBO_TEXT_BASE 0x100
+#define TBO_TEXT_SLOTS 128
 
 #endif
