@@ -1494,6 +1494,42 @@ static void Tb_TextEx(f32 x, f32 y, char *str, f32 scale, f32 width, u32 top, u3
     Tb_Line(id, x, y + cell * TB_BASE_OF_CELL, cap, fit, top, bottom, line, 3, alpha);
 }
 
+/* A heading in the main menu's heading style (gold to red, a brown bevelled outline, a light rim: one picture in
+   its own colours), its capitals as Tb_TextEx's of that scale; squeezed to `width` if it is wider (0: no limit). */
+static void Tb_Heading(f32 x, f32 y, char *str, f32 scale, f32 width, s32 alpha) {
+    f32 cell = TB_CELL_UNITS * scale;
+    f32 cap = cell * TB_CAP_OF_CELL;
+    f32 ky = cap / 1000.0f;
+    f32 kx;
+    f32 fit = 1.0f;
+    f32 w;
+    f32 x0;
+    f32 y0;
+    s32 id;
+
+    if (str[0] == 0 || (id = PortTbo_TextId(str, 2)) < 0) {
+        return;
+    }
+    w = (f32)PortTbo_TextInfo(id, 0) / 1000.0f * cap * TB_UNIT_X;
+    if (width > 0.0f && w > width) {
+        fit = width / w;
+        if (fit < 0.6f) {
+            fit = 0.6f;
+        }
+        w *= fit;
+    }
+    if (sTbAlign == 1) {
+        x -= w * 0.5f;
+    } else if (sTbAlign == 2) {
+        x -= w;
+    }
+    kx = ky * fit * TB_UNIT_X;
+    x0 = x - (f32)PortTbo_TextInfo(id, 4) * kx;
+    y0 = y + cell * TB_BASE_OF_CELL - (f32)PortTbo_TextInfo(id, 3) * ky;
+    Tb_Sprite(id, x0, y0, x0 + (f32)PortTbo_TextInfo(id, 1) * kx, y0 + (f32)PortTbo_TextInfo(id, 2) * ky, 0.0f, 0.0f, 1.0f, 1.0f,
+              Tb_Tint(0xFFFFFF), alpha);
+}
+
 /* ---- the talk box's letters: capitals 11.5 units high, the baseline 18.25 down (about the size of the main
    menu's own), white with a thin dark edge ---- */
 #define TB_MSG_CAP 11.5f
@@ -1852,7 +1888,7 @@ static void Tb_DrawBlockText(void) {
     const char *m = t;
     s32 n;
 
-    Tb_TextEx(80.0f, 108.0f, "Cannot Go Online", 0.9f, 250.0f, Mm_Rgba(0xFF, 0xF0, 0x50, 0x80), Mm_Rgba(0xF4, 0x40, 0x10, 0x80), Mm_Rgba(0x70, 0x10, 0x08, 0x80));
+    Tb_Heading(80.0f, 108.0f, "Cannot Go Online", 0.9f, 250.0f, 0x80);
     Tb_Msg(80.0f, 146.0f, "Online matches are only between", 1.0f, 0x80);
     Tb_Msg(80.0f, 166.0f, "two unmodded games.", 1.0f, 0x80);
     while (*m != 0 && strncmp(m, "modified:", 9) != 0) {
@@ -2043,8 +2079,7 @@ static void Tb_DrawText(void) {
     s32 len = Tb_Len(say);
     s32 k;
 
-    Tb_TextEx(Tb_TitleLeft() + 44.0f, 15.0f, title[sTb->mode], sTb->mode == TB_HUB ? 0.92f : 1.1f, 244.0f, Mm_Rgba(0xFF, 0xF0, 0x50, 0x80),
-              Mm_Rgba(0xF4, 0x40, 0x10, 0x80), Mm_Rgba(0x70, 0x10, 0x08, 0x80));
+    Tb_Heading(Tb_TitleLeft() + 44.0f, 15.0f, title[sTb->mode], sTb->mode == TB_HUB ? 0.92f : 1.1f, 244.0f, 0x80);
     switch (sTb->mode) {
     case TB_HUB:
         Tb_DrawHubText();

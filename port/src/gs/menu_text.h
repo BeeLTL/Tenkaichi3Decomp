@@ -53,6 +53,12 @@ uint8_t *MenuText_RenderStage(const char *text, int scale, int *outWidth, int *o
 uint32_t MenuText_LineGeneration(void);
 int MenuText_LineMeasure(int kind, const char *text, int cap, int pad, int *w, int *h, int *base);
 uint8_t *MenuText_LineRender(int kind, const char *text, int cap, int pad, int *w, int *h, int *base);
+/* A heading of those screens in the main menu's heading style (the colours of the replaced headings), in the
+   Menu font of kind 0. Measure gives the capitals' height *cap, the picture's *w x *h, the baseline *base rows down
+   and the letters' left edge *pad in, and returns how far the pen goes (pixels; 0: no font or no text). Render
+   returns the picture, RGBA with the GS's alpha (0x80 opaque), or NULL; free() it. */
+int MenuText_HeadingMeasure(const char *text, int *cap, int *w, int *h, int *base, int *pad);
+uint8_t *MenuText_HeadingRender(const char *text, int *w, int *h);
 #ifdef __cplusplus
 }
 #endif

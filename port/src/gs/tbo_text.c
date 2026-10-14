@@ -8,7 +8,8 @@
  * for it and its measures; it then draws it as one of the screens' pictures (TBO_PSM, the number in CBP). The
  * renderer asks here for the picture of that number (TboText_Pixels) the first time and whenever the line or the
  * font changed (its version). The picture is the line twice: filled above, outlined below, white, so the game
- * tints and blends it as it did its letter sheet.
+ * tints and blends it as it did its letter sheet; a heading (kind 2) is one picture in its colours, the main
+ * menu's heading style (MenuText_Heading*).
  *
  * Nothing here is game state: the screens are a menu of the PC's, before and outside an online match.
  */
@@ -42,14 +43,19 @@ static int line_cap(int kind) { return kind == 0 ? 80 : 48; }
 static int line_outline(int kind) { return kind == 0 ? 5 : 3; }
 
 static int line_measure(TboLine *l, uint32_t generation) {
-    l->cap = line_cap(l->kind);
-    l->outline = line_outline(l->kind);
-    l->pad = l->outline + 2;
     l->generation = generation;
     l->version = ++sVersion;
     if (sVersion == 0) {
         l->version = sVersion = 1;
     }
+    if (l->kind == 2) {
+        l->outline = 0;
+        l->advance = MenuText_HeadingMeasure(l->text, &l->cap, &l->w, &l->h, &l->base, &l->pad);
+        return l->advance > 0;
+    }
+    l->cap = line_cap(l->kind);
+    l->outline = line_outline(l->kind);
+    l->pad = l->outline + 2;
     l->advance = MenuText_LineMeasure(l->kind, l->text, l->cap, l->pad, &l->w, &l->h, &l->base);
     return l->advance > 0;
 }
@@ -60,7 +66,7 @@ int PortTbo_TextId(const char *text, int kind) {
     uint64_t now = SDL_GetTicks();
     int i, spare = -1, id = -1;
 
-    if (text == NULL || text[0] == '\0' || kind < 0 || kind > 1) {
+    if (text == NULL || text[0] == '\0' || kind < 0 || kind > 2) {
         return -1;
     }
     pthread_mutex_lock(&sLock);
@@ -104,7 +110,8 @@ int PortTbo_TextMeasure(const char *text, int kind) {
 }
 
 /* A measure of a line, in thousandths of its capitals' height: 0 how far the pen goes, 1 the picture's width,
-   2 its height (of one of its two halves), 3 the baseline from its top, 4 the room left of the pen's start. */
+   2 its height (of one of its two halves; a heading's: all of it), 3 the baseline from its top, 4 the room left of
+   the pen's start. */
 int PortTbo_TextInfo(int id, int what) {
     int r = 0, v;
     pthread_mutex_lock(&sLock);
@@ -129,7 +136,8 @@ uint32_t TboText_Version(uint32_t id) {
 }
 
 /* The picture of a line for the renderer: *w x *h RGBA (the GS's alpha, 0x80 opaque), the filled line in the upper
-   half and its outline in the lower; NULL if there is none. free() it. *version: what it shows. */
+   half and its outline in the lower (a heading: itself); NULL if there is none. free() it. *version: what it
+   shows. */
 uint32_t *TboText_Pixels(uint32_t id, uint32_t *version, uint32_t *w, uint32_t *h) {
     TboLine l;
     uint8_t *cov;
@@ -145,6 +153,16 @@ uint32_t *TboText_Pixels(uint32_t id, uint32_t *version, uint32_t *w, uint32_t *
     *version = l.version;
     if (l.version == 0 || l.advance <= 0) {
         return NULL;
+    }
+    if (l.kind == 2) {
+        px = (uint32_t *)(void *)MenuText_HeadingRender(l.text, &lw, &lh);
+        if (px != NULL && (lw != l.w || lh != l.h)) {
+            free(px);
+            px = NULL;
+        }
+        *w = (uint32_t)lw;
+        *h = (uint32_t)lh;
+        return px;
     }
     cov = MenuText_LineRender(l.kind, l.text, l.cap, l.pad, &lw, &lh, &lb);
     if (cov == NULL) {

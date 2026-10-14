@@ -798,7 +798,7 @@ void MenuText_Poll(void) {
 }
 
 /* Decode strictly, skipping characters absent from the selected font. Malformed UTF-8 keeps the original row. */
-static int menu_text_codes(const char *text, int *glyphs) {
+static int menu_text_codes(Face *font, const char *text, int *glyphs) {
     const unsigned char *p = (const unsigned char *)text;
     int count = 0;
     while (*p) {
@@ -814,7 +814,7 @@ static int menu_text_codes(const char *text, int *glyphs) {
         }
         if (c < minimum || c < 32 || (c >= 0x7F && c <= 0x9F) || c > 0x10FFFF ||
             (c >= 0xD800 && c <= 0xDFFF)) { return 0; }
-        g = face_glyph(&sFont, c);
+        g = face_glyph(font, c);
         if (g == 0) { continue; }
         glyphs[count++] = g;
     }
@@ -854,13 +854,14 @@ static void menu_text_distance_line(const float *src, float *dst, int length, in
     }
 }
 
-static int menu_text_row(const MenuLabel *label, int resolution, Row *out) {
+/* (in `font`: the Menu font's own, or the online screens' copy of it) */
+static int menu_text_row(Face *font, const MenuLabel *label, int resolution, Row *out) {
     typedef struct Ink { unsigned char *bitmap; int w, h, x, y; } Ink;
     unsigned char *fill = NULL, *body = NULL, *blur = NULL, *outer = NULL;
     float *distance = NULL, *rowDistance = NULL, *bounds = NULL, *bevelDistance = NULL;
     int *sites = NULL;
     Ink *ink;
-    int glyphs[256], len = menu_text_codes(label->text, glyphs);
+    int glyphs[256], len = menu_text_codes(font, label->text, glyphs);
     int i, x, y, c, advance, bearing, previous = 0, width = 0, ok = 0;
     int w = label->rowWidth * resolution, h = label->rowHeight * resolution, count;
     int radius = resolution, window = radius * 2 + 1;
@@ -875,7 +876,7 @@ static int menu_text_row(const MenuLabel *label, int resolution, Row *out) {
 
     if (border < 1) { border = 1; }
     if (label->outlineMilli >= 0) { border = label->outlineMilli / 1000.0f; }
-    scaleY = label->cap * resolution / (float)sFont.capUnits;
+    scaleY = label->cap * resolution / (float)font->capUnits;
     scaleX = scaleY * label->widthMilli / 1000.0f;
     if (label->italic) { available -= cap * 0.22f; }
     out->x = out->y = out->w = out->h = 0;
@@ -884,17 +885,17 @@ static int menu_text_row(const MenuLabel *label, int resolution, Row *out) {
 
     if (!len) { return 0; }
     for (i = 0; i < len; i++) {
-        stbtt_GetGlyphHMetrics(&sFont.info, glyphs[i], &advance, &bearing);
+        stbtt_GetGlyphHMetrics(&font->info, glyphs[i], &advance, &bearing);
         if (label->artWidth) {
             int x0, y0, x1, y1;
-            int at = width + (previous ? face_kern(&sFont, previous, glyphs[i]) : 0);
-            if (stbtt_GetGlyphBox(&sFont.info, glyphs[i], &x0, &y0, &x1, &y1)) {
+            int at = width + (previous ? face_kern(font, previous, glyphs[i]) : 0);
+            if (stbtt_GetGlyphBox(&font->info, glyphs[i], &x0, &y0, &x1, &y1)) {
                 if (!hasInk || at + x0 < inkLeft) { inkLeft = at + x0; }
                 if (!hasInk || at + x1 > inkRight) { inkRight = at + x1; }
                 hasInk = 1;
             }
         }
-        width += advance + (previous ? face_kern(&sFont, previous, glyphs[i]) : 0);
+        width += advance + (previous ? face_kern(font, previous, glyphs[i]) : 0);
         previous = glyphs[i];
     }
     if (label->artWidth && hasInk && inkRight > inkLeft) {
@@ -912,7 +913,7 @@ static int menu_text_row(const MenuLabel *label, int resolution, Row *out) {
         start -= inkLeft * scaleX;
     } else if (!label->center) {
         int x0, y0, x1, y1;
-        stbtt_GetGlyphBitmapBox(&sFont.info, glyphs[0], scaleX, scaleY, &x0, &y0, &x1, &y1);
+        stbtt_GetGlyphBitmapBox(&font->info, glyphs[0], scaleX, scaleY, &x0, &y0, &x1, &y1);
         start -= x0; /* align the glyph's visible edge, rather than its font-specific bearing */
     }
     /* the letters, and the box they cover in the row */
@@ -921,10 +922,10 @@ static int menu_text_row(const MenuLabel *label, int resolution, Row *out) {
     pen = start; previous = 0;
     for (i = 0; i < len; i++) {
         int ox = 0, oy = 0, px0, py0;
-        if (previous) { pen += face_kern(&sFont, previous, glyphs[i]) * scaleX; }
+        if (previous) { pen += face_kern(font, previous, glyphs[i]) * scaleX; }
         if (!(pen > -65536.0f && pen < 65536.0f)) { break; }
         px0 = (int)floorf(pen); py0 = (int)floorf(baseline);
-        ink[i].bitmap = face_bitmap(&sFont, glyphs[i], scaleX, scaleY, pen - px0, baseline - py0, &ink[i].w, &ink[i].h, &ox, &oy);
+        ink[i].bitmap = face_bitmap(font, glyphs[i], scaleX, scaleY, pen - px0, baseline - py0, &ink[i].w, &ink[i].h, &ox, &oy);
         if (ink[i].bitmap != NULL) {
             int x0 = px0 + ox, y0 = py0 + oy, x1 = x0 + ink[i].w, y1 = y0 + ink[i].h;
             ink[i].x = x0; ink[i].y = y0;
@@ -938,7 +939,7 @@ static int menu_text_row(const MenuLabel *label, int resolution, Row *out) {
             if (x1 > bx1) { bx1 = x1; }
             if (y1 > by1) { by1 = y1; }
         }
-        stbtt_GetGlyphHMetrics(&sFont.info, glyphs[i], &advance, &bearing);
+        stbtt_GetGlyphHMetrics(&font->info, glyphs[i], &advance, &bearing);
         pen += advance * scaleX; previous = glyphs[i];
     }
     if (bx0 < 0) { bx0 = 0; }
@@ -1136,7 +1137,7 @@ static int row_get(int n, int scale, Row *row, int *owned) {
             return 1;
         }
     }
-    if (!menu_text_row(&sLabels[n], scale, row)) { return 0; }
+    if (!menu_text_row(&sFont, &sLabels[n], scale, row)) { return 0; }
     bytes = (unsigned)row->w * (unsigned)row->h * 4;
     *owned = 1;
     if (bytes > ROW_CACHE_BYTES / 4) { return 1; }
@@ -1239,7 +1240,7 @@ static uint8_t *menu_text_render_name(const char *text, int kind, int scale, int
     bytes = (size_t)512 * label.rowHeight * scale * scale * 4;
     result = malloc(bytes);
     if (result == NULL) { return NULL; }
-    if (!menu_text_row(&label, scale, &row)) { free(result); return NULL; }
+    if (!menu_text_row(&sFont, &label, scale, &row)) { free(result); return NULL; }
     row_paste(result, 512 * scale, 0, 0, 512 * scale, label.rowHeight * scale, &row);
     free(row.px);
     /* Menu texture pixels use PS2 alpha; the ImGui overlay uses conventional RGBA. */
@@ -1675,6 +1676,65 @@ uint8_t *MenuText_LineRender(int kind, const char *text, int cap, int pad, int *
     if (line_layout(kind, text, cap, pad, &px, w, h, base) == 0) {
         free(px);
         px = NULL;
+    }
+    pthread_mutex_unlock(&sLock);
+    return px;
+}
+
+/* A heading of the online screens, drawn as the main menu's replaced headings are (menu_text_row with the colours
+   of menu_labels.c's "main-heading": gold to red, a brown outline with its bevel, a light rim round it), in their
+   row's measures: capitals HEADING_CAP pixels of the disc's texture, drawn HEADING_RES times larger. */
+#define HEADING_CAP 22
+#define HEADING_BASE 30   /* the baseline, from the row's top */
+#define HEADING_HEIGHT 42 /* the row */
+#define HEADING_MARGIN 8  /* left of the letters' edge, and right of their end */
+#define HEADING_RES 4
+
+static int heading_label(const char *text, MenuLabel *label) {
+    int adv, w, h, base;
+    size_t length = text != NULL ? strlen(text) : 0;
+    if (length == 0 || length >= sizeof(label->text)) { return 0; }
+    adv = line_layout(0, text, HEADING_CAP, 0, NULL, &w, &h, &base);
+    if (adv <= 0 || adv > 1000) { return 0; }
+    memset(label, 0, sizeof(*label));
+    label->rowWidth = adv + 2 * HEADING_MARGIN + 2 * 4 + 2; /* (4: menu_text_row's own room inside the margins) */
+    label->rowHeight = HEADING_HEIGHT;
+    label->cap = HEADING_CAP;
+    label->baseline = HEADING_BASE;
+    label->margin = HEADING_MARGIN;
+    label->widthMilli = 1000;
+    label->top = 0xFFBE2F; label->bottom = 0xFF2222; label->outline = 0x7C3025; label->outlineBottom = 0x64180C;
+    label->outlineMilli = 3000; label->outerMilli = 2000; label->outerColor = 0xFFEED8;
+    label->bevelMilli = 1000; label->bevelLight = 0xA86C5B; label->bevelDark = 0x180603;
+    memcpy(label->text, text, length + 1);
+    return adv;
+}
+
+int MenuText_HeadingMeasure(const char *text, int *cap, int *w, int *h, int *base, int *pad) {
+    MenuLabel label;
+    int adv;
+    pthread_mutex_lock(&sLock);
+    adv = line_face(0) != NULL ? heading_label(text, &label) : 0;
+    pthread_mutex_unlock(&sLock);
+    if (adv <= 0) { return 0; }
+    *cap = HEADING_CAP * HEADING_RES;
+    *w = label.rowWidth * HEADING_RES; *h = HEADING_HEIGHT * HEADING_RES;
+    *base = HEADING_BASE * HEADING_RES; *pad = HEADING_MARGIN * HEADING_RES;
+    return adv * HEADING_RES;
+}
+
+uint8_t *MenuText_HeadingRender(const char *text, int *w, int *h) {
+    MenuLabel label;
+    Row row;
+    uint8_t *px = NULL;
+    Face *f;
+    pthread_mutex_lock(&sLock);
+    f = line_face(0);
+    if (f != NULL && heading_label(text, &label) > 0 && menu_text_row(f, &label, HEADING_RES, &row)) {
+        *w = label.rowWidth * HEADING_RES; *h = HEADING_HEIGHT * HEADING_RES;
+        px = malloc((size_t)*w * *h * 4);
+        if (px != NULL) { row_paste(px, *w, 0, 0, *w, *h, &row); }
+        free(row.px);
     }
     pthread_mutex_unlock(&sLock);
     return px;
