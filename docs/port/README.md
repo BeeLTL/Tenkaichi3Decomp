@@ -3422,6 +3422,12 @@ Room): the titles, every item with its value, the box's lines, the keys and the 
 from it: what was typed and where the cursor went in the same blank are one line (two in one blank, the second cut
 the first: the cursor's jump to JOIN after the sixth letter was lost). Not heard with a speech library here.
 
+Also learnt on the way (how menus are made is in [menus.md](menus.md)): the message box is drawn after the
+hosts and is see-through, so a host picture cut off at its edge shows the cut through the box (the announcer looked
+legless until his picture was made to run down behind the box to the foot of the screen); and a game file that
+fails to compile still lets the program link, with that file's old object (menu_labels.c once: "link OK", but one
+stub more than before). Look for `error:` in the build's output, not only for "link OK".
+
 The lines of the online screens themselves cannot be made that way: names, room codes and the hosts' lines need
 every character, which the disc's labels do not have. They keep being written with the Menu font. Measured against
 the disc's letters (cap height, widths of "Dragon Net Battle" and "Ultimate Training"), the game's lettering is a
