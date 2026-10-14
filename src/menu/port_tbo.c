@@ -1694,7 +1694,7 @@ static void Tb_Radar(f32 cx, f32 cy, f32 r) {
 }
 
 static f32 Tb_HubRowY(s32 i) {
-    return 84.0f + 29.0f * (f32)i;
+    return 68.0f + 27.5f * (f32)i; /* the last bar (under the cursor: to +27) ends above the box (y 326) */
 }
 
 static f32 Tb_HubRowEnd(s32 i) {
@@ -2208,15 +2208,16 @@ static void Tb_WinTerm(void) {
     sTbWinRes = NULL;
 }
 
-/* The heading's window without the Duel menu's emblem and words ("Versus Menu"): the screens' own are drawn. */
+/* The heading's window with its emblem, without the Duel menu's words ("Versus Menu", the clip mc_icon): the
+   screens' own title is written there. As IconWin_Draw, with the words hidden after the movie's step (which
+   shows its clips again). */
 static void Tb_WinHeading(void) {
     MFlashRef ref;
 
-    Flash_FindLabel((MFlash *)gIconWin, NULL, "mc_title_icon", &ref);
-    Flash_ClipSetFlags((MFlash *)gIconWin, &ref, 2, 0);
+    Flash_Advance((MFlash *)gIconWin);
     Flash_FindLabel((MFlash *)gIconWin, NULL, "mc_icon", &ref);
     Flash_ClipSetFlags((MFlash *)gIconWin, &ref, 2, 0);
-    IconWin_Draw();
+    Flash_Draw((MFlash *)gIconWin);
 }
 
 s32 PortTbo_Run(void) {
@@ -2284,8 +2285,7 @@ s32 PortTbo_Run(void) {
         }
         Tb_PageSet();
         Tb_Backdrop();
-        Tb_WinHeading(); /* the clouds in the corners, the line under the title */
-        Tb_Icon(TBO_CREST, Tb_TitleLeft() + 18.0f, 32.0f, 42.0f, 0x80); /* the tournament's crest beside the title */
+        Tb_WinHeading(); /* the clouds in the corners, the emblem, the line under the title */
         Tb_Draw();
         Tb_DrawText();
         Tb_PromptsDraw();
