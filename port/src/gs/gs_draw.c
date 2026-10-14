@@ -432,9 +432,7 @@ static int pipeline_get(int ctx, int topo, int vu, int shadow) {
            with this rule see docs/port/README.md. BT3_NZ=0: every draw with the full shader again (to compare). */
         static int nz = -1;
         if (nz < 0) { nz = getenv("BT3_NZ") != NULL ? atoi(getenv("BT3_NZ")) : 1; }
-        /* Program 6 projects the ground shadow beside the fighter's feet. Keep its depth quantized by the
-           fragment shader so the shadow does not pass over the model. */
-        if (nz && !zwrite && ztst != 3 && vu != 3 && vu != 4) {
+        if (nz && !zwrite && ztst != 3 && vu != 4) {
             key |= 1u << 23;
         }
     }
