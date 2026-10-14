@@ -80,8 +80,10 @@ extern void PortTbo_Paste(void);            /* the clipboard's room code, typed 
    heading) and the message window (MsgWin: the teal box with the meander corners). */
 extern void MsgWin_SetText(void *text); /* (the rest: menu/menu_a.h) */
 extern void IconWin_PortHideWords(void);
-extern void MsgWin_PortWatchText(void);
-extern s32 MsgWin_PortTextAt(s32 rows, f32 *x, f32 *y);
+extern void MsgWin_PortDrawString(u16 *str); /* (battle/view_a_b.c) the box with a line of ours, in the game's font */
+extern s32 MsgWin_PortLineRoom(s32 right);
+extern void MsgWin_PortSameTop(void);
+extern s32 Font_GetWidth(u16 *str); /* (battle/col_c.c) a line's width in the game's font */
 #define Port_TextMode PortTbo_TextMode
 #define Port_TextRead PortTbo_TextRead
 static void Port_EscQuit(s32 on) {
@@ -2070,6 +2072,72 @@ static char *Tb_Help(void) {
     return "";
 }
 
+/* The hosts' line (Tb_Help) for the game's box, in the game's text: 16-bit, 0xFEFF first, cut at spaces into lines of
+   what fits (three at most) up to the step of the box's top right corner (at about 410 of the screen's 512: the box
+   is the game's movie, over the whole screen). Another buffer for another line (the screen reader tells them apart by
+   that). NULL: no line. */
+#define TB_BOX_LINE 224
+static u16 *Tb_BoxLine(void) {
+    static u16 buf[2][TB_BOX_LINE];
+    static char said[TB_BOX_LINE];
+    static s32 cur = -1;
+    char *say = Tb_Help();
+    u16 *out;
+    s32 room;
+    s32 n;
+    s32 start;
+    s32 lines;
+    s32 at;
+    s32 k;
+
+    if (say == NULL || say[0] == 0) {
+        return NULL;
+    }
+    for (k = 0; cur >= 0 && say[k] == said[k] && say[k] != 0; k++) {
+    }
+    if (cur >= 0 && say[k] == said[k]) {
+        return buf[cur];
+    }
+    Tb_Copy(said, say, TB_BOX_LINE);
+    cur = cur == 0 ? 1 : 0;
+    out = buf[cur];
+    room = MsgWin_PortLineRoom(400);
+    out[0] = 0xFEFF;
+    n = 1;
+    start = 1;
+    lines = 1;
+    at = 0;
+    while (say[at] == ' ') {
+        at++;
+    }
+    while (say[at] != 0 && n < TB_BOX_LINE - 2) {
+        s32 end = at;
+        s32 mark = n;
+
+        while (say[end] != 0 && say[end] != ' ') {
+            end++;
+        }
+        if (n > start) {
+            out[n++] = ' ';
+        }
+        for (k = at; k < end && n < TB_BOX_LINE - 1; k++) {
+            out[n++] = (u8)say[k];
+        }
+        out[n] = 0;
+        if (mark > start && lines < 3 && Font_GetWidth(out + start) > room) { /* the word goes to the next line */
+            out[mark] = '\n';
+            start = mark + 1;
+            lines++;
+        }
+        at = end;
+        while (say[at] == ' ') {
+            at++;
+        }
+    }
+    out[n] = 0;
+    return out;
+}
+
 /* What a page draws comes in from the left as it opens, as the hub's bars do (the hub moves its own: Tb_DrawHub);
    the title, the player card and the box stay where they are. The name's keypad comes in over the profile, which
    stays (on: 2 for the keypad). */
@@ -2108,8 +2176,7 @@ static void Tb_Draw(void) {
     }
     Tb_PageIn(0);
     Tb_Panel(TBO_KIT_WINDOW, 300.0f, 10.0f, 504.0f, 56.0f, 0x80); /* the player card */
-    MsgWin_PortWatchText(); /* where its text would be: the hosts' line goes there (Tb_DrawText) */
-    MsgWin_Draw(0, 0, 0); /* the game's box: the hosts' line, and the buttons under it */
+    MsgWin_PortDrawString(Tb_BoxLine()); /* the game's box with the hosts' line (the buttons under it: Tb_DrawText) */
     if (sTb->mode == TB_BLOCK) {
         Tb_DrawBlock();
     }
@@ -2118,10 +2185,6 @@ static void Tb_Draw(void) {
 static void Tb_DrawText(void) {
     static char *title[9] = {"Tenkaichi Budokai Online", "Create Room", "Join Room", "Searching", "Profile", "Profile", "Quick Match", "Train While Waiting",
                              "Tenkaichi Budokai Online"};
-    static char lines[3][80];
-    char *say = Tb_Help();
-    s32 len = Tb_Len(say);
-    s32 k;
 
     /* its capitals centred on the crest beside it (y 32); up to the player card */
     Tb_Heading(Tb_TitleLeft() + 44.0f, Tb_TextTop(32.0f, 1.3f), title[sTb->mode], 1.3f, 248.0f, 0x80);
@@ -2157,70 +2220,6 @@ static void Tb_DrawText(void) {
     Tb_Text(484.0f, 17.0f, sTb->mode == TB_WAIT || sTb->mode == TB_SPAR ? "SEARCHING" : "ONLINE", 0.48f, 0.0f, 5);
     Tb_Align(0);
     Tb_Text(322.0f, 34.0f, "TENKAICHI BUDOKAI ONLINE", 0.38f, 160.0f, 3);
-    /* the hosts' line in the talk font, cut at spaces into lines of what fits (two at most): where the game writes its
-       own lines in the box, up to the step of its top right corner. The box is the game's movie, drawn over the whole
-       screen (the 512 x 448 of the screen, not of this page in its middle): the step is at about 410 of its 512 */
-    {
-        f32 tx = 40.0f;
-        f32 room = 424.0f;
-        f32 sx, sy;
-        s32 n = 0;
-        s32 at = 0;
-
-        if (MsgWin_PortTextAt(1, &sx, &sy)) {
-            tx = (sx - sTbPx) * 512.0f / sTbPw;
-            room = (400.0f - sTbPx) * 512.0f / sTbPw - tx;
-        }
-
-        while (at < len && n < 2) {
-            s32 end = at;
-            s32 brk = -1;
-            f32 w = 0.0f;
-
-            /* the most whole words that fit (a first word longer than the line is taken whole) */
-            for (;;) {
-                s32 next = end;
-                char part[80];
-
-                while (next < len && say[next] == ' ') {
-                    next++;
-                }
-                while (next < len && say[next] != ' ') {
-                    next++;
-                }
-                k = next - at < 79 ? next - at : 79;
-                memcpy(part, say + at, k);
-                part[k] = 0;
-                w = Tb_MsgWidth(part, 1.0f);
-                if (brk >= 0 && w > room) {
-                    break;
-                }
-                brk = next;
-                end = next;
-                if (next >= len || k == 79) {
-                    break;
-                }
-            }
-            k = end - at < 79 ? end - at : 79;
-            memcpy(lines[n], say + at, k);
-            lines[n][k] = 0;
-            n++;
-            at = end;
-            while (at < len && say[at] == ' ') {
-                at++;
-            }
-        }
-        f32 ty = 359.0f;
-
-        /* where the game starts two rows. Always there, one row too: the game centres its few rows in the box, but
-           these lines change with the cursor, and a line that jumps up and down from item to item reads badly */
-        if (MsgWin_PortTextAt(2, &sx, &sy)) {
-            ty = (sy - sTbPy) * 448.0f / sTbPh;
-        }
-        for (k = 0; k < n; k++) {
-            Tb_Msg(tx, ty + 22.0f * (f32)k, lines[k], 1.0f, 0x80); /* (the rows 22 apart: the game's 32, 20, 10) */
-        }
-    }
     if (sTb->mode == TB_BLOCK) {
         Tb_DrawBlockText();
     }
@@ -2254,7 +2253,8 @@ static void Tb_WinInit(void) {
     IconWin_PortHideWords(); /* "Versus Menu" and its emblem: the screens' own title is written there */
     IconWin_Open();
     MsgWin_Init(MPACK_AT(sTbWinRes, 22), MPACK_AT(sTbWinRes, 21), 1, 0);
-    MsgWin_SetText(NULL); /* the box only: the hosts' lines are the screens' own */
+    MsgWin_SetText(NULL); /* the box only: the hosts' lines are the screens' own (Tb_BoxLine) */
+    MsgWin_PortSameTop();
     MsgWin_Open();
 }
 
