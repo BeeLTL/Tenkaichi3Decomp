@@ -686,7 +686,12 @@ static char *Tb_Fighter(s32 chara) {
         return "-";
     }
     if (!got[chara]) {
-        Tb_Copy(name[chara], chara < (s32)(sizeof(sTbNames) / sizeof(sTbNames[0])) ? sTbNames[chara] : "?", 48);
+        /* (not `?:` between the table's entry and a literal: the 32-bit pointer build read the entry as 8 bytes) */
+        if (chara < (s32)(sizeof(sTbNames) / sizeof(sTbNames[0]))) {
+            Tb_Copy(name[chara], sTbNames[chara], 48);
+        } else {
+            Tb_Copy(name[chara], "?", 48);
+        }
         got[chara] = 1;
     }
     return name[chara];
