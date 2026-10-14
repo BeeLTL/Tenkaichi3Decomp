@@ -73,6 +73,12 @@ static void Mm_Quad(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2, f32 x3, f32 
 extern void PortTbo_TextMode(int on);
 extern int PortTbo_TextRead(void);
 extern void PortTbo_Copy(const char *text); /* onto the clipboard ("Copy Code") */
+
+/* The game's windows of every menu (battle/view_a_b.c, view_a_c.c), made from the Duel menu's data as
+   DuelMenu_Init makes them: the heading's window (IconWin: the cloud swirls in the corners and the line under the
+   heading) and the message window (MsgWin: the teal box with the meander corners). */
+extern void *gIconWin; /* its movie first (the rest: menu/menu_a.h) */
+extern void MsgWin_SetText(void *text);
 #define Port_TextMode PortTbo_TextMode
 #define Port_TextRead PortTbo_TextRead
 static void Port_EscQuit(s32 on) {
@@ -2064,7 +2070,7 @@ static void Tb_Draw(void) {
         break;
     }
     Tb_Panel(TBO_KIT_WINDOW, 300.0f, 10.0f, 504.0f, 56.0f, 0x80); /* the player card */
-    Tb_Panel(TBO_KIT_DIALOG, 6.0f, 350.0f, 506.0f, 444.0f, 0x80);  /* the hosts' line, and the buttons under it */
+    MsgWin_Draw(0, 0, 0); /* the game's box: the hosts' line, and the buttons under it */
     if (sTb->mode == TB_BLOCK) {
         Tb_DrawBlock();
     }
@@ -2176,6 +2182,43 @@ static void Tb_DrawText(void) {
 /* ----------------------------------------------------------------------------------------------- the frame loop */
 /* From the main menu's item until triangle on the hub. Returns 1 when it was left for "Train While Waiting" (the
    room is still open; Duel_Main goes on to the Ultimate Training menu), 0 back to the main menu. */
+/* The Duel menu's screen unpacked (the windows' data), while the screens run. */
+static void *sTbWinRes;
+
+static void Tb_WinInit(void) {
+    void *icons;
+
+    sTbWinRes = Sprite_Unpack(MPACK_AT(gMenuArc5, 1), NULL, NULL); /* (Duel_Main: DuelMenu_Run(1)) */
+    icons = MPACK_AT(sTbWinRes, 24);
+    Res_RelocateOffsets(&icons, icons, icons);
+    IconWin_Init(MPACK_AT(sTbWinRes, 23), icons);
+    IconWin_Open();
+    MsgWin_Init(MPACK_AT(sTbWinRes, 22), MPACK_AT(sTbWinRes, 21), 1, 0);
+    MsgWin_SetText(NULL); /* the box only: the hosts' lines are the screens' own */
+    MsgWin_Open();
+}
+
+static void Tb_WinTerm(void) {
+    if (sTbWinRes == NULL) {
+        return;
+    }
+    MsgWin_Term();
+    IconWin_Term();
+    Heap_Free(sTbWinRes);
+    sTbWinRes = NULL;
+}
+
+/* The heading's window without the Duel menu's emblem and words ("Versus Menu"): the screens' own are drawn. */
+static void Tb_WinHeading(void) {
+    MFlashRef ref;
+
+    Flash_FindLabel((MFlash *)gIconWin, NULL, "mc_title_icon", &ref);
+    Flash_ClipSetFlags((MFlash *)gIconWin, &ref, 2, 0);
+    Flash_FindLabel((MFlash *)gIconWin, NULL, "mc_icon", &ref);
+    Flash_ClipSetFlags((MFlash *)gIconWin, &ref, 2, 0);
+    IconWin_Draw();
+}
+
 s32 PortTbo_Run(void) {
     s32 train;
 
@@ -2195,6 +2238,7 @@ s32 PortTbo_Run(void) {
         Tb_SetMode(TB_WAIT);
     }
     Port_EscQuit(0);
+    Tb_WinInit();
     ColorFade_StartIn(0, 0, 0, 0x14);
     while (1) {
         s32 live;
@@ -2240,6 +2284,7 @@ s32 PortTbo_Run(void) {
         }
         Tb_PageSet();
         Tb_Backdrop();
+        Tb_WinHeading(); /* the clouds in the corners, the line under the title */
         Tb_Icon(TBO_CREST, Tb_TitleLeft() + 18.0f, 32.0f, 42.0f, 0x80); /* the tournament's crest beside the title */
         Tb_Draw();
         Tb_DrawText();
@@ -2260,6 +2305,7 @@ s32 PortTbo_Run(void) {
     sceGsSyncPath(0, 0);
     Port_EscQuit(1);
     Port_TextMode(0);
+    Tb_WinTerm();
     if (!sTb->train && (sTb->mode == TB_WAIT || sTb->mode == TB_SPAR)) {
         Port_LobbyCancel();
     }
