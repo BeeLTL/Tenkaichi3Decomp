@@ -109,8 +109,13 @@ void MainMenu_Init(s32 section) {
     if (gMenuArc1 == NULL) {
         gMenuArc1 = File_LoadSync(gProgress->baseFile + 1, NULL, 0);
     }
+#ifdef PORT
+    gMainMenu = Heap_Alloc(sizeof(MainMenu), 0x20, 0, 2); /* (its item list is longer on the PC: MAINMENU_ITEM_MAX) */
+    memset(gMainMenu, 0, sizeof(MainMenu));
+#else
     gMainMenu = Heap_Alloc(0x188, 0x20, 0, 2);
     memset(gMainMenu, 0, 0x188);
+#endif
     gMainMenu->pack = (u32 *)MPACK_AT(gMenuArc1, section);
     gMainMenu->res = Sprite_Unpack(gMainMenu->pack, NULL, NULL);
     MM_RES(1);
