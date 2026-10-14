@@ -7,6 +7,13 @@ renderer, sound and input layer underneath; it is not an emulator.
 This repository contains **no game data**. You need your own disc image of that release: the setup reads the
 game's data from it, and it stays on your computer.
 
+> **Official source.** This project lives only at
+> [github.com/z3xox/Tenkaichi3Decomp](https://github.com/z3xox/Tenkaichi3Decomp), and it never ships the game:
+> you need your own disc. We do not make, run or endorse any website that lets you play Budokai Tenkaichi 3 in a
+> browser, with or without ads; such sites are not affiliated with this project. A site that runs the game
+> without your own disc is handing out the game's copyrighted code and data. Our releases are free and have no
+> ads, accounts or payments.
+
 ## What works
 
 - The whole game loop: boot, opening movie, menus, saving, fights, split screen.
