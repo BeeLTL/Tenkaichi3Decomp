@@ -83,23 +83,20 @@ All in src/menu/menu_a.c under `#ifdef PORT`, except the label (5).
 
 ## 3. Making the screen behind it
 
-**Reaching it.** No progress mode is free for a new screen, and a new movie cannot be made (nothing writes the
-movie format). An entry borrows an existing mode and a role flag: it sets the flag and chooses the mode; that
-mode's main function runs the new screen when the flag is set and turns what the screen returns into the next
-mode. For Tenkaichi Budokai Online, mode 38 and `gPortDuelRole` in `Duel_Main` (src/menu/menu_g_b.c):
+**Reaching it.** A new movie cannot be made (nothing writes the movie format), and the game has no mode to spare,
+so the port's screens have a progress mode of their own: **80** (`MPROG_MODE_PORT_SCREEN`,
+include/menu/port_screen.h), handled in `Progress_Main` by `PortScreen_Main` (src/menu/port_screen.c). Which
+screen it runs is `gPortScreen` (`PORT_SCREEN_*`). An entry sets it and chooses the mode:
 
 ```c
-/* (shortened) */
-if (Port_NetSession()) { gPortDuelRole = 0; }   /* an online session goes to its own character select */
-if (gPortDuelRole == 6) {
-    gProgress->mode = PortTbo_Run() ? 45 : 4;    /* (Ultimate Training, or back to the main menu) */
-    gPortDuelRole = 0;
-    done = 1;
-}
+gPortScreen = PORT_SCREEN_TBO;
+MAINMENU_CHOOSE(MPROG_MODE_PORT_SCREEN);
 ```
 
-The borrowed mode's archive is loaded by then (here `gMenuArc5`, the versus mode's), which gives the screen the
-game's windows.
+`PortScreen_Main` reads what the screens need (the versus mode's archive, `gMenuArc5`, for the game's windows),
+runs the screen, and turns what it returns into the next mode (for Tenkaichi Budokai Online: back to the main
+menu, or the Ultimate Training's fight of "Train While Waiting"). A new screen is a `PORT_SCREEN_` number and a
+`case` there. No game mode is borrowed: an online session's character select is the versus mode's own.
 
 **The frame loop** is the game's own kind (src/menu/port_tbo.c, `PortTbo_Run`):
 
@@ -113,8 +110,8 @@ ColorFade_Draw, Gfx_EndFrame, Dma_Flush
 
 It fades in at the start, fades out when left, and returns a value for the caller.
 
-**The game's windows.** Made from the borrowed menu's data as that menu makes them (for the versus menu: archive
-448, member 1, sections 21 to 24; `Tb_WinInit` / `Tb_WinTerm`):
+**The game's windows.** Made from a menu's data as that menu makes them (the versus menu's: archive 448, member 1,
+sections 21 to 24; `Tb_WinInit` / `Tb_WinTerm` in port_tbo.c):
 
 - heading window: `IconWin_Init`, `IconWin_Open`, `IconWin_Draw` each frame. `IconWin_PortHideWords` empties the
   texture slots of the words and the emblem, so the screen's own title stands in their place;
@@ -125,27 +122,32 @@ It fades in at the start, fades out when left, and returns a value for the calle
   `MsgWin_PortSameTop` starts one and two lines at the same height. A changed line is handed over in another
   buffer (the screen reader tells lines apart by where they are).
 
-**What the screen draws itself:**
+**What the screen draws itself,** with the kit in src/menu/port_screen.c (`Ps_*`, declared in
+include/menu/port_screen.h):
 
 - pictures: PNG files in `tbo/ui/` next to the program, named in include/menu/tbo_art.h, drawn as sprites with
   the reserved format `TBO_PSM` (port/src/gs/gs_draw.c, `tbo_texture`) at their own resolution; their
   width : height comes from include/menu/tbo_sizes.h;
 - text: lines in the Menu font (port/src/gs/tbo_text.c), the title in the main menu's heading style
   (`MenuText_HeadingRender`);
-- shapes: plain quads (`Tb_Rect`, `Tb_Quad`), the windows' frames from a picture stretched by its corners
-  (`Tb_Panel`), bars (`Tb_Pill`);
-- the toolkit around them: rows with values, keypads (`Tb_Keypad`, `Tb_PadUpdate`), button prompts
-  (`Tb_Prompt`), notes (`Tb_Note`), the hosts (`Tb_Hosts`).
+- lines of letters (`Ps_Text` in five styles, `Ps_TextEx`, `Ps_Heading`, `Ps_Msg`; `Ps_Align`, `Ps_TextTop`);
+- shapes: plain quads (`Ps_Rect`, `Ps_Quad`, `Ps_Disc`), the windows' frames from a picture stretched by its
+  corners (`Ps_Panel`), bars (`Ps_Pill`), pictures standing or centred (`Ps_Stand`, `Ps_Icon`);
+- the pad: up and down (`Ps_Move`), left and right (`Ps_Side`), the buttons' pictures and the prompts at the foot
+  of the screen (`Ps_Prompt`, `Ps_PromptsDraw`, cleared each frame with `Ps_PromptsClear`).
 
-**Coordinates.** A page is 4:3 in the middle of the window (`Tb_PageSet`; `Tb_X`, `Tb_Y` take the game's 512 x 448
-units of the page). The game's movies, the windows included, cover the whole screen: where the screen's own things
+Still in port_tbo.c, to move into the kit next: the keypads (`Tb_Keypad`, `Tb_PadUpdate`), the notes (`Tb_Note`),
+the pages and their slide-in (`Tb_SetMode`, `Tb_In`), the speech (`Tb_Speak`), the windows (`Tb_WinInit`).
+
+**Coordinates.** A page is 4:3 in the middle of the window (`Ps_PageSet` once a frame; `Ps_X`, `Ps_Y` take the
+game's 512 x 448 units of the page; `Ps_Left` is the window's left edge on it). The game's movies, the windows included, cover the whole screen: where the screen's own things
 meet theirs, convert between the two.
 
 **Drawing order** is call order: what is drawn later covers what is drawn earlier (the message box covers the
 hosts; it is see-through).
 
-**Opening a page.** `Tb_SetMode` changes the page and starts its slide in from the left (`Tb_In`, `sTbShift`);
-the title, the player card and the box stay.
+**Opening a page.** `Tb_SetMode` changes the page and starts its slide in from the left (`Tb_In`, given to the kit
+with `Ps_SetShift`); the title, the player card and the box stay.
 
 **The screen reader** (port/src/a11y_game.c, port/src/gs/a11y.c) reads the game's own screens from their state,
 and cannot read the screen's own text (it is pictures). The line in the message window is read because it is the
@@ -155,11 +157,9 @@ as one line. `BT3_A11Y_LOG=<file>` writes what is said, without a speech library
 
 **An online match started from the screen.** The session puts the game back to its first moment and goes to the
 character select; when it ends, the game is put back to the moment the match was asked for. The port's own
-variables are not put back. So a screen that starts matches:
-
-- clears its role flag in a session (above), or the session would open the screen again;
-- notes `Port_NetSessionsEnded()` (port/src/gs/net.c) when it asks for a match, and when the count has changed,
-  the match is over: it goes to its first page.
+variables are not put back. So a screen that starts matches notes `Port_NetSessionsEnded()` (port/src/gs/net.c)
+when it asks for a match; when the count has changed, the match is over: it goes to its first page. (The session's
+character select is the versus mode's own, not the screen's mode, so it never opens the screen again.)
 
 ## 4. Limits, and what is possible
 
@@ -170,7 +170,7 @@ variables are not put back. So a screen that starts matches:
 | Its icon | any existing item's | the same, or a new one painted into the icon sheet |
 | Its line in the message window | none yet | `MsgWin_PortDrawString` when the cursor is on it |
 | Entries in other menus | not tried | the same parts (list, label sheet, choice, line) per menu; each menu's list and sheets mapped first |
-| A screen of its own | in code, through a borrowed mode | the toolkit (rows, keypads, windows, prompts, speech) as a library a screen is described with |
+| A screen of its own | in code, in the port's screen mode (80), with the kit of port_screen.c | screens described as data (rows, keypads, windows, prompts, speech) |
 | The game's look | the heading window, the message box, the game's font in the box | any menu's windows (each menu's archive sections listed) |
 | A list in the game's own plates | not done | an existing list movie reused, its labels made from disc letters |
 | New movies | not possible | (nothing writes the format) |
