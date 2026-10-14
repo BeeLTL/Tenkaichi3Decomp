@@ -71,6 +71,14 @@ void IconWin_Close(void) {
 }
 
 /* Shows icon n: texture n + 1 of the icon resource. */
+#ifdef PORT
+/* PC build, for screens that write their own heading (menu/port_tbo.c): the window without its words (texture
+   4); a shape whose texture is missing is not drawn. IconWin_SetIcon brings them back. */
+void IconWin_PortHideWords(void) {
+    gIconWin->tex[4] = NULL;
+}
+#endif
+
 void IconWin_SetIcon(s32 icon) {
     if (gIconWin->icons != NULL) {
         gIconWin->tex[4] = gIconWin->icons->tex + icon * FLASH_TEX_SIZE + FLASH_TEX_SIZE;

@@ -101,6 +101,43 @@ void MsgWin_SetSide(s32 side) {
     gMsgWin->side = side;
 }
 
+#ifdef PORT
+/* PC build, for screens that write their own text in the window (menu/port_tbo.c): where the window's text
+   clip is drawn, as the game's text would start (preset 5: left-aligned, `rows` rows lowered as
+   TextBox_SetLineOffsets set them). Caught by a "draw over" callback on the clip, so it follows the slide-in. */
+extern void Flash_ClipSetCallbackC(Flash *flash, FlashRef *ref, void *fn, void *arg);
+
+static f32 sMsgWinTextPos[2];
+static s32 sMsgWinTextSeen;
+
+static void MsgWin_PortCatch(void *arg, f32 *prop) {
+    sMsgWinTextPos[0] = prop[14]; /* the matrix's translation (FlashProp 0x38, 0x44: sys/gfxm_c.h) */
+    sMsgWinTextPos[1] = prop[17];
+    sMsgWinTextSeen = 1;
+}
+
+/* Call before MsgWin_Draw (the window without text of its own). */
+void MsgWin_PortWatchText(void) {
+    FlashRef ref;
+
+    Flash_FindLabel(gMsgWin->flash, NULL, "mc_message_text", &ref);
+    Flash_ClipSetCallbackC(gMsgWin->flash, &ref, MsgWin_PortCatch, NULL);
+}
+
+/* 0 until the clip has been drawn once. */
+s32 MsgWin_PortTextAt(s32 rows, f32 *x, f32 *y) {
+    TextBox *box = &gMsgWin->box;
+    s32 *lineY = (s32 *)box->unk14; /* (TextBoxFull.lineY: battle/view_b.h) */
+
+    if (!sMsgWinTextSeen) {
+        return 0;
+    }
+    *x = sMsgWinTextPos[0] + (f32)box->unkC;
+    *y = sMsgWinTextPos[1] + (f32)box->unk10 + (rows >= 1 && rows <= 5 ? (f32)lineY[rows - 1] : 0.0f);
+    return 1;
+}
+#endif
+
 /* Passes two values to TextBox_SetSpacing for the window's text box. */
 void MsgWin_SetBoxParam(s32 a, s32 b) {
     TextBox_SetSpacing(&gMsgWin->box, a, b);

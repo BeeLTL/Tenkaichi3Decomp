@@ -77,8 +77,10 @@ extern void PortTbo_Copy(const char *text); /* onto the clipboard ("Copy Code") 
 /* The game's windows of every menu (battle/view_a_b.c, view_a_c.c), made from the Duel menu's data as
    DuelMenu_Init makes them: the heading's window (IconWin: the cloud swirls in the corners and the line under the
    heading) and the message window (MsgWin: the teal box with the meander corners). */
-extern void *gIconWin; /* its movie first (the rest: menu/menu_a.h) */
-extern void MsgWin_SetText(void *text);
+extern void MsgWin_SetText(void *text); /* (the rest: menu/menu_a.h) */
+extern void IconWin_PortHideWords(void);
+extern void MsgWin_PortWatchText(void);
+extern s32 MsgWin_PortTextAt(s32 rows, f32 *x, f32 *y);
 #define Port_TextMode PortTbo_TextMode
 #define Port_TextRead PortTbo_TextRead
 static void Port_EscQuit(s32 on) {
@@ -2070,6 +2072,7 @@ static void Tb_Draw(void) {
         break;
     }
     Tb_Panel(TBO_KIT_WINDOW, 300.0f, 10.0f, 504.0f, 56.0f, 0x80); /* the player card */
+    MsgWin_PortWatchText(); /* where its text would be: the hosts' line goes there (Tb_DrawText) */
     MsgWin_Draw(0, 0, 0); /* the game's box: the hosts' line, and the buttons under it */
     if (sTb->mode == TB_BLOCK) {
         Tb_DrawBlock();
@@ -2160,8 +2163,17 @@ static void Tb_DrawText(void) {
                 at++;
             }
         }
+        f32 tx = 40.0f;
+        f32 ty = n == 1 ? 368.0f : 359.0f;
+        f32 sx, sy;
+
+        /* where the game writes its own lines in the box (on the whole screen; this page is in its middle) */
+        if (MsgWin_PortTextAt(n, &sx, &sy)) {
+            tx = (sx - sTbPx) * 512.0f / sTbPw;
+            ty = (sy - sTbPy) * 448.0f / sTbPh;
+        }
         for (k = 0; k < n; k++) {
-            Tb_Msg(40.0f, (n == 1 ? 368.0f : 359.0f) + 21.0f * (f32)k, lines[k], 1.0f, 0x80);
+            Tb_Msg(tx, ty + 22.0f * (f32)k, lines[k], 1.0f, 0x80); /* (the rows 22 apart: the game's 32, 20, 10) */
         }
     }
     if (sTb->mode == TB_BLOCK) {
@@ -2192,6 +2204,7 @@ static void Tb_WinInit(void) {
     icons = MPACK_AT(sTbWinRes, 24);
     Res_RelocateOffsets(&icons, icons, icons);
     IconWin_Init(MPACK_AT(sTbWinRes, 23), icons);
+    IconWin_PortHideWords(); /* "Versus Menu": the screens' own title is written there */
     IconWin_Open();
     MsgWin_Init(MPACK_AT(sTbWinRes, 22), MPACK_AT(sTbWinRes, 21), 1, 0);
     MsgWin_SetText(NULL); /* the box only: the hosts' lines are the screens' own */
@@ -2206,18 +2219,6 @@ static void Tb_WinTerm(void) {
     IconWin_Term();
     Heap_Free(sTbWinRes);
     sTbWinRes = NULL;
-}
-
-/* The heading's window with its emblem, without the Duel menu's words ("Versus Menu", the clip mc_icon): the
-   screens' own title is written there. As IconWin_Draw, with the words hidden after the movie's step (which
-   shows its clips again). */
-static void Tb_WinHeading(void) {
-    MFlashRef ref;
-
-    Flash_Advance((MFlash *)gIconWin);
-    Flash_FindLabel((MFlash *)gIconWin, NULL, "mc_icon", &ref);
-    Flash_ClipSetFlags((MFlash *)gIconWin, &ref, 2, 0);
-    Flash_Draw((MFlash *)gIconWin);
 }
 
 s32 PortTbo_Run(void) {
@@ -2285,7 +2286,7 @@ s32 PortTbo_Run(void) {
         }
         Tb_PageSet();
         Tb_Backdrop();
-        Tb_WinHeading(); /* the clouds in the corners, the emblem, the line under the title */
+        IconWin_Draw(); /* the clouds in the corners, the emblem, the line under the title */
         Tb_Draw();
         Tb_DrawText();
         Tb_PromptsDraw();
