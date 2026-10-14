@@ -92,11 +92,11 @@ typedef struct {
     int cursor;                  /* 0x10C: row 0..3 */
     int timer;                   /* 0x110 */
     int unk114;
-    int items[11];               /* 0x118: item ids in list order */
-    int itemCount;               /* 0x144 */
-    int top;                     /* 0x148: list index of the plate above the first row (a ring) */
+    int items[12];               /* 0x118: item ids in list order (MAINMENU_ITEM_MAX: Tenkaichi Budokai Online too) */
+    int itemCount;               /* 0x148 */
+    int top;                     /* 0x14C: list index of the plate above the first row (a ring) */
 } A11yMainMenu;
-_Static_assert(offsetof(A11yMainMenu, top) == 0x148, "MainMenu");
+_Static_assert(offsetof(A11yMainMenu, top) == 0x14C, "MainMenu");
 extern A11yMainMenu GAME_PTR gMainMenu;
 #define MAINMENU_CHOSEN 1
 #define MAINMENU_LEAVING 2
@@ -546,13 +546,13 @@ static void main_menu(void) {
         item = -1;
         return;
     }
-    if (m->itemCount < 1 || m->itemCount > 11 || m->top < 0 || m->cursor < 0 ||
+    if (m->itemCount < 1 || m->itemCount > 12 || m->top < 0 || m->cursor < 0 ||
         (m->flags & (MAINMENU_CHOSEN | MAINMENU_LEAVING))) {
         return;
     }
     index = (m->top + m->cursor + 1) % m->itemCount;
     cur = m->items[index];
-    if (cur < 0 || cur > 10) {
+    if (cur < 0 || cur > 11) {
         return;
     }
     if (!open) {
@@ -560,7 +560,7 @@ static void main_menu(void) {
         open = 1;
     }
     if (cur != item) {
-        say_item(tr(kMainMenuItems[cur]), index, m->itemCount, follow());
+        say_item(cur == 11 ? "Tenkaichi Budokai Online" : tr(kMainMenuItems[cur]), index, m->itemCount, follow());
         item = cur;
     }
 }
@@ -3191,6 +3191,7 @@ static const struct {
 };
 #define MODE_DUEL_MENU 38
 #define MODE_DUEL_CHARSEL 39
+#define MODE_PORT_SCREEN 80 /* the port's own screens (include/menu/port_screen.h) */
 #define MODE_TRAIN_CHARSEL 45
 #define MODE_OPTION 62
 
@@ -3270,7 +3271,7 @@ static int own_screen(void) {
     }
     m = gProgress->mode;
     return m == MODE_TITLE || m == MODE_MAIN_MENU || m == MODE_DUEL_MENU || m == MODE_DUEL_CHARSEL ||
-           m == MODE_TRAIN_CHARSEL || m == MODE_OPTION || m == MODE_HIST_SEL || m == MODE_EPISODES;
+           m == MODE_TRAIN_CHARSEL || m == MODE_OPTION || m == MODE_HIST_SEL || m == MODE_EPISODES || m == MODE_PORT_SCREEN;
 }
 
 /* The game's strings drawn lately (PortA11y_FontText), by their hash. */

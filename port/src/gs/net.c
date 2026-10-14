@@ -1404,7 +1404,16 @@ void Port_NetSessionBegin(int role, const char *address, int port) {
     net_start(role, role == 1 ? host : NULL, role == 2 ? join : NULL);
 }
 
+/* How many sessions have ended in this run. The port's own memory: the game's is put back to the moment the session
+   was asked for, so this is how the screens that asked for it (menu/port_tbo.c) know it has been and gone. */
+static int sSessionsEnded;
+
+int Port_NetSessionsEnded(void) {
+    return sSessionsEnded;
+}
+
 void Port_NetSessionEnd(void) {
+    sSessionsEnded++;
     Relay_Close(sSock);
     if (sSock >= 0) {
         closesocket(sSock);
@@ -1748,11 +1757,13 @@ void Port_LobbyLaunch(void);
 /* BT3_LOBBY=host or BT3_LOBBY=join:CODE: the room-code lobby driven without its window, once a blank (tests; the
    code and each change of state are written to the log). BT3_RELAY_ONLY=1: the one who joins tries nothing but the
    host's relay address. */
+static void lobby_background(void);
 void Port_LobbyAuto(void) {
     static int state = -99, begun, coded;
     const char *what = getenv("BT3_LOBBY");
     int now;
 
+    lobby_background();
     if (what == NULL || begun == 2 || Port_NetSession()) {
         return;
     }
@@ -1833,4 +1844,63 @@ int Port_NetStats(int *out) {
 /* 1 while a copy of another release is trying to join the lobby this copy hosts. */
 int Port_LobbyOther(void) {
     return sLobbyOther;
+}
+
+/* ---- Tenkaichi Budokai Online (menu/port_tbo.c), the game's own screens for the room-code lobby ----
+   The player's name is kept in online_name.txt beside the program. "Train While Waiting": the screens are left with
+   the room still open; from then on Port_LobbyAuto (each blank) polls it, and when the other player comes the
+   session begins wherever the game is (it starts from the game's first moment anyway). */
+static int sLobbyBg;
+
+const char *Port_NetNameGet(void) {
+    static int loaded;
+    if (!loaded) {
+        FILE *f = fopen("online_name.txt", "rb");
+        loaded = 1;
+        if (f != NULL) {
+            char line[64] = "";
+            size_t n = fread(line, 1, sizeof(line) - 1, f);
+            fclose(f);
+            line[n] = 0;
+            line[strcspn(line, "\r\n")] = 0;
+            if (line[0] != 0) {
+                Port_NetNameSet(line);
+            }
+        }
+    }
+    return sMyName;
+}
+
+void Port_NetNameSave(const char *name) {
+    FILE *f;
+    Port_NetNameSet(name);
+    f = fopen("online_name.txt", "wb");
+    if (f != NULL) {
+        fputs(sMyName, f);
+        fclose(f);
+    }
+}
+
+void Port_LobbyBackground(int on) {
+    sLobbyBg = on;
+}
+
+int Port_LobbyInBackground(void) {
+    return sLobbyBg;
+}
+
+static void lobby_background(void) {
+    int now;
+    if (!sLobbyBg || Port_NetSession()) {
+        return;
+    }
+    now = Port_LobbyPoll();
+    if (now == 2) {
+        sLobbyBg = 0;
+        Port_UiNotice("Tenkaichi Budokai Online: your opponent is here! The match begins.");
+        Port_LobbyLaunch();
+    } else if (now <= 0) {
+        sLobbyBg = 0;
+        Port_UiNotice(now == -3 ? Port_LobbyError() : "Tenkaichi Budokai Online: the room was closed.");
+    }
 }

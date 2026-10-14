@@ -160,6 +160,178 @@ static uint32_t clut_hash(uint32_t cbp, uint32_t cpsm, uint32_t count) {
     return h;
 }
 
+/* Tenkaichi Budokai Online: its pictures (include/menu/tbo_art.h). The game draws one as a sprite whose TEX0 has the
+   reserved format TBO_PSM and the picture's number in CBP (src/menu/port_tbo.c); it is read from tbo/ui/<name>.png
+   next to the program the first time and kept, at the PNG's own size, so it is drawn at full resolution and in the
+   game's own order. */
+#include "../../../include/menu/tbo_art.h"
+#define TBO_NAME(id, name) name,
+static const char *const kTboNames[TBO_ART_COUNT] = {TBO_ART_LIST(TBO_NAME)};
+#undef TBO_NAME
+static GsTex sTboTex[TBO_ART_COUNT];
+static unsigned char sTboMissing[TBO_ART_COUNT]; /* not found or not readable: not looked for again */
+
+/* Makes a texture of RGBA pixels (the GS's alpha) with its smaller copies, each half the one before, averaged by
+   2 x 2: these pictures are mostly shown smaller than they are (letters, the crest), and one sample of the full
+   picture per pixel shimmers. Takes `px`; 0 if no texture could be had. */
+static GsTex tbo_upload(uint32_t *px, uint32_t w, uint32_t h) {
+    uint32_t *lv[12];
+    uint32_t lw[12], lh[12], x, y;
+    int levels = 1, k;
+    GsTex tex;
+
+    lv[0] = px;
+    lw[0] = w;
+    lh[0] = h;
+    while (px != NULL && levels < 12 && (lw[levels - 1] > 1 || lh[levels - 1] > 1)) {
+        uint32_t pw = lw[levels - 1], ph = lh[levels - 1], nw = pw > 1 ? pw / 2 : 1, nh = ph > 1 ? ph / 2 : 1;
+        uint32_t *src = lv[levels - 1], *dst = malloc((size_t)nw * nh * 4);
+        if (dst == NULL) {
+            break;
+        }
+        for (y = 0; y < nh; y++) {
+            for (x = 0; x < nw; x++) {
+                uint32_t x0 = x * 2 < pw ? x * 2 : pw - 1, x1 = x * 2 + 1 < pw ? x * 2 + 1 : pw - 1;
+                uint32_t y0 = y * 2 < ph ? y * 2 : ph - 1, y1 = y * 2 + 1 < ph ? y * 2 + 1 : ph - 1;
+                uint32_t c[4] = {src[y0 * pw + x0], src[y0 * pw + x1], src[y1 * pw + x0], src[y1 * pw + x1]}, out = 0, ch;
+                uint32_t aw = 0;
+                for (k = 0; k < 4; k++) {
+                    aw += c[k] >> 24;
+                }
+                for (ch = 0; ch < 24; ch += 8) { /* colour weighted by alpha: no dark rims round what is cut out */
+                    uint32_t sum = 0;
+                    for (k = 0; k < 4; k++) {
+                        sum += ((c[k] >> ch) & 0xFF) * ((c[k] >> 24) + (aw == 0 ? 1 : 0));
+                    }
+                    out |= (aw != 0 ? sum / aw : sum / 4) << ch;
+                }
+                dst[y * nw + x] = out | ((aw + 2) / 4) << 24;
+            }
+        }
+        lv[levels] = dst;
+        lw[levels] = nw;
+        lh[levels] = nh;
+        levels++;
+    }
+    if (px != NULL && sBackend->texSlotsLeft() < levels) {
+        for (k = 1; k < levels; k++) {
+            free(lv[k]);
+        }
+        levels = 1;
+    }
+    tex = px != NULL ? sBackend->texCreate(w, h, GS_TEXFMT_RGBA8, levels) : 0;
+    if (tex == 0) {
+        for (k = 0; k < levels; k++) {
+            free(lv[k]);
+        }
+        return 0;
+    }
+    for (k = 0; k < levels; k++) {
+        sBackend->texUpload(tex, k, lw[k], lh[k], GS_TEXFMT_RGBA8, lv[k], lw[k] * lh[k] * 4);
+    }
+    return tex;
+}
+
+/* The lines of letters (gs/tbo_text.c): each place's texture and what it shows; a texture drawn in this frame is
+   kept until the next (the line changed under it: the old one is shown once more). */
+extern uint32_t TboText_Version(uint32_t id);
+extern uint32_t *TboText_Pixels(uint32_t id, uint32_t *version, uint32_t *w, uint32_t *h);
+static struct {
+    GsTex tex;
+    uint32_t version, frame;
+} sTboText[TBO_TEXT_SLOTS];
+
+static GsTex tbo_text_texture(uint32_t id) {
+    uint32_t slot = id - TBO_TEXT_BASE, version = TboText_Version(id), w, h, *px;
+    GsTex tex;
+
+    if (sTboText[slot].tex != 0 && (sTboText[slot].version == version || sTboText[slot].frame == gGsFrame)) {
+        sTboText[slot].frame = gGsFrame;
+        return sTboText[slot].tex;
+    }
+    if (sBackend->texSlotsLeft() <= 0) {
+        return sTboText[slot].tex != 0 ? sTboText[slot].tex : gsWhite;
+    }
+    px = TboText_Pixels(id, &version, &w, &h);
+    tex = px != NULL ? tbo_upload(px, w, h) : 0;
+    if (tex == 0) {
+        return sTboText[slot].tex != 0 ? sTboText[slot].tex : gsWhite;
+    }
+    if (sTboText[slot].tex != 0) {
+        sBackend->texDestroy(sTboText[slot].tex);
+    }
+    sTboText[slot].tex = tex;
+    sTboText[slot].version = version;
+    sTboText[slot].frame = gGsFrame;
+    return tex;
+}
+
+static GsTex tbo_texture(uint32_t id) {
+    char path[1024];
+    SDL_Surface *png, *rgba;
+    uint32_t *px, w, h, x, y;
+    GsTex tex;
+    const char *base;
+
+    if (id >= TBO_TEXT_BASE && id < TBO_TEXT_BASE + TBO_TEXT_SLOTS) {
+        return tbo_text_texture(id);
+    }
+    if (id >= TBO_ART_COUNT || sTboMissing[id]) {
+        return gsWhite;
+    }
+    if (sTboTex[id] != 0) {
+        return sTboTex[id];
+    }
+    if (sBackend->texSlotsLeft() <= 0) {
+        return gsWhite; /* (no room this frame: the next one tries again) */
+    }
+    base = SDL_GetBasePath();
+    snprintf(path, sizeof(path), "%stbo/ui/%s.png", base != NULL ? base : "", kTboNames[id]);
+    png = SDL_LoadPNG(path);
+    if (png == NULL) {
+        snprintf(path, sizeof(path), "tbo/ui/%s.png", kTboNames[id]);
+        png = SDL_LoadPNG(path);
+    }
+    if (png == NULL) { /* a source checkout: the pictures where they are kept (port/tbo/ui) */
+        snprintf(path, sizeof(path), "port/tbo/ui/%s.png", kTboNames[id]);
+        png = SDL_LoadPNG(path);
+    }
+    rgba = png != NULL ? SDL_ConvertSurface(png, SDL_PIXELFORMAT_RGBA32) : NULL;
+    if (png != NULL) {
+        SDL_DestroySurface(png);
+    }
+    if (rgba == NULL) {
+        fprintf(stderr, "bt3: tbo: cannot read %s\n", path);
+        sTboMissing[id] = 1;
+        return gsWhite;
+    }
+    w = (uint32_t)rgba->w;
+    h = (uint32_t)rgba->h;
+    px = malloc((size_t)w * h * 4);
+    for (y = 0; px != NULL && y < h; y++) {
+        const uint8_t *row = (const uint8_t *)rgba->pixels + (size_t)y * rgba->pitch;
+        for (x = 0; x < w; x++) {
+            const uint8_t *c = row + x * 4;
+            uint32_t a = ((uint32_t)c[3] * 128 + 127) / 255; /* the GS's alpha: 0x80 is opaque */
+            px[y * w + x] = (uint32_t)c[0] | ((uint32_t)c[1] << 8) | ((uint32_t)c[2] << 16) | (a << 24);
+            /* the window: its inside is bands of two teals, which fall anywhere under the lines at the sizes it is
+               drawn (src/menu/port_tbo.c, Tb_Panel). Every teal pixel is the darker one; the frame (grey, nearly
+               black) is not teal and stays, its round corners with it. */
+            if (id == TBO_KIT_WINDOW && c[3] == 255 && c[0] < 60 && c[1] >= 60 && c[1] <= 125 && c[2] + 10 >= c[1] && c[2] <= c[1] + 15) {
+                px[y * w + x] = 27u | (86u << 8) | (92u << 16) | (a << 24);
+            }
+        }
+    }
+    SDL_DestroySurface(rgba);
+    tex = tbo_upload(px, w, h);
+    if (tex == 0) {
+        return gsWhite;
+    }
+    sTboTex[id] = tex;
+    fprintf(stderr, "bt3: tbo: %s (%ux%u)\n", kTboNames[id], (unsigned)w, (unsigned)h);
+    return tex;
+}
+
 /* GS memory -> an RGBA texture for the current TEX0 (alpha as stored: 0x80 is opaque). The back end makes
    the texture and takes the decoded pixels (freed after it has uploaded them). */
 static GsTex texture_get(int ctx) {
@@ -599,7 +771,7 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
         /* (Not the cross-fade of a fight's scenes: the frame the game read back is uploaded over the depth page as a
            24-bit picture and drawn from there over the new shot, stg_b.c ScrXfade_Draw. That is a picture like any
            other, taken from GS memory; the passes dropped here read the page as depth or as one of its bytes.) */
-        if (tme && !(tpsm == 1 && sprite && tbp / 32 == zbp) &&
+        if (tme && tpsm != TBO_PSM && !(tpsm == 1 && sprite && tbp / 32 == zbp) &&
             ((tpsm & 0x30) == 0x30 || tbp / 32 == zbp || tpsm == 0x1B || tpsm == 0x24 || tpsm == 0x2C)) {
             int t = GsDraw_TargetGet(fbp, 0);
             if (t >= 0 && fbp != (uint32_t)gGsMainFbp) {
@@ -618,7 +790,9 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
     if (!tme && sprite) {
         gsTargets[d->target].stale = 0; /* cleared by the game: what is drawn into it from here on is real */
     }
-    if (tme) {
+    if (tme && ((t0 >> 20) & 0x3F) == TBO_PSM) {
+        d->tex = tbo_texture((uint32_t)((t0 >> 37) & 0x3FFF)); /* a Tenkaichi Budokai Online picture (above texture_get) */
+    } else if (tme) {
         int kept = 0;
         src = GsDraw_TargetGet((uint32_t)((t0 & 0x3FFF) / 32), 0);
         if (sWholeFrame) { /* the cross-fade's picture: the frame kept on the card (GsGpu_Snapshot), if there is one */
@@ -906,10 +1080,14 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
     if (!draw_state(ctx, type == 1 ? 1 : type == 0 ? 2 : 0, type == 6, 0, &d, &us, &vs)) {
         return;
     }
+    int tbo = (prim >> 4) & 1 && ((t0 >> 20) & 0x3F) == TBO_PSM; /* a Tenkaichi Budokai Online picture */
     if (type == 6 || fst) {
         d.sampler &= 7; /* 2D art: never the smaller copies of a replacement */
     }
-    if ((type == 6 || fst) && !d.tex_is_target) {
+    if (tbo) {
+        d.sampler |= 1 | 8; /* filtered, with its smaller copies, sampled per output pixel (not per GS pixel) */
+    }
+    if ((type == 6 || fst) && !d.tex_is_target && !tbo) {
         /* 2D art: sprites, and triangles with whole-texel coordinates (the logo, HUD pieces drawn as quads):
            texture coordinates per GS pixel (gs.frag). Not for a texture pack's replacement: that has several
            texels per GS pixel, and sampling it once per GS pixel would show it at the original's resolution. */
@@ -1066,7 +1244,7 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
     /* (Not the cross-fade's picture: it is the whole frame as it was shown, wide view and all, drawn back over the
        whole frame in strips. Each strip is narrower than the screen, so the rule below took it for a piece of 2D
        art and the old shot was drawn at three quarters of the width over the new one: seen by the user.) */
-    if (Port_IsWide() && (!gPortMenuMode || (gsAnchor == 7 && Port_PageAspectMilli() > 1340)) && !sWholeFrame && !d.tex_is_target && (type == 6 || fst) && gsTargets[d.target].fbp == (uint32_t)gGsMainFbp) {
+    if (Port_IsWide() && (!gPortMenuMode || (gsAnchor == 7 && Port_PageAspectMilli() > 1340)) && !sWholeFrame && !d.tex_is_target && !tbo && (type == 6 || fst) && gsTargets[d.target].fbp == (uint32_t)gGsMainFbp) {
         /* Widescreen. The 3D scene is projected for a 16:9 picture by the game itself; 2D art is laid out for
            4:3 and would come out a third too wide. Each 2D piece is narrowed to 3/4 about a fixed point:
              (not in the menus: their pages are shown whole, stretched to the width; see Port_WideFactor)

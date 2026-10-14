@@ -13,6 +13,7 @@ Contents:  Tenkaichi3Decomp, Tenkaichi3Decomp.dat   the game without the data ta
            a11y_<code>.txt the screen reader's lines in other languages (port/lang; its own labels, no game text)
 
            fonts/          the fonts of F1 > UI with their licences (port/third_party/fonts as it is)
+           tbo/ui/         the pictures of the Tenkaichi Budokai Online screens (port/tbo/ui), their credits in licenses/
            README.txt, licenses/
 The user needs nothing but their disc image. Nothing from the disc is in the zip."""
 import os, pathlib, re, shutil, subprocess, sys, zipfile
@@ -138,6 +139,14 @@ def take_fonts(out, lic):
             if p.name == "LICENSE":
                 shutil.copy2(p, lic / f"{p.parent.name}-fonts.txt")
 
+def take_tbo_art(out, lic):
+    """The pictures of the Tenkaichi Budokai Online screens, and who made them (port/tbo/ui/CREDITS.md)."""
+    src = ROOT / "port/tbo/ui"
+    (out / "tbo/ui").mkdir(parents=True, exist_ok=True)
+    for p in sorted(src.glob("*.png")):
+        shutil.copy2(p, out / "tbo/ui" / p.name)
+    shutil.copy2(src / "CREDITS.md", lic / "tbo-ui-credits.txt")
+
 def bundle_sdl_dependencies(dll, out, lic, prefix):
     """MSYS2 SDL can import libiconv; the official SDL archive is self-contained.
     Collect vendor DLLs from the SDL bin folder, never Windows system DLLs."""
@@ -194,6 +203,7 @@ def main_win():
     shutil.copy2(ROOT / "port/third_party/dr_libs/LICENSE", lic / "dr_mp3.txt")
 
     take_fonts(out, lic)
+    take_tbo_art(out, lic)
     (out / "textures").mkdir()
     (out / "textures/README.txt").write_text(TEXTURES_NOTE.replace("\n", "\r\n"))
     for kind, note in (("stages", STAGES_NOTE), ("songs", SONGS_NOTE)):
@@ -240,6 +250,7 @@ def main():
     shutil.copy2(ROOT / "port/third_party/dr_libs/LICENSE", lic / "dr_mp3.txt")
 
     take_fonts(OUT, lic)
+    take_tbo_art(OUT, lic)
     (OUT / "textures").mkdir()
     (OUT / "textures/README.txt").write_text(TEXTURES_NOTE)
     for kind, note in (("stages", STAGES_NOTE), ("songs", SONGS_NOTE)):
