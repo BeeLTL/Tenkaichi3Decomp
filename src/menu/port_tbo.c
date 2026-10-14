@@ -2078,7 +2078,8 @@ static void Tb_DrawText(void) {
     s32 len = Tb_Len(say);
     s32 k;
 
-    Tb_Heading(Tb_TitleLeft() + 44.0f, 15.0f, title[sTb->mode], sTb->mode == TB_HUB ? 0.92f : 1.1f, 244.0f, 0x80);
+    /* its capitals centred on the crest beside it (y 32); up to the player card */
+    Tb_Heading(Tb_TitleLeft() + 44.0f, Tb_TextTop(32.0f, 1.3f), title[sTb->mode], 1.3f, 248.0f, 0x80);
     switch (sTb->mode) {
     case TB_HUB:
         Tb_DrawHubText();
