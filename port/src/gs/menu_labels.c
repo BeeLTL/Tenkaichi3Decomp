@@ -30,6 +30,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <pthread.h>
 #ifdef _WIN32
 #include <direct.h>
 #include <windows.h>
@@ -44,6 +45,14 @@
 #include "namefont.c"
 
 #define ML_FILES 11
+
+/* The texts of the main menu's labels, in the order of their rows (the list's, and the PC's item: menu_a.c). */
+static const char kMlMain[] = "Dragon History|Ultimate Battle|Dragon World Tour|Duel|Dragon Net Battle|Evolution Z|"
+                              "Ultimate Training|Data Center|Character Reference|Options|Shenron";
+
+/* The letter cutter (namefont.c's, this file's copy) is used by MenuLabels_Make and MenuLabels_MainItem, which
+   may run in two threads: one at a time. */
+static pthread_mutex_t sMlCutter = PTHREAD_MUTEX_INITIALIZER;
 #define ML_UNPACKED_MAX (64u * 1024 * 1024)
 #define ML_GS_BYTES (512 * 512 * 4) /* the part of the GS's memory a menu texture is uploaded to and read from */
 #define ML_GROUPS 128
@@ -609,8 +618,7 @@ static int ml_catalog(MlCtx *c) {
         {"shenron-heading", "Shenron", 472, 2, 5, 1, 512, ML_HEADING_CAP_STANDARD, 29, 8, 173, 0},
     };
     static const char *const kState[2] = {"normal", "selected"};
-    static const char kMain[] = "Dragon History|Ultimate Battle|Dragon World Tour|Duel|Dragon Net Battle|Evolution Z|"
-                                "Ultimate Training|Data Center|Character Reference|Options|Shenron";
+    const char *kMain = kMlMain;
     static const char kUltimate[] = "Sim Dragon|Mission 100|Survival|Disc Fusion|???";
     static const char kSimDragon[] = "Start|Battle Record|Explanation";
     static const struct { const char *family; int part; const char *labels; } kVersusLists[3] = {
@@ -1433,40 +1441,48 @@ static uint32_t ml_crc32(const uint8_t *p, size_t n) {
 }
 
 /* Reads the eleven archives. Returns MENU_LABELS_MADE when they are all there and (unless `anyDisc`) the USA disc's. */
+/* Reads archive i of kMlFiles and checks it is the USA release's. */
+static int ml_read_one(MlCtx *c, const char *dataDir, int i, int anyDisc) {
+    char path[1200];
+    struct stat st;
+    FILE *fp;
+    uint8_t *data;
+    long size;
+
+    snprintf(path, sizeof(path), "%s/pzs3us1/%05d.bin", dataDir, kMlFiles[i].number);
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || (fp = fopen(path, "rb")) == NULL) {
+        ml_fail(c, "%s is missing (the game data of the USA release, SLUS-21678, is needed)", path);
+        return MENU_LABELS_OTHER_DISC;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0 || (size = ftell(fp)) < 0 || fseek(fp, 0, SEEK_SET) != 0 || size > 64 * 1024 * 1024 ||
+        (!anyDisc && (uint32_t)size != kMlFiles[i].size)) {
+        fclose(fp);
+        ml_fail(c, "%s is not the file of the USA release (SLUS-21678): its menu textures are numbered differently", path);
+        return MENU_LABELS_OTHER_DISC;
+    }
+    data = ml_alloc(c, (size_t)size);
+    if (data == NULL || fread(data, 1, (size_t)size, fp) != (size_t)size) {
+        fclose(fp);
+        ml_fail(c, "%s cannot be read", path);
+        return MENU_LABELS_FAILED;
+    }
+    fclose(fp);
+    if (!anyDisc && ml_crc32(data, (size_t)size) != kMlFiles[i].crc) {
+        ml_fail(c, "%s is not the file of the USA release (SLUS-21678): its menu textures are numbered differently", path);
+        return MENU_LABELS_OTHER_DISC;
+    }
+    c->file[i].p = data;
+    c->file[i].n = (size_t)size;
+    return MENU_LABELS_MADE;
+}
+
 static int ml_read_disc(MlCtx *c, const char *dataDir, int anyDisc) {
-    int i;
+    int i, r;
 
     for (i = 0; i < ML_FILES; i++) {
-        char path[1200];
-        struct stat st;
-        FILE *fp;
-        uint8_t *data;
-        long size;
-
-        snprintf(path, sizeof(path), "%s/pzs3us1/%05d.bin", dataDir, kMlFiles[i].number);
-        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || (fp = fopen(path, "rb")) == NULL) {
-            ml_fail(c, "%s is missing (the game data of the USA release, SLUS-21678, is needed)", path);
-            return MENU_LABELS_OTHER_DISC;
+        if ((r = ml_read_one(c, dataDir, i, anyDisc)) != MENU_LABELS_MADE) {
+            return r;
         }
-        if (fseek(fp, 0, SEEK_END) != 0 || (size = ftell(fp)) < 0 || fseek(fp, 0, SEEK_SET) != 0 || size > 64 * 1024 * 1024 ||
-            (!anyDisc && (uint32_t)size != kMlFiles[i].size)) {
-            fclose(fp);
-            ml_fail(c, "%s is not the file of the USA release (SLUS-21678): its menu textures are numbered differently", path);
-            return MENU_LABELS_OTHER_DISC;
-        }
-        data = ml_alloc(c, (size_t)size);
-        if (data == NULL || fread(data, 1, (size_t)size, fp) != (size_t)size) {
-            fclose(fp);
-            ml_fail(c, "%s cannot be read", path);
-            return MENU_LABELS_FAILED;
-        }
-        fclose(fp);
-        if (!anyDisc && ml_crc32(data, (size_t)size) != kMlFiles[i].crc) {
-            ml_fail(c, "%s is not the file of the USA release (SLUS-21678): its menu textures are numbered differently", path);
-            return MENU_LABELS_OTHER_DISC;
-        }
-        c->file[i].p = data;
-        c->file[i].n = (size_t)size;
     }
     return MENU_LABELS_MADE;
 }
@@ -1482,6 +1498,7 @@ int MenuLabels_Make(const char *dataDir, const char *outDir, int anyDisc, char *
         snprintf(why, whyLen, "out of memory");
         return MENU_LABELS_FAILED;
     }
+    pthread_mutex_lock(&sMlCutter);
     result = ml_read_disc(c, dataDir, anyDisc);
     if (result == MENU_LABELS_MADE) {
         result = MENU_LABELS_FAILED;
@@ -1513,5 +1530,99 @@ int MenuLabels_Make(const char *dataDir, const char *outDir, int anyDisc, char *
     free(json.p);
     ml_free(c);
     free(c);
+    pthread_mutex_unlock(&sMlCutter);
     return result;
+}
+
+/* ---- the PC's item of the main menu (src/menu/menu_a.c) ---------------------------------------------------------- */
+
+/* The cutter's sheets and letters, all three styles, given back. (with sMlCutter held) */
+static void ml_cutter_clear(void) {
+    int s, i;
+    for (s = 0; s < NF_STYLES; s++) {
+        for (i = 0; i < MAX_SHEETS; i++) {
+            free(sSheet[s][i]);
+            sSheet[s][i] = NULL;
+        }
+        for (i = 0; i < 128; i++) {
+            free(sStyle[s].g[i].px);
+        }
+        memset(&sStyle[s], 0, sizeof(sStyle[s]));
+        sSheetCount[s] = 0;
+    }
+    sState = 0;
+}
+
+/* The 512-wide textures of texture file `part` of a screen into the cutter's sheets of style `s` (a shorter one
+   filled up with nothing below). The number of sheets. */
+static int ml_cutter_sheets(MlCtx *c, MlBuf screen, int part, int s, int want) {
+    MlBuf d;
+    uint32_t count, i;
+    int n = 0;
+
+    if (!ml_section(c, screen, (uint32_t)part, &d) || !ml_get32(d, 0, &count)) {
+        return 0;
+    }
+    for (i = 0; i < count && n < want; i++) {
+        MlTex t;
+        int width;
+        if (!ml_entry_width(d, i, &width) || width != SHEET_W || ml_texture(c, d, i, &t) <= 0 || t.h > SHEET_H) {
+            continue;
+        }
+        if ((sSheet[s][n] = (uint8_t *)calloc((size_t)SHEET_W * SHEET_H, 4)) == NULL) {
+            return 0;
+        }
+        memcpy(sSheet[s][n++], t.rgba, (size_t)SHEET_W * t.h * 4);
+    }
+    sSheetCount[s] = n;
+    return n;
+}
+
+int MenuLabels_MainItem(const char *dataDir, const char *text, unsigned char *out[2]) {
+    MlCtx *c = calloc(1, sizeof(*c));
+    const char *names[ML_LABELS];
+    char split[sizeof(kMlMain)], *p;
+    MlBuf select, main;
+    int count = 0, k, w, h, ok = 0;
+
+    out[0] = out[1] = NULL;
+    if (c == NULL) {
+        return 0;
+    }
+    memcpy(split, kMlMain, sizeof(split));
+    for (p = split; count < ML_LABELS; p++) { /* the main menu's texts, one by one */
+        names[count++] = p;
+        if ((p = strchr(p, '|')) == NULL) {
+            break;
+        }
+        *p = '\0';
+    }
+    pthread_mutex_lock(&sMlCutter);
+    ml_cutter_clear();
+    /* the stage select's names lend the letters the main menu's labels do not have (the k), as namefont.c does */
+    if (ml_read_one(c, dataDir, ml_file(448), 0) == MENU_LABELS_MADE && ml_read_one(c, dataDir, ml_file(449), 0) == MENU_LABELS_MADE &&
+        ml_screen(c, 448, 2, &select) && ml_screen(c, 449, 2, &main) && ml_cutter_sheets(c, select, 6, NF_STAGE, 9) == 9 &&
+        ml_cutter_sheets(c, main, 5, NF_SONG, 2) == 2 && ml_cutter_sheets(c, main, 6, NF_SONG_LIT, 2) == 2 &&
+        style_build(NF_STAGE, kStageNames, (int)(sizeof(kStageNames) / sizeof(kStageNames[0])), 64) &&
+        style_build(NF_SONG, names, count, 32) && style_build(NF_SONG_LIT, names, count, 32)) {
+        style_lend(&sStyle[NF_SONG], &sStyle[NF_STAGE]);
+        style_lend(&sStyle[NF_SONG_LIT], &sStyle[NF_STAGE]);
+        sState = 3;
+        for (k = 0, ok = 1; k < 2 && ok; k++) {
+            out[k] = MenuLabels_NameCompose_(NF_SONG + k, text, &w, &h);
+            ok = out[k] != NULL && w == SHEET_W && h == 32;
+        }
+    }
+    if (!ok) {
+        free(out[0]);
+        free(out[1]);
+        out[0] = out[1] = NULL;
+        fprintf(stderr, "bt3: main menu: the lettering of the PC's item was not made from the disc (%s)\n",
+                c->why[0] != '\0' ? c->why : "its letters were not recognised");
+    }
+    ml_cutter_clear();
+    pthread_mutex_unlock(&sMlCutter);
+    ml_free(c);
+    free(c);
+    return ok;
 }

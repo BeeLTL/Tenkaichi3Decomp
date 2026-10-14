@@ -27,7 +27,8 @@ MainMenu *gMainMenu = NULL;
 /*
  * PC only: "Tenkaichi Budokai Online" (item 11), listed after Dragon Net Battle (after Duel when that one is
  * hidden). Its label is written into the free fourth row of the second label sheet of each plate state (label 11,
- * the item's own number), lettered like the game's plates (port/tools/tbo/tbo_label.py -> port_tbo_label.h); its
+ * the item's own number), put together from the letters of the other labels of the player's disc
+ * (port/src/gs/menu_text.c, Port_MainItemLabel); without them (another edition of the game) from port_tbo_label.h. Its
  * icon is Dragon Net Battle's. Choosing it opens the Duel mode with gPortDuelRole 6, where Duel_Main runs the
  * screens of menu/port_tbo.c instead of its own. It has no voiced line of the guides.
  */
@@ -57,6 +58,25 @@ static void PortMainMenu_WriteRuns(u8 *tex, s32 row, const PortLabelRun *run, s3
             px[PortMainMenu_PixelAt(run[i].x + k, row * 0x20 + run[i].y)] = run[i].v;
         }
     }
+}
+
+/* The label in the disc's lettering into row `row` of a sheet; 0 when it could not be made. */
+static s32 PortMainMenu_WriteDisc(u8 *tex, s32 row, s32 lit) {
+    extern s32 Port_MainItemLabel(s32 entry, s32 lit, s32 out);
+    static u8 index[512 * 0x20];
+    u8 *px = *(u8 **)(tex + 0x38) + 0x60;
+    s32 x;
+    s32 y;
+
+    if (!Port_MainItemLabel((s32)(u32)tex, lit, (s32)(u32)index)) {
+        return 0;
+    }
+    for (y = 0; y < 0x20; y++) {
+        for (x = 0; x < 512; x++) {
+            px[PortMainMenu_PixelAt(x, row * 0x20 + y)] = index[y * 512 + x];
+        }
+    }
+    return 1;
 }
 #define MAINMENU_VOICED(item) ((item) < MAINMENU_TBO)
 #else
@@ -203,8 +223,10 @@ void MainMenu_Init(s32 section) {
     }
 #ifdef PORT
     /* the second sheet of each state (slot 8 not chosen, 12 chosen) is the entry behind the first */
-    PortMainMenu_WriteRuns(gMainMenu->tex[8] + 0x40, 3, sPortTboOff, sizeof(sPortTboOff) / sizeof(sPortTboOff[0]));
-    PortMainMenu_WriteRuns(gMainMenu->tex[12] + 0x40, 3, sPortTboOn, sizeof(sPortTboOn) / sizeof(sPortTboOn[0]));
+    if (!PortMainMenu_WriteDisc(gMainMenu->tex[8] + 0x40, 3, 0) || !PortMainMenu_WriteDisc(gMainMenu->tex[12] + 0x40, 3, 1)) {
+        PortMainMenu_WriteRuns(gMainMenu->tex[8] + 0x40, 3, sPortTboOff, sizeof(sPortTboOff) / sizeof(sPortTboOff[0]));
+        PortMainMenu_WriteRuns(gMainMenu->tex[12] + 0x40, 3, sPortTboOn, sizeof(sPortTboOn) / sizeof(sPortTboOn[0]));
+    }
 #endif
     gMainMenu->top = gMainMenu->itemCount - 1;
     for (i = 0; i < gMainMenu->itemCount; i++) {
