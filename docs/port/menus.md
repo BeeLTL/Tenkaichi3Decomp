@@ -136,6 +136,40 @@ From the versus menu's data (archive 448, member 1: section 21 the message text,
   (`Tb_Speak`: the title as a page opens, the item under the cursor and its value, keys, what was typed, notes).
   Check without a speech library with `BT3_A11Y_LOG=<file>`.
 
+## Recipe: a new main-menu item, step by step
+
+What to change, in order. Item 11 is taken by TBO; with the existing sheets there is no room for a second (see the
+limits in 2.), so this is the list for replacing what item 11 does, or for whoever gives the plates a larger sheet.
+
+1. **Its number and place** (src/menu/menu_a.c, `#ifdef PORT`): a `#define` for the item number; in
+   `MainMenu_Init`'s loop, `continue` on that number, and insert it after the item it should follow.
+2. **Its icon:** `MM_ICON` maps it to the item whose icon it shows.
+3. **Its voice and line:** `MAINMENU_VOICED` keeps it from playing a guide's line (there is none for it):
+   `voiceLine` is -1 on it, so **the message box is empty and nothing is said**. Open: write a line of its own
+   into the box with `MsgWin_PortDrawString` (section 3) in the main menu's draw, when the cursor is on it.
+4. **What choosing it does:** a `case` in `MainMenu_Update`'s switch: `MAINMENU_COUNT(); MAINMENU_CHOOSE(mode);`.
+   - To open an existing mode, that mode's number is all (no screen to write).
+   - To open a screen of its own, set a role flag first and catch it in that mode's main function, as
+     `gPortDuelRole` / `Duel_Main` do (section 3), clearing the flag in an online session.
+5. **Its words:** the text is `kMlItem` (port/src/gs/menu_labels.c), used both to compose the label at start
+   (`MenuLabels_MainItem`) and to list it for the Menu font (`ml_item_into`). Every letter has to be on the disc's
+   labels or the stage names (check with the cutter: a missing letter makes the composition fail, and the log says
+   so). The fallback picture (`port_tbo_label.h`) is TBO's own: a new text has none, so without the USA disc's
+   archives it would show TBO's words. Raise `MENU_LABELS_VERSION` (menu_labels.h) whenever what the list writes
+   changes.
+6. **The screen** (if it has one): start from `PortTbo_Run`'s frame loop (section 3): the windows (`Tb_WinInit` /
+   `Tb_WinTerm`), the page's update, the speech, the drawing, a fade out, and a return value its caller turns into
+   the next progress mode.
+
+**Checks before it is done:**
+
+- the item in both plate states (not chosen / under the cursor), and listed once;
+- with a Menu font chosen in F1 > UI: the item and the three labels on its sheet (Character Reference, Options,
+  Shenron) drawn in that font (if not, the sheet's hash in the list does not match: step 5);
+- the screen reader's log (`BT3_A11Y_LOG`): the screen's pages, items and values said;
+- in and out of the screen several times; an online match started from it, and back;
+- the PC build without `error:` in its output; the PS2 matching build (both `.ok` files).
+
 ## 4. Pitfalls found on the way
 
 - **An online session restarts the game.** A match found from a screen of ours puts the game back to its first
