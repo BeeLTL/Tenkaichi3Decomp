@@ -1022,9 +1022,10 @@ static void Tb_Keypad(f32 x, f32 y, s32 rows, char (*keys)[KEY_COLS + 1], const 
         f32 x1 = x + 36.0f * (f32)b[k].c1 + 32.0f;
         s32 on = sTb->keyRow == rows && sTb->keyCol >= b[k].c0 && sTb->keyCol <= b[k].c1;
 
-        Tb_Pill(on ? TBO_KIT_SEL : b[k].act == TB_KEY_OK ? TBO_KIT_GOLD : TBO_KIT_BAR, x0, by, x1, by + 28.0f, 0x80);
+        /* (JOIN and DONE as the others: gold is the one the cursor is on) */
+        Tb_Pill(on ? TBO_KIT_SEL : TBO_KIT_BAR, x0, by, x1, by + 28.0f, 0x80);
         Tb_Align(1);
-        Tb_Text((x0 + x1) * 0.5f, Tb_TextTop(by + 14.0f, 0.6f), b[k].label, 0.6f, x1 - x0 - 12.0f, on ? 1 : b[k].act == TB_KEY_OK ? 2 : 0);
+        Tb_Text((x0 + x1) * 0.5f, Tb_TextTop(by + 14.0f, 0.6f), b[k].label, 0.6f, x1 - x0 - 12.0f, on ? 1 : 0);
         Tb_Align(0);
     }
 }
