@@ -69,4 +69,4 @@ See [BROWSER_BUILD.md](https://github.com/BeeLTL/Tenkaichi3Decomp/blob/main/docs
 
 ## Licence
 
-The project's code is MIT. The licences of the libraries in the program (SDL3, Dawn's WebGPU header, Emscripten's runtime, newlib's maths library, xxHash) are in the package's `licenses` folder. The game itself, and its data, belong to their owners and are not part of this release.
+The project's code is under the GNU AGPL v3 (`licenses/Tenkaichi3Decomp-AGPL.txt`); code from before the original project's switch on 2026-10-14 also stays available under MIT (`licenses/Tenkaichi3Decomp-MIT.txt`). Whoever passes the program on, or runs a changed version for others over a network, has to offer its source. The licences of the libraries in the program (SDL3, Dawn's WebGPU header, Emscripten's runtime, newlib's maths library, xxHash) are in the package's `licenses` folder. The game itself, and its data, belong to their owners and are not part of this release.

@@ -21,7 +21,8 @@ WEB = ROOT / "port/build/web"
 PAGE = ["index.html", "bt3.js", "bt3.wasm", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "saves.js", "touch.js", "gamepad.svg"]
 EMSDK = pathlib.Path(os.environ.get("EMSDK", ROOT.parent / "tools/emsdk"))
 LICENSES = {
-    "Tenkaichi3Decomp-LICENSE.txt": ROOT / "LICENSE",
+    "Tenkaichi3Decomp-AGPL.txt": ROOT / "LICENSE",       # (AGPL-3.0-only from the original project's 06e4671 on)
+    "Tenkaichi3Decomp-MIT.txt": ROOT / "LICENSE-MIT",    # (the code as it was up to then)
     "SDL3-LICENSE.txt": EMSDK / "upstream/emscripten/cache/ports/sdl3/SDL-release-3.4.2/LICENSE.txt",
     "Dawn-webgpu-LICENSE.txt": EMSDK / "upstream/emscripten/cache/ports/emdawnwebgpu/emdawnwebgpu_pkg/webgpu_cpp/LICENSE",
     "Emscripten-LICENSE.txt": EMSDK / "upstream/emscripten/LICENSE",

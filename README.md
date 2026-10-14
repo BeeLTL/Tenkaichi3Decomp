@@ -6,6 +6,13 @@ This is the game's own code, from the matching decompilation in **BT3-Decompiled
 a renderer, sound and input layer for the web underneath. It is not an emulator. It is a fork of
 [z3xox/Tenkaichi3Decomp](https://github.com/z3xox/Tenkaichi3Decomp), the native PC port it is built on.
 
+> **Not a website, not the official project.** This is a fork of
+> [z3xox/Tenkaichi3Decomp](https://github.com/z3xox/Tenkaichi3Decomp), the official source. The web version runs
+> only on your own computer (a local server on 127.0.0.1) with the data from **your own disc**; nobody hosts it.
+> Any website that lets you play Budokai Tenkaichi 3 in a browser, with or without ads, is not affiliated with this
+> fork or with the original project: a site that runs the game without your own disc is handing out the game's
+> copyrighted code and data. Releases here are free, with no ads, accounts or payments.
+
 This repository contains **no game data**. You need your own disc image of that release. The page reads the
 game's data from a folder on your own computer, through a small server that listens on 127.0.0.1 only: nothing
 is uploaded anywhere.
@@ -139,10 +146,14 @@ This port stands on other people's work:
 ## Licence
 
 The port's own code (everything under `port/` except `port/third_party/`, the build tools, and the PC and web
-changes inside `#ifdef PORT`) is under the [MIT licence](LICENSE). The libraries in `port/third_party/` keep their
-own licences (newlib's maths library: its BSD-style terms, in that folder; xxHash: BSD-2-Clause; Dear ImGui: MIT).
-The game's code in `src/` and `include/` comes from the decompilation and is not ours to license: it belongs to
-the game's rights holders.
+changes inside `#ifdef PORT`) is under the [GNU Affero General Public License, version 3](LICENSE) (AGPL-3.0-only),
+as the original project is in every commit after its `06e4671` (2026-10-14). Up to and including that commit it was
+under the [MIT licence](LICENSE-MIT), and that code, as it was then, stays available under MIT (the release
+web-0.1.33.3 is from then). Whoever passes the program on, changed or not, or runs a changed version for others over
+a network (a web page included), has to offer its source under the same licence. The libraries in
+`port/third_party/` keep their own licences (newlib's maths library: its BSD-style terms, in that folder; xxHash:
+BSD-2-Clause; Dear ImGui: MIT). The game's code in `src/` and `include/` comes from the decompilation and is not
+ours to license: it belongs to the game's rights holders.
 
 ## Legal
 
