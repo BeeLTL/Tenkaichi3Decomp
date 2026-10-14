@@ -1645,8 +1645,8 @@ static void Tb_Text(f32 x, f32 y, char *s, f32 scale, f32 width, s32 style) {
     case 1: /* gold: under the cursor */
         Tb_TextEx(x, y, s, scale, width, Mm_Rgba(0xFF, 0xEC, 0xB8, 0x80), Mm_Rgba(0xFF, 0x94, 0x30, 0x80), Mm_Rgba(0x5C, 0x24, 0x08, 0x80));
         break;
-    case 2: /* yellow: a heading */
-        Tb_TextEx(x, y, s, scale, width, Mm_Rgba(0xFF, 0xF4, 0x90, 0x80), Mm_Rgba(0xFF, 0xD0, 0x30, 0x80), Mm_Rgba(0x50, 0x28, 0x08, 0x80));
+    case 2: /* a heading: as the lines (gold is the cursor's alone, as in the game's menus) */
+        Tb_TextEx(x, y, s, scale, width, Mm_Rgba(0xFF, 0xFF, 0xFF, 0x80), Mm_Rgba(0xE4, 0xD8, 0xFF, 0x80), Mm_Rgba(0x40, 0x14, 0x64, 0x80));
         break;
     case 3: /* cyan: a value */
         Tb_TextEx(x, y, s, scale, width, Mm_Rgba(0xD0, 0xFC, 0xFF, 0x80), Mm_Rgba(0x70, 0xE0, 0xFF, 0x80), Mm_Rgba(0x08, 0x28, 0x50, 0x80));
@@ -1800,7 +1800,6 @@ static void Tb_DrawCreateText(void) {
     Tb_DelayText(value[CR_DELAY], sTb->delay);
     Tb_RollText(value[CR_ROLL], sTb->roll);
     value[CR_OPEN][0] = 0;
-    Tb_Pill(TBO_KIT_GOLD, 70.0f, 70.0f, 244.0f, 90.0f, 0x80);
     Tb_Align(1);
     Tb_Text(157.0f, Tb_TextTop(80.0f, 0.56f), "ROOM SETTINGS", 0.56f, 0.0f, 2);
     Tb_Align(0);
@@ -1835,7 +1834,7 @@ static void Tb_DrawJoinText(void) {
         f32 x = 56.0f + 50.0f * (f32)c;
 
         one[0] = c < sTb->codeLen ? sTb->code[c] : (c == sTb->codeLen && (sTb->frames / 16) & 1 ? '_' : ' ');
-        Tb_Text(x, 81.0f, one, 1.0f, 0.0f, c < sTb->codeLen ? 2 : 0);
+        Tb_Text(x, 81.0f, one, 1.0f, 0.0f, c < sTb->codeLen ? 3 : 0); /* (what is typed: a value) */
     }
     Tb_Align(0);
     Tb_Keypad(24.0f, 138.0f, KEY_ROWS, sTbKeys, sTbJoinBtn, 2);
