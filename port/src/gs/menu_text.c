@@ -800,7 +800,7 @@ static volatile int sItem; /* 0 not started, 1 being made, 2 done (sItemPic NULL
 static void *item_thread(void *arg) {
     const char *data = getenv("BT3_DATA");
     (void)arg;
-    MenuLabels_MainItem(data != NULL ? data : "gamedata", "Tenkaichi Budokai Online", sItemPic);
+    MenuLabels_MainItem(data != NULL ? data : "gamedata", sItemPic);
     __sync_synchronize();
     sItem = 2;
     return NULL;
@@ -828,10 +828,10 @@ static void item_start(void) {
    pixels hold, each the colour of the sheet's table nearest the picture's. 0: no label from the disc. */
 int Port_MainItemLabel(int entry, int lit, int out) {
     const uint8_t *e = (const uint8_t *)Port_Ptr((uint32_t)entry);
-    const uint8_t *clut, *pic;
+    const uint8_t *pic;
     uint8_t *dst = (uint8_t *)Port_Ptr((uint32_t)out);
     uint32_t clutAt;
-    int i, j, waited = 0;
+    int waited = 0;
 
     item_start();
     while (sItem != 2 && waited < 5000) { /* (a few tenths of a second, once: it began with the first frame) */
@@ -843,26 +843,7 @@ int Port_MainItemLabel(int entry, int lit, int out) {
         return 0;
     }
     memcpy(&clutAt, e + 0x3C, 4);
-    clut = (const uint8_t *)Port_Ptr(clutAt) + 0x60;
-    for (i = 0; i < 512 * 32; i++) {
-        const uint8_t *p = pic + i * 4;
-        long pa = ((long)p[3] * 128 + 127) / 255; /* (the picture's alpha is 0..255, the table's the PS2's, 0x80 = opaque) */
-        int best = 0;
-        long bestD = -1;
-        for (j = 0; j < 256; j++) { /* the nearest of the table's colours, alpha first (the transparent ones match by it alone) */
-            const uint8_t *q = clut + j * 4;
-            long da = pa - q[3], d = da * da * 16;
-            if (pa > 0 && q[3] > 0) {
-                long dr = (long)p[0] - q[0], dg = (long)p[1] - q[1], db = (long)p[2] - q[2];
-                d += (dr * dr + dg * dg + db * db) * (pa < q[3] ? pa : q[3]) / 128;
-            }
-            if (bestD < 0 || d < bestD) {
-                bestD = d;
-                best = j;
-            }
-        }
-        dst[i] = (uint8_t)((best & 0xE7) | ((best & 8) << 1) | ((best & 0x10) >> 1)); /* (the table's order: 8..15 and 16..23 of every 32 change places) */
-    }
+    MenuLabels_ItemPixels(pic, (const uint8_t *)Port_Ptr(clutAt) + 0x60, dst);
     return 1;
 }
 

@@ -3396,6 +3396,13 @@ own palette indices (the nearest colour of its table, alpha first) and written i
 memory only. With another edition of the game (archives that are not the USA release's) the label of
 port_tbo_label.h is written instead, as before.
 
+With a Menu font chosen, the item stayed in the disc's lettering, and so did the three labels on the same sheet
+(Character Reference, Options, Shenron): menu_text.c finds a sheet by a hash of all its pixels, and the list of labels
+had hashed the disc's sheet, without the item. (This was so from the start, with port_tbo_label.h too.) The list now
+writes the item into that sheet as the game writes it (the same nearest colours of the sheet's table,
+MenuLabels_ItemPixels, used by both), hashes that, and lists the item as the sheet's twelfth label; its version is
+v8, so an older list is made again.
+
 The lines of the online screens themselves cannot be made that way: names, room codes and the hosts' lines need
 every character, which the disc's labels do not have. They keep being written with the Menu font. Measured against
 the disc's letters (cap height, widths of "Dragon Net Battle" and "Ultimate Training"), the game's lettering is a

@@ -49,6 +49,8 @@
 /* The texts of the main menu's labels, in the order of their rows (the list's, and the PC's item: menu_a.c). */
 static const char kMlMain[] = "Dragon History|Ultimate Battle|Dragon World Tour|Duel|Dragon Net Battle|Evolution Z|"
                               "Ultimate Training|Data Center|Character Reference|Options|Shenron";
+/* The PC's item: its label is written into the free row after them (src/menu/menu_a.c). */
+static const char kMlItem[] = "Tenkaichi Budokai Online";
 
 /* The letter cutter (namefont.c's, this file's copy) is used by MenuLabels_Make and MenuLabels_MainItem, which
    may run in two threads: one at a time. */
@@ -467,6 +469,10 @@ static int ml_texture(MlCtx *c, MlBuf d, uint32_t index, MlTex *out) {
 
 /* ---- the catalogue --------------------------------------------------------------------------------------------- */
 
+/* The PC's item of the main menu (at the end of this file). */
+static int ml_item_pics(MlCtx *c, unsigned char *out[2]);
+static int ml_item_into(MlCtx *c, MlBuf screen, int part, MlTex *sheet, const unsigned char *pic);
+
 static MlGroup *ml_group(MlCtx *c, const char *id, int height, int width) {
     MlGroup *g;
     if (c->nGroups == ML_GROUPS) {
@@ -648,11 +654,24 @@ static int ml_catalog(MlCtx *c) {
             g->labels[g->nLabels++] = kSongNames[n];
         }
     }
-    /* the main menu, as it is and while chosen: its Flash clips use these same rows */
-    for (i = 5; g != NULL && i <= 6; i++) {
-        g = ml_strip(c, ML_ID("main-%d", i), 32, main, i, ML_TEXTURES);
-        if (g != NULL && !ml_labels(c, g, kMain)) {
-            return 0;
+    /* the main menu, as it is and while chosen: its Flash clips use these same rows. The second sheet of each holds
+       the PC's item too (in the game's memory, which the textures are found by): it is written into it here as the
+       game writes it, and is the twelfth label */
+    {
+        unsigned char *item[2];
+        char withItem[sizeof(kMlMain) + sizeof(kMlItem) + 1];
+        int haveItem = ml_item_pics(c, item);
+
+        snprintf(withItem, sizeof(withItem), "%s|%s", kMain, kMlItem);
+        for (i = 5; g != NULL && i <= 6; i++) {
+            g = ml_strip(c, ML_ID("main-%d", i), 32, main, i, ML_TEXTURES);
+            if (g != NULL && !ml_labels(c, g, haveItem && g->nTex == 2 && ml_item_into(c, main, i, &g->tex[1], item[i - 5]) ? withItem : kMain)) {
+                g = NULL;
+            }
+        }
+        if (haveItem) {
+            free(item[0]);
+            free(item[1]);
         }
     }
     if (g == NULL) {
@@ -1578,17 +1597,14 @@ static int ml_cutter_sheets(MlCtx *c, MlBuf screen, int part, int s, int want) {
     return n;
 }
 
-int MenuLabels_MainItem(const char *dataDir, const char *text, unsigned char *out[2]) {
-    MlCtx *c = calloc(1, sizeof(*c));
+/* The label's two pictures (MenuLabels_MainItem), with sMlCutter held and archives 448 and 449 read into `c`. */
+static int ml_item_pics(MlCtx *c, unsigned char *out[2]) {
     const char *names[ML_LABELS];
     char split[sizeof(kMlMain)], *p;
     MlBuf select, main;
     int count = 0, k, w, h, ok = 0;
 
     out[0] = out[1] = NULL;
-    if (c == NULL) {
-        return 0;
-    }
     memcpy(split, kMlMain, sizeof(split));
     for (p = split; count < ML_LABELS; p++) { /* the main menu's texts, one by one */
         names[count++] = p;
@@ -1597,11 +1613,9 @@ int MenuLabels_MainItem(const char *dataDir, const char *text, unsigned char *ou
         }
         *p = '\0';
     }
-    pthread_mutex_lock(&sMlCutter);
     ml_cutter_clear();
     /* the stage select's names lend the letters the main menu's labels do not have (the k), as namefont.c does */
-    if (ml_read_one(c, dataDir, ml_file(448), 0) == MENU_LABELS_MADE && ml_read_one(c, dataDir, ml_file(449), 0) == MENU_LABELS_MADE &&
-        ml_screen(c, 448, 2, &select) && ml_screen(c, 449, 2, &main) && ml_cutter_sheets(c, select, 6, NF_STAGE, 9) == 9 &&
+    if (ml_screen(c, 448, 2, &select) && ml_screen(c, 449, 2, &main) && ml_cutter_sheets(c, select, 6, NF_STAGE, 9) == 9 &&
         ml_cutter_sheets(c, main, 5, NF_SONG, 2) == 2 && ml_cutter_sheets(c, main, 6, NF_SONG_LIT, 2) == 2 &&
         style_build(NF_STAGE, kStageNames, (int)(sizeof(kStageNames) / sizeof(kStageNames[0])), 64) &&
         style_build(NF_SONG, names, count, 32) && style_build(NF_SONG_LIT, names, count, 32)) {
@@ -1609,7 +1623,7 @@ int MenuLabels_MainItem(const char *dataDir, const char *text, unsigned char *ou
         style_lend(&sStyle[NF_SONG_LIT], &sStyle[NF_STAGE]);
         sState = 3;
         for (k = 0, ok = 1; k < 2 && ok; k++) {
-            out[k] = MenuLabels_NameCompose_(NF_SONG + k, text, &w, &h);
+            out[k] = MenuLabels_NameCompose_(NF_SONG + k, kMlItem, &w, &h);
             ok = out[k] != NULL && w == SHEET_W && h == 32;
         }
     }
@@ -1617,12 +1631,108 @@ int MenuLabels_MainItem(const char *dataDir, const char *text, unsigned char *ou
         free(out[0]);
         free(out[1]);
         out[0] = out[1] = NULL;
+    }
+    ml_cutter_clear();
+    return ok;
+}
+
+int MenuLabels_MainItem(const char *dataDir, unsigned char *out[2]) {
+    MlCtx *c = calloc(1, sizeof(*c));
+    int ok = 0;
+
+    out[0] = out[1] = NULL;
+    if (c == NULL) {
+        return 0;
+    }
+    pthread_mutex_lock(&sMlCutter);
+    if (ml_read_one(c, dataDir, ml_file(448), 0) == MENU_LABELS_MADE && ml_read_one(c, dataDir, ml_file(449), 0) == MENU_LABELS_MADE) {
+        ok = ml_item_pics(c, out);
+    }
+    if (!ok) {
         fprintf(stderr, "bt3: main menu: the lettering of the PC's item was not made from the disc (%s)\n",
                 c->why[0] != '\0' ? c->why : "its letters were not recognised");
     }
-    ml_cutter_clear();
     pthread_mutex_unlock(&sMlCutter);
     ml_free(c);
     free(c);
     return ok;
+}
+
+void MenuLabels_ItemPixels(const unsigned char *pic, const unsigned char *table, unsigned char *out) {
+    int i, j;
+
+    for (i = 0; i < SHEET_W * 32; i++) {
+        const unsigned char *p = pic + i * 4;
+        long pa = ((long)p[3] * 128 + 127) / 255; /* (the picture's alpha is 0..255, the table's the PS2's, 0x80 = opaque) */
+        int best = 0;
+        long bestD = -1;
+        for (j = 0; j < 256; j++) { /* the nearest of the table's colours, alpha first (the transparent ones match by it alone) */
+            const unsigned char *q = table + j * 4;
+            long da = pa - q[3], d = da * da * 16;
+            if (pa > 0 && q[3] > 0) {
+                long dr = (long)p[0] - q[0], dg = (long)p[1] - q[1], db = (long)p[2] - q[2];
+                d += (dr * dr + dg * dg + db * db) * (pa < q[3] ? pa : q[3]) / 128;
+            }
+            if (bestD < 0 || d < bestD) {
+                bestD = d;
+                best = j;
+            }
+        }
+        out[i] = (unsigned char)((best & 0xE7) | ((best & 8) << 1) | ((best & 0x10) >> 1)); /* (the table's order: 8..15 and 16..23 of every 32 change places) */
+    }
+}
+
+/* The colour table of texture `index` of a texture file, in the order it is in memory (256 colours of 4 bytes). */
+static int ml_table(MlBuf d, uint32_t index, uint8_t table[256 * 4]) {
+    uint32_t at, palAt;
+    uint64_t e, palette;
+
+    if (!ml_get32(d, 4, &at)) {
+        return 0;
+    }
+    e = (uint64_t)at * 4 + (uint64_t)index * 64;
+    if (e > d.n || d.n - e < 64 || !ml_get32(d, e + 4, &palAt)) {
+        return 0;
+    }
+    palette = (uint64_t)palAt * 4 + 96;
+    if (palette > d.n || d.n - palette < 256 * 4) {
+        return 0;
+    }
+    memcpy(table, d.p + palette, 256 * 4);
+    return 1;
+}
+
+/* The second sheet of the main menu's labels (state `lit`) as the game holds it: with the PC's item written into its
+   free fourth row (src/menu/menu_a.c, Port_MainItemLabel), each pixel the colour of the value written; and the hash
+   menu_text.c finds the sheet by, again. 0: not the sheet expected (nothing changed). */
+static int ml_item_into(MlCtx *c, MlBuf screen, int part, MlTex *sheet, const unsigned char *pic) {
+    static uint8_t table[256 * 4], index[SHEET_W * 32];
+    MlBuf d;
+    uint32_t count, i, seen = 0, at = 0;
+    int width, x, y;
+
+    if (sheet->w != SHEET_W || sheet->h != 128 || !ml_section(c, screen, (uint32_t)part, &d) || !ml_get32(d, 0, &count)) {
+        return 0;
+    }
+    for (i = 0; i < count; i++) { /* the second 512-wide texture of the file, as ml_strip counts them */
+        if (ml_entry_width(d, i, &width) && width == SHEET_W && ++seen == 2) {
+            at = i;
+            break;
+        }
+    }
+    if (seen != 2 || !ml_table(d, at, table)) {
+        return 0;
+    }
+    MenuLabels_ItemPixels(pic, table, index);
+    for (y = 0; y < 32; y++) {
+        for (x = 0; x < SHEET_W; x++) {
+            int v = index[y * SHEET_W + x], slot = (v & 0xE7) | ((v & 8) << 1) | ((v & 0x10) >> 1);
+            memcpy(sheet->rgba + ((size_t)(96 + y) * SHEET_W + x) * 4, table + slot * 4, 4);
+        }
+    }
+    sheet->hash = UINT64_C(14695981039346656037);
+    for (i = 0; i < (uint32_t)(sheet->w * sheet->h * 4); i++) {
+        sheet->hash = (sheet->hash ^ sheet->rgba[i]) * UINT64_C(1099511628211);
+    }
+    return 1;
 }
