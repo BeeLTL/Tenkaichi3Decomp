@@ -884,6 +884,10 @@ static void bind(int value) {
         } else if (value < PORT_PAD_LT) { // (a button, not a trigger)
             *PortInput_OverlayPad() = value;
         }
+    } else if (sCapAction == PORT_ACTIONS + 1) { // the row "Open online chat"
+        if (sCapKind == 1) {
+            *PortInput_ChatKey() = value > 0 ? value : SDL_SCANCODE_TAB;
+        }
     } else if (sCapKind == 1) {
         PortInput_Keys(sCapPlayer)[sCapAction] = value;
     } else {
@@ -915,6 +919,10 @@ static void chat_close(void) {
 static int chat_event(const SDL_Event *ev) {
     int key = *PortInput_ChatKey();
     if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode == SDL_SCANCODE_ESCAPE) {
+        chat_close();
+        return 1;
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN && !sChatKeyHeld && !ev->key.repeat && key > 0 && (int)ev->key.scancode == key) {
         chat_close();
         return 1;
     }
@@ -1231,7 +1239,7 @@ static void misc_tab(void) {
     if (ImGui::Checkbox("Online chat", &chat)) {
         PortChat_EnabledSet(chat);
     }
-    ImGui::SetItemTooltip("Text with the other player of an online match. T opens a line (setting key_chat), Enter sends it,\n"
+    ImGui::SetItemTooltip("Text with the other player of an online match. Tab opens a line (setting key_chat), Enter sends it,\n"
                           "Esc puts it away; while it is typed the keyboard does not play, a controller does. Off: no lines\n"
                           "are shown or sent. A player without it sees nothing.");
 }
@@ -1545,6 +1553,22 @@ static void controls_tab(void) {
                 capture(2, player, a);
             }
         }
+        {   // what opens the online chat (not a player's: one for the program)
+            const int a = PORT_ACTIONS + 1;
+            bool waitKey = sCapKind == 1 && sCapAction == a;
+            int key = *PortInput_ChatKey();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Open online chat");
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : key > 0 ? SDL_GetScancodeName((SDL_Scancode)key) : "Tab", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                capture(1, player, a);
+            }
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("-");
+        }
         for (int a = 0; a < PORT_ACTIONS; a++) {
             bool waitKey = sCapKind == 1 && sCapPlayer == player && sCapAction == a;
             bool waitPad = sCapKind == 2 && sCapPlayer == player && sCapAction == a;
@@ -1837,9 +1861,10 @@ static void font_draw(ImDrawList *dl, const FontName *n, float x, float y, float
     dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)n->tex), ImVec2(x0, y0), ImVec2(x0 + w, y0 + h));
 }
 
-// The online chat, in the lower left corner. Put away, it shows the newest lines for a few seconds each, fading out,
-// and takes no input. While a line is typed it shows the last ones and the field.
-enum { CHAT_SHOWN_MS = 8000, CHAT_FADE_MS = 2000, CHAT_ROWS = 6, CHAT_ROWS_TYPING = 10 };
+// The online chat, in the lower left corner. Put away, it shows the newest lines for a few seconds each in a dark
+// rounded card, fading out, and takes no input. While a line is typed it shows the last ones, input field and
+// allows selecting/copying text with mouse.
+enum { CHAT_SHOWN_MS = 8000, CHAT_FADE_MS = 2000, CHAT_ROWS = 4, CHAT_ROWS_TYPING = 6 };
 
 static bool chat_recent(void) {
     PortChatLine l;
@@ -1849,7 +1874,7 @@ static bool chat_recent(void) {
 
 static void chat_draw(void) {
     ImGuiIO &io = ImGui::GetIO();
-    float w = io.DisplaySize.x * 0.42f < 300.0f ? 300.0f : io.DisplaySize.x * 0.42f;
+    float w = io.DisplaySize.x * 0.42f < 320.0f ? 320.0f : io.DisplaySize.x * 0.42f;
     unsigned n = PortChat_Count(), rows = sChat ? CHAT_ROWS_TYPING : CHAT_ROWS, first = n > rows ? n - rows : 0;
     Uint64 now = SDL_GetTicks();
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav |
@@ -1858,13 +1883,49 @@ static void chat_draw(void) {
         flags |= ImGuiWindowFlags_NoInputs;
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.02f, io.DisplaySize.y * 0.86f), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
-    ImGui::SetNextWindowBgAlpha(sChat ? 0.75f : 0.0f);
+
+    float bgAlpha = 0.85f;
+    if (!sChat) {
+        float newestAlpha = 1.0f;
+        PortChatLine lastLine;
+        if (n > 0 && PortChat_Line(n - 1, &lastLine)) {
+            Uint64 age = now - lastLine.atMs;
+            if (age >= CHAT_SHOWN_MS) {
+                return;
+            }
+            if (age > CHAT_SHOWN_MS - CHAT_FADE_MS) {
+                newestAlpha = (float)(CHAT_SHOWN_MS - age) / (float)CHAT_FADE_MS;
+            }
+        }
+        bgAlpha = 0.65f * newestAlpha;
+    }
+    ImGui::SetNextWindowBgAlpha(bgAlpha);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, sChat ? 1.0f : 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.75f, 0.2f, 0.5f));
+
     if (sChat && sChatFocus) {
         ImGui::SetNextWindowFocus();
     }
     if (ImGui::Begin("##chat", NULL, flags)) {
         const char *names[2] = {Port_NetName(Port_NetMe()), Port_NetName(!Port_NetMe())};
-        ImGui::PushTextWrapPos(w);
+        if (sChat) {
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.28f, 1.0f), "Online Chat (Tab)");
+            ImGui::SameLine(w - 130.0f);
+            bool mute = PortChat_Muted() != 0;
+            if (ImGui::Checkbox("Mute rival", &mute)) {
+                PortChat_MutedSet(mute);
+                sChatFocus = true;
+            }
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+
+        static unsigned sCopiedIdx;
+        static Uint64 sCopiedTime;
+
         for (unsigned i = first; i < n; i++) {
             PortChatLine l;
             float alpha = 1.0f;
@@ -1880,17 +1941,48 @@ static void chat_draw(void) {
                     alpha = (float)(CHAT_SHOWN_MS - age) / (float)CHAT_FADE_MS;
                 }
             }
-            char row[32 + CHAT_TEXT]; // (a name is at most 19 bytes: net.c's NAME_LEN)
-            SDL_snprintf(row, sizeof(row), "%s: %s", names[l.mine ? 0 : 1][0] != '\0' ? names[l.mine ? 0 : 1] : (l.mine ? "You" : "Other"), l.text);
-            // (drawn twice, a shadow under it: readable over any picture without a background)
-            ImVec2 at = ImGui::GetCursorScreenPos();
-            ImGui::GetWindowDrawList()->AddText(NULL, 0.0f, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, (int)(220.0f * alpha)), row, NULL, w - (at.x - ImGui::GetWindowPos().x));
-            ImGui::PushStyleColor(ImGuiCol_Text, l.mine ? ImVec4(0.65f, 0.85f, 1.0f, alpha) : ImVec4(1.0f, 1.0f, 1.0f, alpha));
-            ImGui::TextUnformatted(row);
-            ImGui::PopStyleColor();
+            const char *sender = names[l.mine ? 0 : 1][0] != '\0' ? names[l.mine ? 0 : 1] : (l.mine ? "You" : "Rival");
+            ImGui::PushID((int)i);
+            ImVec4 nameCol = l.mine ? ImVec4(0.35f, 0.85f, 1.0f, alpha) : ImVec4(1.0f, 0.82f, 0.28f, alpha);
+            ImGui::TextColored(nameCol, "%s:", sender);
+            ImGui::SameLine(0.0f, 6.0f);
+
+            if (sChat) {
+                bool justCopied = (sCopiedIdx == i && now - sCopiedTime < 2000);
+                float btnW = 50.0f;
+                float availW = w - (ImGui::GetCursorPosX() - ImGui::GetWindowPos().x) - btnW - 8.0f;
+                if (availW < 120.0f) availW = 120.0f;
+                ImGui::SetNextItemWidth(availW);
+
+                char msgBuf[CHAT_TEXT + 1];
+                SDL_strlcpy(msgBuf, l.text, sizeof(msgBuf));
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.16f, 0.5f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
+                ImGui::InputText("##t", msgBuf, sizeof(msgBuf), ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_AutoSelectAll);
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+
+                ImGui::SameLine();
+                if (ImGui::SmallButton(justCopied ? "Copied!" : "Copy")) {
+                    SDL_SetClipboardText(l.text);
+                    sCopiedIdx = i;
+                    sCopiedTime = now;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Copy message to clipboard");
+                }
+            } else {
+                ImVec2 at = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddText(NULL, 0.0f, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, (int)(230.0f * alpha)), l.text, NULL, w - (at.x - ImGui::GetWindowPos().x));
+                ImGui::PushTextWrapPos(w);
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, alpha), "%s", l.text);
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::PopID();
         }
-        ImGui::PopTextWrapPos();
+
         if (sChat) {
+            ImGui::Spacing();
             if (sChatFocus) {
                 ImGui::SetKeyboardFocusHere();
                 sChatFocus = false;
@@ -1911,16 +2003,12 @@ static void chat_draw(void) {
                     sChatFocus = true;
                 }
             }
-            ImGui::TextDisabled(sChatSoon ? "One line a second: Enter again to send" : "Enter: send   Esc: close");
-            bool mute = PortChat_Muted() != 0;
-            ImGui::SameLine();
-            if (ImGui::Checkbox("Mute the other player", &mute)) {
-                PortChat_MutedSet(mute);
-                sChatFocus = true;
-            }
+            ImGui::TextDisabled(sChatSoon ? "One line a second: Enter again to send" : "Enter: send   Esc / Tab: close   Ctrl+V: paste");
         }
     }
     ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
 }
 
 // Builds this frame's picture of the overlay (the settings or the online window, the line over the picture).

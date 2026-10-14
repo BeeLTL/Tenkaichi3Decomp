@@ -62,7 +62,7 @@ static int sDeadzone[2][2], sVib[2][2];
 /* What opens and closes the settings window: a key (F1) and a controller button (none), both of the settings
    window's list; and START + SELECT of any controller together, always. */
 static int sOverlayKey = SDL_SCANCODE_F1, sOverlayPad = -1;
-static int sChatKey = SDL_SCANCODE_T; /* opens the online chat's line (setting key_chat; T: no action has it by default) */
+static int sChatKey = SDL_SCANCODE_TAB; /* opens the online chat's line (setting key_chat; Tab by default) */
 static int sComboLatch; /* START + SELECT has opened or closed the window and is still held */
 static int sSwallow; /* a controller opened or closed the window: nothing of the controllers reaches the game until those buttons are let go */
 static volatile int sKeySwallow; /* the chat's line was sent or put away: nothing of the keyboard reaches the game until no bound key is held
@@ -117,7 +117,7 @@ static void load(void) {
     }
     sOverlayKey = Port_Setting("key_overlay", SDL_SCANCODE_F1);
     sOverlayPad = Port_Setting("pad_overlay", -1);
-    sChatKey = Port_Setting("key_chat", SDL_SCANCODE_T);
+    sChatKey = Port_Setting("key_chat", SDL_SCANCODE_TAB);
 }
 
 const char *PortInput_ActionLabel(int action) { return kActions[action].label; }
@@ -197,6 +197,7 @@ void PortInput_Save(void) {
     }
     Port_SettingSave("key_overlay", sOverlayKey);
     Port_SettingSave("pad_overlay", sOverlayPad);
+    Port_SettingSave("key_chat", sChatKey);
     Port_SettingsWrite();
 }
 
