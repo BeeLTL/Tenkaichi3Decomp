@@ -2172,9 +2172,11 @@ static void Tb_DrawText(void) {
                 at++;
             }
         }
-        f32 ty = n == 1 ? 368.0f : 359.0f;
+        f32 ty = 359.0f;
 
-        if (MsgWin_PortTextAt(n, &sx, &sy)) { /* (lowered by the number of rows, as the game's) */
+        /* where the game starts two rows. Always there, one row too: the game centres its few rows in the box, but
+           these lines change with the cursor, and a line that jumps up and down from item to item reads badly */
+        if (MsgWin_PortTextAt(2, &sx, &sy)) {
             ty = (sy - sTbPy) * 448.0f / sTbPh;
         }
         for (k = 0; k < n; k++) {
