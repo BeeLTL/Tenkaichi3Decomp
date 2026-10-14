@@ -3403,6 +3403,13 @@ writes the item into that sheet as the game writes it (the same nearest colours 
 MenuLabels_ItemPixels, used by both), hashes that, and lists the item as the sheet's twelfth label; its version is
 v8, so an older list is made again.
 
+A room match found on these screens opened the screens again instead of the character select (seen by the user,
+two copies on one machine: both logs say "the start-up is over ... the character select", then the hub, then the
+session ended when it was left for the main menu). The session puts the game back to its first moment and goes to
+mode 39 (headless.c), and Duel_Main runs these screens whenever gPortDuelRole is 6: the role, set when the item was
+chosen and cleared only after the screens return, was still 6 in the session, so it is not among what the session
+puts back. Duel_Main now clears it in a session.
+
 The lines of the online screens themselves cannot be made that way: names, room codes and the hosts' lines need
 every character, which the disc's labels do not have. They keep being written with the Menu font. Measured against
 the disc's letters (cap height, widths of "Dragon Net Battle" and "Ultimate Training"), the game's lettering is a
