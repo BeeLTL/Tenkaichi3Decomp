@@ -1370,13 +1370,18 @@ static void Tb_Pill(s32 id, f32 x0, f32 y0, f32 x1, f32 y1, s32 alpha) {
 }
 
 /* A piece of the kit as a box: its corners keep their shape, its sides and middle stretch. */
-static void Tb_Window(f32 x0, f32 y0, f32 x1, f32 y1);
+static void Tb_Rect(f32 x0, f32 y0, f32 x1, f32 y1, u32 top, u32 bottom);
+
+/* kit_window's frame is this many of the picture's pixels thick (465 x 224: the inside from 11 to 453 and to 212).
+   Inside it, its light stripes fall anywhere under the lines at the sizes it is drawn: the inside is covered in the
+   picture's own dark teal, the frame stays. */
+#define TB_WINDOW_FRAME 11.5f
 
 static void Tb_Panel(s32 id, f32 x0, f32 y0, f32 x1, f32 y1, s32 alpha) {
-    f32 w;
-    f32 h;
-    f32 c;
-    f32 cy;
+    f32 w = Tb_PicW(id);
+    f32 h = Tb_PicH(id);
+    f32 c = (f32)sTboSize[id][2];
+    f32 cy = c * 0.22f;
     f32 cx;
     f32 us[4];
     f32 vs[4];
@@ -1385,14 +1390,6 @@ static void Tb_Panel(s32 id, f32 x0, f32 y0, f32 x1, f32 y1, s32 alpha) {
     s32 i;
     s32 j;
 
-    if (id == TBO_KIT_WINDOW) { /* (the picture's stripes fall anywhere at the sizes it is drawn: drawn plain) */
-        Tb_Window(x0, y0, x1, y1);
-        return;
-    }
-    w = Tb_PicW(id);
-    h = Tb_PicH(id);
-    c = (f32)sTboSize[id][2];
-    cy = c * 0.22f;
     if (cy > (y1 - y0) * 0.34f) {
         cy = (y1 - y0) * 0.34f;
     }
@@ -1418,6 +1415,12 @@ static void Tb_Panel(s32 id, f32 x0, f32 y0, f32 x1, f32 y1, s32 alpha) {
             Tb_Sprite(id, xs[i], ys[j], xs[i + 1], ys[j + 1], us[i], vs[j], us[i + 1], vs[j + 1], TB_PLAIN, alpha);
         }
     }
+    if (id == TBO_KIT_WINDOW) {
+        f32 fx = TB_WINDOW_FRAME * cx / c;
+        f32 fy = TB_WINDOW_FRAME * cy / c;
+
+        Tb_Rect(x0 + fx, y0 + fy, x1 - fx, y1 - fy, Mm_Rgba(27, 86, 92, alpha), Mm_Rgba(27, 86, 92, alpha));
+    }
 }
 
 /* The shapes of the radar, on the page. */
@@ -1427,15 +1430,6 @@ static void Tb_Quad(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2, f32 x3, f32 
 
 static void Tb_Rect(f32 x0, f32 y0, f32 x1, f32 y1, u32 top, u32 bottom) {
     Tb_Quad(x0, y0, x1, y0, x0, y1, x1, y1, top, top, bottom, bottom);
-}
-
-/* A window of the screens (the player card, the room's code, the lists): a dark teal panel, lighter at the top, in a
-   light rim and a dark edge, square as the game's own boxes. Drawn, so that it has no stripes for the lines to miss. */
-static void Tb_Window(f32 x0, f32 y0, f32 x1, f32 y1) {
-    Tb_Rect(x0, y0, x1, y1, Mm_Rgba(0x08, 0x18, 0x1C, 0x80), Mm_Rgba(0x08, 0x18, 0x1C, 0x80));
-    Tb_Rect(x0 + 1.0f, y0 + 1.0f, x1 - 1.0f, y1 - 1.0f, Mm_Rgba(0xA8, 0xC8, 0xC4, 0x80), Mm_Rgba(0x70, 0x90, 0x90, 0x80));
-    Tb_Rect(x0 + 2.5f, y0 + 2.5f, x1 - 2.5f, y1 - 2.5f, Mm_Rgba(0x0C, 0x30, 0x34, 0x80), Mm_Rgba(0x0C, 0x30, 0x34, 0x80));
-    Tb_Rect(x0 + 3.5f, y0 + 3.5f, x1 - 3.5f, y1 - 3.5f, Mm_Rgba(0x24, 0x68, 0x6C, 0x80), Mm_Rgba(0x16, 0x4C, 0x52, 0x80));
 }
 
 /* ---- the letters: lines written with the TrueType fonts of the font list (port/src/gs/tbo_text.c): the headings
@@ -1866,6 +1860,7 @@ static void Tb_DrawWait(void) {
     }
     Tb_Radar(264.0f, 188.0f, 80.0f);
     Tb_Panel(TBO_KIT_WINDOW, 10.0f, 84.0f, 180.0f, 246.0f, 0x80);
+    Tb_Panel(TBO_KIT_WINDOW, 176.0f, 292.0f, 348.0f, 328.0f, 0x80); /* the search's clock (a window, not a bar to choose) */
 }
 
 static void Tb_DrawWaitText(void) {
