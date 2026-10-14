@@ -65,8 +65,13 @@ the sheet as the game does (the same `MenuLabels_ItemPixels`), hashes that, and 
 twelfth label (`ml_item_into`); its version was raised (v8) so older lists are made again.
 
 **Limits.**
-- One free row: **one** new entry fits the existing sheets. A second needs a larger sheet and the plate clips
-  told to read it: not looked into yet.
+- **Icons can be shared, labels cannot.** The plate's icon is a 64 x 64 cell of the icon sheet chosen by item
+  number (`(n % 4) * 64`, `(n / 4) * 64`; the animated one a 48-pixel strip, `n % 10`), so a new entry can point
+  at any existing item's icon (`MM_ICON`). Its words have to be its own: the plate reads row `n % 8` of label
+  sheet `n / 8` (`Flash_ClipSetUv` / `Flash_ClipSetTex` in `MainMenu_Draw`).
+- One free row: **one** new entry fits the existing sheets. Item 12 would read row 4 of sheet 2, which is only
+  four rows high. More entries need a larger (or a third) sheet the plates are pointed at: not looked into yet.
+  (Shenron's row is unused while Shenron is not unlocked, but an entry there would lose its words when it is.)
 - A label can only use letters the disc's labels have (or can be lent from the stage names). Any text a mod
   might want would need a fallback (a font, as the screens use).
 
