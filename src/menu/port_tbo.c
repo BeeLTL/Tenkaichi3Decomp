@@ -2204,7 +2204,7 @@ static void Tb_WinInit(void) {
     icons = MPACK_AT(sTbWinRes, 24);
     Res_RelocateOffsets(&icons, icons, icons);
     IconWin_Init(MPACK_AT(sTbWinRes, 23), icons);
-    IconWin_PortHideWords(); /* "Versus Menu": the screens' own title is written there */
+    IconWin_PortHideWords(); /* "Versus Menu" and its emblem: the screens' own title is written there */
     IconWin_Open();
     MsgWin_Init(MPACK_AT(sTbWinRes, 22), MPACK_AT(sTbWinRes, 21), 1, 0);
     MsgWin_SetText(NULL); /* the box only: the hosts' lines are the screens' own */
