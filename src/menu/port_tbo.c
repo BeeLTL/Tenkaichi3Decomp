@@ -1030,8 +1030,27 @@ static void Tb_ProfileUpdate(s32 live) {
     }
 }
 
+/* Whether a character is one of the name keypad's (or a space): what the keyboard types into a name too, so a name
+   has only letters the game's font has, and the two ways of typing give the same names. */
+static s32 Tb_NameKey(s32 c) {
+    s32 r;
+    s32 k;
+
+    if (c == ' ') {
+        return 1;
+    }
+    for (r = 0; r < NAME_ROWS; r++) {
+        for (k = 0; k < KEY_COLS; k++) {
+            if (sTbNameKeys[0][r][k] == c || sTbNameKeys[1][r][k] == c) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 static void Tb_NameAdd(s32 c) {
-    if (c >= 32 && c < 127 && sTb->typedLen < 16) {
+    if (Tb_NameKey(c) && sTb->typedLen < 16) {
         sTb->typed[sTb->typedLen++] = (char)c;
         sTb->typed[sTb->typedLen] = 0;
         Snd_PlaySe(1, 0);
