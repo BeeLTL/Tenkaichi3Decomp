@@ -21,7 +21,7 @@
 #include "gs_internal.h"
 #include "ui.h"
 
-int gPortOverlayOpen, gPortInputCapture;
+int gPortOverlayOpen, gPortInputCapture, gPortChatTyping;
 extern int Port_Setting(const char *name, int def); /* plat_settings.c */
 extern void Port_SettingSave(const char *name, int value), Port_SettingsWrite(void);
 
@@ -62,8 +62,11 @@ static int sDeadzone[2][2], sVib[2][2];
 /* What opens and closes the settings window: a key (F1) and a controller button (none), both of the settings
    window's list; and START + SELECT of any controller together, always. */
 static int sOverlayKey = SDL_SCANCODE_F1, sOverlayPad = -1;
+static int sChatKey = SDL_SCANCODE_TAB; /* opens the online chat's line (setting key_chat; Tab by default) */
 static int sComboLatch; /* START + SELECT has opened or closed the window and is still held */
 static int sSwallow; /* a controller opened or closed the window: nothing of the controllers reaches the game until those buttons are let go */
+static volatile int sKeySwallow; /* the chat's line was sent or put away: nothing of the keyboard reaches the game until no bound key is held
+                                    (Enter, which sends it, is START) */
 static pthread_once_t sLoadOnce = PTHREAD_ONCE_INIT;
 
 static void defaults(int player) {
@@ -114,6 +117,7 @@ static void load(void) {
     }
     sOverlayKey = Port_Setting("key_overlay", SDL_SCANCODE_F1);
     sOverlayPad = Port_Setting("pad_overlay", -1);
+    sChatKey = Port_Setting("key_chat", SDL_SCANCODE_TAB);
 }
 
 const char *PortInput_ActionLabel(int action) { return kActions[action].label; }
@@ -164,6 +168,8 @@ int PortInput_Hotkey(const SDL_Event *ev) {
 }
 /* The settings window closed, or its exit question was answered, with a controller button: that press is not the game's. */
 void PortInput_Swallow(void) { sSwallow = 2; }
+void PortInput_SwallowKeys(void) { sKeySwallow = 1; }
+int *PortInput_ChatKey(void) { pthread_once(&sLoadOnce, load); return &sChatKey; }
 void PortInput_ResetDefaults(int player) { pthread_once(&sLoadOnce, load); defaults(player); }
 
 void PortInput_Save(void) {
@@ -191,6 +197,7 @@ void PortInput_Save(void) {
     }
     Port_SettingSave("key_overlay", sOverlayKey);
     Port_SettingSave("pad_overlay", sOverlayPad);
+    Port_SettingSave("key_chat", sChatKey);
     Port_SettingsWrite();
 }
 
@@ -718,6 +725,12 @@ void PortInput_VibrationTest(int player) {
     }
 }
 
+/* The controllers' and the keyboard's state as it is at this moment (plat_stub.c, "Low input lag": the pads are
+   read long after the window's events were last taken). The events themselves stay queued for the window. */
+void PortInput_Fresh(void) {
+    SDL_PumpEvents();
+}
+
 int Port_PadRead(int socket, unsigned char *data) {
     unsigned btn = 0;
     unsigned char rx = 0x80, ry = 0x80, lx = 0x80, ly = 0x80;
@@ -761,12 +774,23 @@ int Port_PadRead(int socket, unsigned char *data) {
         stick_bytes(sDeadzone[socket][0], SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTX), SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTY), &lx, &ly);
         stick_bytes(sDeadzone[socket][1], SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTX), SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTY), &rx, &ry);
     }
+    if (sKeySwallow) {
+        const bool *ks = SDL_GetKeyboardState(NULL);
+        int p, held = 0;
+        for (p = 0; p < 2; p++) {
+            for (a = 0; a < PORT_ACTIONS; a++) {
+                held = held || (sKeys[p][a] > 0 && sKeys[p][a] < SDL_SCANCODE_COUNT && ks[sKeys[p][a]]);
+            }
+        }
+        sKeySwallow = held;
+    }
     {
-        /* the actions held through the keyboard and the on-screen controls (bits by kActions' order); the settings
-           window takes both while it is open */
+        /* the actions held through the keyboard and the on-screen controls (bits by kActions' order). The settings
+           window takes both while it is open; the online chat takes the keyboard while a line is typed (the
+           controller and the on-screen controls still play then) */
         uint32_t held = 0;
         int vlx = -1, vly = -1;
-        if (!gPortOverlayOpen) {
+        if (!gPortOverlayOpen && !gPortChatTyping && !sKeySwallow) {
             const bool *ks = SDL_GetKeyboardState(NULL);
             const int *k = sKeys[socket];
             for (a = 0; a < PORT_ACTIONS; a++) {
@@ -774,6 +798,8 @@ int Port_PadRead(int socket, unsigned char *data) {
                     held |= 1u << a;
                 }
             }
+        }
+        if (!gPortOverlayOpen) {
             held |= PortInput_VirtualActions(socket, &vlx, &vly);
         }
         for (a = 0; a < PORT_PAD_BUTTONS; a++) {
