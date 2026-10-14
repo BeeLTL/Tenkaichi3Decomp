@@ -292,6 +292,10 @@ static GsTex tbo_texture(uint32_t id) {
         snprintf(path, sizeof(path), "tbo/ui/%s.png", kTboNames[id]);
         png = SDL_LoadPNG(path);
     }
+    if (png == NULL) { /* a source checkout: the pictures where they are kept (port/tbo/ui) */
+        snprintf(path, sizeof(path), "port/tbo/ui/%s.png", kTboNames[id]);
+        png = SDL_LoadPNG(path);
+    }
     rgba = png != NULL ? SDL_ConvertSurface(png, SDL_PIXELFORMAT_RGBA32) : NULL;
     if (png != NULL) {
         SDL_DestroySurface(png);

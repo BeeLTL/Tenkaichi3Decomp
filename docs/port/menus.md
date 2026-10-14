@@ -125,9 +125,10 @@ sections 21 to 24; `Tb_WinInit` / `Tb_WinTerm` in port_tbo.c):
 **What the screen draws itself,** with the kit in src/menu/port_screen.c (`Ps_*`, declared in
 include/menu/port_screen.h):
 
-- pictures: PNG files in `tbo/ui/` next to the program, named in include/menu/tbo_art.h, drawn as sprites with
-  the reserved format `TBO_PSM` (port/src/gs/gs_draw.c, `tbo_texture`) at their own resolution; their
-  width : height comes from include/menu/tbo_sizes.h;
+- pictures: PNG files kept in `port/tbo/ui/` (with CREDITS.md; `tbo/ui/` next to the program in a release, which a
+  folder there also overrides), named in include/menu/tbo_art.h, drawn as sprites with the reserved format
+  `TBO_PSM` (port/src/gs/gs_draw.c, `tbo_texture`) at their own resolution; their width : height comes from
+  include/menu/tbo_sizes.h (`python3 port/tools/tbo_sizes.py` after a picture of another size);
 - text: lines in the Menu font (port/src/gs/tbo_text.c), the title in the main menu's heading style
   (`MenuText_HeadingRender`);
 - lines of letters (`Ps_Text` in five styles, `Ps_TextEx`, `Ps_Heading`, `Ps_Msg`; `Ps_Align`, `Ps_TextTop`);
