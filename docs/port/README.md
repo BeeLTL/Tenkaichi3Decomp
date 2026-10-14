@@ -3132,7 +3132,8 @@ Two settings in F1 > UI, both "Original" unless chosen:
   hands the renderer the game's glyph table; the renderer packs the new glyphs into an atlas of its own and moves
   the sprite's texture coordinates there. The game's placement, line breaks, colours and shadows are untouched.
 
-The bundled fonts (DejaVu Sans Condensed for Dialogue / UI and Condensed Bold for menus, with their licence) are in
+The bundled fonts (DejaVu Sans Condensed for Dialogue / UI and Condensed Bold for menus, with their licence; later
+Fira Sans Condensed Bold for menus, under the SIL Open Font License: see the section on Tenkaichi Budokai Online) are in
 `port/third_party/fonts`, with the list `fonts.tsv`; a release has them as `fonts/`.
 
 What was changed on top of the pull request:
@@ -3376,3 +3377,30 @@ Not checked: with a window on a real display, and by feel; the sound (the game's
 and those now come two at once in a fight); V-sync on; Windows and macOS; a machine too slow to compute and show
 a tick in time, where the picture then comes late instead of the game's start of the tick.
 
+
+## Tenkaichi Budokai Online: lettered like the game's menus (2026-10-14)
+
+The main menu's labels are not written in a font: every one is a picture on the disc (two label sheets per plate
+state, 512 x 256 and 512 x 128, eight bits with a 256-colour table, eight rows of 32 on the first and three used of
+four on the second). The PC's item "Tenkaichi Budokai Online" goes into the free fourth row of the second sheet of
+each state (src/menu/menu_a.c).
+
+Its label is now put together at start from the letters of the other ten labels of the player's own disc, with the
+letter cutter the names of added stages use (port/src/gs/namefont.c, run on the files by menu_labels.c,
+MenuLabels_MainItem). The main menu's labels have every letter it needs but the k; that one is lent from the stage
+select's names (Rocky, Lookout) and brought to the menu's size, as namefont.c already does between the stage and the
+song names. Read from archives 448 and 449 (size and CRC checked), the job takes about 60 ms in a thread of its own
+started with the first frame; the main menu waits for it if it is not done. The picture is turned into the sheet's
+own palette indices (the nearest colour of its table, alpha first) and written into the row. Composed again,
+"Dragon Net Battle" cannot be told from the disc's. Nothing of the disc is in the repository: the letters exist in
+memory only. With another edition of the game (archives that are not the USA release's) the label of
+port_tbo_label.h is written instead, as before.
+
+The lines of the online screens themselves cannot be made that way: names, room codes and the hosts' lines need
+every character, which the disc's labels do not have. They keep being written with the Menu font. Measured against
+the disc's letters (cap height, widths of "Dragon Net Battle" and "Ultimate Training"), the game's lettering is a
+bold, slightly condensed humanist sans, not a rounded one; of the open fonts tried (DejaVu Sans Condensed Bold, Fira
+Sans Bold, Condensed Bold and Condensed ExtraBold, Noto Sans Bold), Fira Sans Condensed Bold is the nearest in
+proportions and shapes. It is bundled (port/third_party/fonts/fira, SIL Open Font License 1.1, from Mozilla's Fira
+release 4.301) and first in fonts.tsv, so it is the font of those screens while the Menu font setting is on
+"Original". Saved choices are kept by the file's path, so adding it at the top moved no one's setting.
