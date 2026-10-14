@@ -339,10 +339,10 @@ extern void Port_SettingsWrite(void);
 #define CR_COUNT 5
 
 /* Profile's rows */
+/* (the input delay and the rollback are the room's: Create Room sets them; a joiner gets the host's, a quick match
+   has its own) */
 #define PR_NAME 0
-#define PR_DELAY 1
-#define PR_ROLL 2
-#define PR_COUNT 3
+#define PR_COUNT 1
 
 #define KEY_COLS 9
 #define KEY_ROWS 4
@@ -405,7 +405,7 @@ static f32 Tb_TextTop(f32 middle, f32 scale);
 static void Tb_Align(s32 align);
 static f32 Tb_Beat(s32 period);
 
-static char *sTbHubName[HUB_COUNT] = {"Quick Match", "Ranked Match", "Create Room", "Join Room", "Friends", "Tournament", "Replays", "Leaderboard", "Profile & Settings"};
+static char *sTbHubName[HUB_COUNT] = {"Quick Match", "Ranked Match", "Create Room", "Join Room", "Friends", "Tournament", "Replays", "Leaderboard", "Profile"};
 static const s32 sTbHubReady[HUB_COUNT] = {1, 0, 1, 1, 0, 0, 0, 0, 1};
 static char *sTbHubSay[HUB_COUNT] = {
     "Fight whoever is searching right now! No time limit, and you can train while you wait.",
@@ -416,7 +416,7 @@ static char *sTbHubSay[HUB_COUNT] = {
     "The Tenkaichi Budokai itself: brackets of 4 to 16 players. That one is coming soon!",
     "Your last matches, saved to watch again. That one is coming soon!",
     "The strongest in the world, among your friends, and with each fighter. Coming soon!",
-    "The name your rivals see, and how your connection plays.",
+    "The name your rivals see.",
 };
 static char *sTbTime[5] = {"60 SECONDS", "90 SECONDS", "180 SECONDS", "240 SECONDS", "NO LIMIT"};
 static char sTbKeys[KEY_ROWS][KEY_COLS + 1] = {"ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ0", "123456789"};
@@ -1105,23 +1105,13 @@ static void Tb_JoinUpdate(s32 live) {
 /* ---------------------------------------------------------------------------------------------- Profile */
 static void Tb_ProfileUpdate(s32 live) {
     Pad *pad = &gPad[0];
-    s32 side;
 
-    Tb_Prompt(3, "Change");
-    Tb_Prompt(0, sTb->prCur == PR_NAME ? "Type Name" : "OK");
+    Tb_Prompt(0, "Type Name");
     Tb_Prompt(2, "Back");
     if (!live) {
         return;
     }
     Tb_Move(&sTb->prCur, PR_COUNT);
-    side = Tb_Side();
-    if (side != 0 && sTb->prCur == PR_DELAY) {
-        sTb->delay = Tb_Wrap(sTb->delay + side, -1, 6);
-        Snd_PlaySe(1, 0);
-    } else if (side != 0 && sTb->prCur == PR_ROLL && Port_RollCan()) {
-        sTb->roll = Tb_Wrap(sTb->roll + side * 2, 0, 8);
-        Snd_PlaySe(1, 0);
-    }
     if ((pad->gamePressed & PADG_CROSS) && sTb->prCur == PR_NAME) {
         Snd_PlaySe(1, 1);
         Tb_Copy(sTb->typed, Port_NetNameGet(), 20);
@@ -2019,12 +2009,10 @@ static void Tb_DrawProfile(void) {
 
 static void Tb_DrawProfileText(void) {
     static char value[PR_COUNT][32];
-    static char *label[PR_COUNT] = {"Name", "Input Delay", "Rollback"};
+    static char *label[PR_COUNT] = {"Name"};
     s32 i;
 
     Tb_Copy(value[PR_NAME], Port_NetNameGet(), 32);
-    Tb_DelayText(value[PR_DELAY], sTb->delay);
-    Tb_RollText(value[PR_ROLL], sTb->roll);
     Tb_Text(26.0f, 76.0f, "PLAYER CARD", 0.62f, 0.0f, 2);
     for (i = 0; i < PR_COUNT; i++) {
         f32 y = 110.0f + 34.0f * (f32)i;
@@ -2058,7 +2046,7 @@ static char *Tb_Help(void) {
     case TB_NAME:
         return "Pick your letters, then Done! Square deletes, Start finishes.";
     case TB_PROFILE:
-        return "Show everyone who you are! The host's input delay is the one the match uses.";
+        return "Show everyone who you are! This is the name your rivals see.";
     }
     return "";
 }
