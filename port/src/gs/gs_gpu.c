@@ -399,6 +399,7 @@ static int vk_init(void) {
     SDL_GPUBufferCreateInfo bi;
     SDL_GPUTransferBufferCreateInfo ti;
     static uint32_t white = 0xFFFFFFFFu;
+    const char *gpuName = NULL;
     int i;
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -522,11 +523,12 @@ static int vk_init(void) {
     }
     sDclutFs = shader(SHADER_CODE(kDclutFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
     copies_create();
-    const char *gpuName = NULL;
 #if SDL_VERSION_ATLEAST(3, 4, 0)
-    SDL_PropertiesID props = SDL_GetGPUDeviceProperties(sDev);
-    if (props != 0) {
-        gpuName = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, NULL);
+    {   /* the graphics card's name, for F1 > Video */
+        SDL_PropertiesID props = SDL_GetGPUDeviceProperties(sDev);
+        if (props != 0) {
+            gpuName = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, NULL);
+        }
     }
 #endif
     if (!Ui_Init(sWindow, sDev, NULL, gpuName)) {
