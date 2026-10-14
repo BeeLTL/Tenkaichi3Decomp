@@ -73,6 +73,7 @@ static void Mm_Quad(f32 x0, f32 y0, f32 x1, f32 y1, f32 x2, f32 y2, f32 x3, f32 
 extern void PortTbo_TextMode(int on);
 extern int PortTbo_TextRead(void);
 extern void PortTbo_Copy(const char *text); /* onto the clipboard ("Copy Code") */
+extern void PortTbo_Paste(void);            /* the clipboard's room code, typed (Join Room's PASTE) */
 
 /* The game's windows of every menu (battle/view_a_b.c, view_a_c.c), made from the Duel menu's data as
    DuelMenu_Init makes them: the heading's window (IconWin: the cloud swirls in the corners and the line under the
@@ -937,8 +938,9 @@ typedef struct TbKeyBtn {
 #define TB_KEY_OK 2
 #define TB_KEY_CASE 3
 #define TB_KEY_SPACE 4
+#define TB_KEY_PASTE 5
 
-static const TbKeyBtn sTbJoinBtn[2] = {{"DELETE", 0, 3, TB_KEY_DELETE}, {"JOIN", 5, 8, TB_KEY_OK}};
+static const TbKeyBtn sTbJoinBtn[3] = {{"DELETE", 0, 2, TB_KEY_DELETE}, {"PASTE", 3, 5, TB_KEY_PASTE}, {"JOIN", 6, 8, TB_KEY_OK}};
 static const TbKeyBtn sTbNameBtn[4] = {{"Aa", 0, 1, TB_KEY_CASE}, {"SPACE", 2, 4, TB_KEY_SPACE}, {"DELETE", 5, 6, TB_KEY_DELETE}, {"DONE", 7, 8, TB_KEY_OK}};
 #define NAME_ROWS 5
 static char sTbNameKeys[2][NAME_ROWS][KEY_COLS + 1] = {{"ABCDEFGHI", "JKLMNOPQR", "STUVWXYZ0", "123456789", "-_.!?#&*+"},
@@ -1081,15 +1083,24 @@ static void Tb_JoinUpdate(s32 live) {
             Tb_CodeBack();
         } else {
             Tb_CodeAdd(c);
+            if (sTb->codeLen == CODE_LEN) { /* full (typed or pasted): the cursor goes to JOIN */
+                sTb->keyRow = KEY_ROWS;
+                sTb->keyCol = sTbJoinBtn[2].c0;
+            }
         }
     }
-    c = Tb_PadUpdate(KEY_ROWS, sTbKeys, sTbJoinBtn, 2);
+    c = Tb_PadUpdate(KEY_ROWS, sTbKeys, sTbJoinBtn, 3);
     if (c > 0) {
         Tb_CodeAdd(c);
         if (sTb->codeLen == CODE_LEN) { /* full: the cursor goes to JOIN */
             sTb->keyRow = KEY_ROWS;
-            sTb->keyCol = sTbJoinBtn[1].c0;
+            sTb->keyCol = sTbJoinBtn[2].c0;
         }
+    } else if (c == -TB_KEY_PASTE) { /* the copied code in place of what is typed (it comes with the next frames) */
+        sTb->codeLen = 0;
+        sTb->code[0] = 0;
+        Snd_PlaySe(1, 1);
+        PortTbo_Paste();
     } else if (c == -TB_KEY_DELETE) {
         Tb_CodeBack();
     } else if (c == -TB_KEY_OK || (pad->gamePressed & PADG_START)) {
@@ -1827,7 +1838,7 @@ static void Tb_DrawJoinText(void) {
         Tb_Text(x, 81.0f, one, 1.0f, 0.0f, c < sTb->codeLen ? 3 : 0); /* (what is typed: a value) */
     }
     Tb_Align(0);
-    Tb_Keypad(24.0f, 138.0f, KEY_ROWS, sTbKeys, sTbJoinBtn, 2);
+    Tb_Keypad(24.0f, 138.0f, KEY_ROWS, sTbKeys, sTbJoinBtn, 3);
 }
 
 static void Tb_DrawWait(void) {
@@ -2034,7 +2045,7 @@ static char *Tb_Help(void) {
                : sTb->crCur == CR_ROLL ? "Your moves come out at once and the game corrects itself. More frames cope with a slower line."
                : "Set the rules of your tournament! Then your rival joins with the room code.";
     case TB_JOIN:
-        return "Enter your rival's room code! Six letters and numbers, then Join.";
+        return "Enter your rival's room code, or Paste the one they sent you! Then Join.";
     case TB_WAIT:
         return sTb->found ? "Here we go! The match is starting!" : "Looking for a worthy challenger... Warm up in Training meanwhile!";
     case TB_BLOCK:

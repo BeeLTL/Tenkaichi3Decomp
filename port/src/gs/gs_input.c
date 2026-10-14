@@ -217,6 +217,7 @@ int PortTbo_TextRead(void) {
    puts it on the clipboard (PortInput_TboClipboard, from the overlay's frame: SDL wants the clipboard there). */
 static char sTboCopy[64];
 static int sTboCopyDue;
+static int sTboPasteDue; /* the keypad's PASTE (Join Room): the clipboard's room code, typed on the window's thread */
 
 void PortTbo_Copy(const char *text) {
     SDL_LockSpinlock(&sTboLock);
@@ -225,16 +226,56 @@ void PortTbo_Copy(const char *text) {
     SDL_UnlockSpinlock(&sTboLock);
 }
 
+void PortTbo_Paste(void) {
+    SDL_LockSpinlock(&sTboLock);
+    sTboPasteDue = 1;
+    SDL_UnlockSpinlock(&sTboLock);
+}
+
+/* The room code in a copied text: the last run of exactly six letters and digits ("Room code: MFT8FD"); without
+   one, every letter and digit of it. Typed as if by hand. */
+static void tbo_paste_code(const char *clip) {
+    const unsigned char *p = (const unsigned char *)clip, *code = NULL;
+    int run = 0, n = 0;
+
+    for (; p != NULL && *p; p++) {
+        int alnum = (*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z');
+        run = alnum ? run + 1 : 0;
+        if (run == 6 && !((p[1] >= '0' && p[1] <= '9') || (p[1] >= 'A' && p[1] <= 'Z') || (p[1] >= 'a' && p[1] <= 'z'))) {
+            code = p - 5;
+        }
+    }
+    if (code != NULL) {
+        for (n = 0; n < 6; n++) {
+            tbo_push(code[n]);
+        }
+        return;
+    }
+    for (p = (const unsigned char *)clip; p != NULL && *p && n < 48; p++) {
+        if ((*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) {
+            tbo_push(*p);
+            n++;
+        }
+    }
+}
+
 void PortInput_TboClipboard(void) {
     char text[sizeof(sTboCopy)];
-    int due;
+    int due, paste;
     SDL_LockSpinlock(&sTboLock);
     due = sTboCopyDue;
     sTboCopyDue = 0;
+    paste = sTboPasteDue;
+    sTboPasteDue = 0;
     memcpy(text, sTboCopy, sizeof(text));
     SDL_UnlockSpinlock(&sTboLock);
     if (due) {
         SDL_SetClipboardText(text);
+    }
+    if (paste) {
+        char *clip = SDL_GetClipboardText();
+        tbo_paste_code(clip);
+        SDL_free(clip);
     }
 }
 
