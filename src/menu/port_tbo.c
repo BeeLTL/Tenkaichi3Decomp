@@ -2119,11 +2119,20 @@ static void Tb_DrawText(void) {
     Tb_Text(484.0f, 17.0f, sTb->mode == TB_WAIT || sTb->mode == TB_SPAR ? "SEARCHING" : "ONLINE", 0.48f, 0.0f, 5);
     Tb_Align(0);
     Tb_Text(322.0f, 34.0f, "TENKAICHI BUDOKAI ONLINE", 0.38f, 160.0f, 3);
-    /* the hosts' line in the talk font, cut at spaces into lines of what fits (two at most) */
+    /* the hosts' line in the talk font, cut at spaces into lines of what fits (two at most): where the game writes its
+       own lines in the box, up to the step of its top right corner. The box is the game's movie, drawn over the whole
+       screen (the 512 x 448 of the screen, not of this page in its middle): the step is at about 410 of its 512 */
     {
+        f32 tx = 40.0f;
         f32 room = 424.0f;
+        f32 sx, sy;
         s32 n = 0;
         s32 at = 0;
+
+        if (MsgWin_PortTextAt(1, &sx, &sy)) {
+            tx = (sx - sTbPx) * 512.0f / sTbPw;
+            room = (400.0f - sTbPx) * 512.0f / sTbPw - tx;
+        }
 
         while (at < len && n < 2) {
             s32 end = at;
@@ -2163,13 +2172,9 @@ static void Tb_DrawText(void) {
                 at++;
             }
         }
-        f32 tx = 40.0f;
         f32 ty = n == 1 ? 368.0f : 359.0f;
-        f32 sx, sy;
 
-        /* where the game writes its own lines in the box (on the whole screen; this page is in its middle) */
-        if (MsgWin_PortTextAt(n, &sx, &sy)) {
-            tx = (sx - sTbPx) * 512.0f / sTbPw;
+        if (MsgWin_PortTextAt(n, &sx, &sy)) { /* (lowered by the number of rows, as the game's) */
             ty = (sy - sTbPy) * 448.0f / sTbPh;
         }
         for (k = 0; k < n; k++) {
