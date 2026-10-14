@@ -227,6 +227,7 @@ static SDL_GPUTexture *load_strip(const char *env, const char *rel, uint32_t *w,
 static SDL_GPUTexture *sBarTrim, *sBarFill;
 static int sBars = -1; // 0 black, 1 the border; -1 not read yet
 static int sBarsTried;
+static int sChatSize = -1; // 0 = compact, 1 = normal, 2 = large; -1 = not read yet
 
 static float sBarTrimShape = 34.0f / 720.0f; // the border's width over its height
 
@@ -1273,6 +1274,23 @@ static void misc_tab(void) {
     ImGui::SetItemTooltip("Text with the other player of an online match. Tab opens a line (setting key_chat), Enter sends it,\n"
                           "Esc puts it away; while it is typed the keyboard does not play, a controller does. Off: no lines\n"
                           "are shown or sent. A player without it sees nothing.");
+    if (chat) {
+        if (sChatSize < 0) {
+            sChatSize = Port_Setting("chat_size", 1);
+            if (sChatSize < 0 || sChatSize > 2) sChatSize = 1;
+        }
+        static const char *const kChatSizes[] = {"Compact", "Normal", "Large"};
+        int size = sChatSize;
+        if (ImGui::Combo("Chat size", &size, kChatSizes, 3)) {
+            sChatSize = size;
+            Port_SettingSave("chat_size", sChatSize);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("Scale and history lines of the online chat window.\n"
+                              "Compact: 3 lines, smaller card.\n"
+                              "Normal: 4 lines, balanced layout.\n"
+                              "Large: 6 lines, wider card for large screens.");
+    }
 }
 
 static void ui_tab(PortVideo &v) {
@@ -1895,7 +1913,7 @@ static void font_draw(ImDrawList *dl, const FontName *n, float x, float y, float
 // The online chat, in the lower left corner. Put away, it shows the newest lines for a few seconds each in a dark
 // rounded card, fading out, and takes no input. While a line is typed it shows the last ones, input field and
 // allows selecting/copying text with mouse.
-enum { CHAT_SHOWN_MS = 8000, CHAT_FADE_MS = 2000, CHAT_ROWS = 3, CHAT_ROWS_TYPING = 4 };
+enum { CHAT_SHOWN_MS = 8000, CHAT_FADE_MS = 2000 };
 
 static bool chat_recent(void) {
     PortChatLine l;
@@ -1905,10 +1923,29 @@ static bool chat_recent(void) {
 
 static void chat_draw(void) {
     ImGuiIO &io = ImGui::GetIO();
-    float w = io.DisplaySize.x * 0.32f;
-    if (w < 280.0f) w = 280.0f;
-    if (w > 380.0f) w = 380.0f;
-    unsigned n = PortChat_Count(), rows = sChat ? CHAT_ROWS_TYPING : CHAT_ROWS, first = n > rows ? n - rows : 0;
+    if (sChatSize < 0) {
+        sChatSize = Port_Setting("chat_size", 1);
+        if (sChatSize < 0 || sChatSize > 2) sChatSize = 1;
+    }
+    int rowsTyping = 4, rowsPassive = 3;
+    float wFactor = 0.30f, minW = 270.0f, maxW = 360.0f;
+    if (sChatSize == 0) { // Compact
+        rowsTyping = 3;
+        rowsPassive = 2;
+        wFactor = 0.24f;
+        minW = 220.0f;
+        maxW = 290.0f;
+    } else if (sChatSize == 2) { // Large
+        rowsTyping = 6;
+        rowsPassive = 4;
+        wFactor = 0.38f;
+        minW = 340.0f;
+        maxW = 440.0f;
+    }
+    float w = io.DisplaySize.x * wFactor;
+    if (w < minW) w = minW;
+    if (w > maxW) w = maxW;
+    unsigned n = PortChat_Count(), rows = sChat ? rowsTyping : rowsPassive, first = n > rows ? n - rows : 0;
     Uint64 now = SDL_GetTicks();
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav |
                              ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
@@ -1976,9 +2013,6 @@ static void chat_draw(void) {
             ImGui::Separator();
         }
 
-        static unsigned sCopiedIdx;
-        static Uint64 sCopiedTime;
-
         for (unsigned i = first; i < n; i++) {
             PortChatLine l;
             float alpha = 1.0f;
@@ -2000,37 +2034,13 @@ static void chat_draw(void) {
             ImGui::TextColored(nameCol, "%s:", sender);
             ImGui::SameLine(0.0f, 4.0f);
 
-            if (sChat) {
-                bool justCopied = (sCopiedIdx == i && now - sCopiedTime < 2000);
-                float btnW = 44.0f;
-                float availW = w - (ImGui::GetCursorPosX() - ImGui::GetWindowPos().x) - btnW - 6.0f;
-                if (availW < 90.0f) availW = 90.0f;
-                ImGui::SetNextItemWidth(availW);
-
-                char msgBuf[CHAT_TEXT + 1];
-                SDL_strlcpy(msgBuf, l.text, sizeof(msgBuf));
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.16f, 0.5f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f, 1.0f));
-                ImGui::InputText("##t", msgBuf, sizeof(msgBuf), ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_AutoSelectAll);
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor();
-
-                ImGui::SameLine(0.0f, 4.0f);
-                if (ImGui::SmallButton(justCopied ? "Copied!" : "Copy")) {
-                    SDL_SetClipboardText(l.text);
-                    sCopiedIdx = i;
-                    sCopiedTime = now;
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Copy message to clipboard");
-                }
-            } else {
-                ImVec2 at = ImGui::GetCursorScreenPos();
+            ImVec2 at = ImGui::GetCursorScreenPos();
+            if (!sChat) {
                 ImGui::GetWindowDrawList()->AddText(NULL, 0.0f, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, (int)(230.0f * alpha)), l.text, NULL, w - (at.x - ImGui::GetWindowPos().x));
-                ImGui::PushTextWrapPos(w);
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, alpha), "%s", l.text);
-                ImGui::PopTextWrapPos();
             }
+            ImGui::PushTextWrapPos(w);
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, alpha), "%s", l.text);
+            ImGui::PopTextWrapPos();
             ImGui::PopID();
         }
 
