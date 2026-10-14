@@ -1828,7 +1828,7 @@ static void Tb_Draw(void) {
         break;
     }
     Tb_PageIn(0);
-    Ps_Panel(TBO_KIT_WINDOW, 300.0f, 10.0f, 504.0f, 56.0f, 0x80); /* the player card */
+    Ps_Panel(TBO_KIT_WINDOW, 300.0f, 10.0f, 504.0f, 44.0f, 0x80); /* the player card: the name alone */
     MsgWin_PortDrawString(Tb_BoxLine()); /* the game's box with the hosts' line (the buttons under it: Tb_DrawText) */
     if (sTb->mode == TB_BLOCK) {
         Tb_DrawBlock();
@@ -1867,11 +1867,9 @@ static void Tb_DrawText(void) {
         break;
     }
     Tb_PageIn(0);
-    Ps_Text(322.0f, 15.0f, (char *)Port_NetNameGet(), 0.6f, 110.0f, 1);
-    Ps_Align(2);
-    Ps_Text(484.0f, 17.0f, sTb->mode == TB_WAIT || sTb->mode == TB_SPAR ? "SEARCHING" : "ONLINE", 0.48f, 0.0f, 5);
-    Ps_Align(0);
-    Ps_Text(322.0f, 34.0f, "TENKAICHI BUDOKAI ONLINE", 0.38f, 160.0f, 3);
+    /* (no status and no title under it: "ONLINE" was not whether the game is connected, and the title is the
+       screen's heading) */
+    Ps_Text(322.0f, Ps_TextTop(27.0f, 0.6f), (char *)Port_NetNameGet(), 0.6f, 166.0f, 1);
     if (sTb->mode == TB_BLOCK) {
         Tb_DrawBlockText();
     }
