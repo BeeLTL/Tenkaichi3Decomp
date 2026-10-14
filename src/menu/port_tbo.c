@@ -1711,7 +1711,6 @@ static void Tb_DrawHub(void) {
         }
     }
     Tb_Pill(TBO_KIT_SEL, TB_BAR_LEFT + slide, sTb->hubY - 3.0f, Tb_HubRowEnd(sTb->hubCur) + 22.0f + slide, sTb->hubY + 27.0f, 0x80);
-    Tb_Icon(TBO_CREST, 20.0f + slide + 2.0f * Tb_Beat(40), sTb->hubY + 12.0f, 24.0f, 0x80);
     for (i = 0; i < HUB_COUNT; i++) {
         if (!sTbHubReady[i]) {
             Tb_Pill(TBO_KIT_STEEL, Tb_HubRowEnd(i) - 46.0f + slide + (i == sTb->hubCur ? 18.0f : 0.0f), Tb_HubRowY(i) + 5.0f,
