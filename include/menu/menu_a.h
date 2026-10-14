@@ -289,4 +289,6 @@ s32 MainMenu_Run(s32 section);
 s32 Title_Run(s32 section);
 s32 Progress_Main(s32 arg);
 
+#include "menu/port_screen.h" /* (PC only: the port's own screens) */
+
 #endif

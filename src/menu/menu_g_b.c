@@ -19,10 +19,6 @@ extern s32 TeamSel_Run(s32 section);  /* 0x351508: team character select (team a
 s32 Duel_Mode41(s32 arg);
 
 /* Runs the duel mode's screens until one of them leaves the mode. */
-#ifdef PORT
-extern s32 gPortDuelRole;   /* menu_a.c: 6 = the main menu's "Tenkaichi Budokai Online" */
-extern s32 PortTbo_Run(void); /* menu/port_tbo.c */
-#endif
 s32 Duel_Main(void) {
     s32 bgm = 0;
     s32 done = 0;
@@ -31,33 +27,7 @@ s32 Duel_Main(void) {
     if (gMenuArc5 == NULL) {
         gMenuArc5 = File_LoadSync(gProgress->baseFile, NULL, 0);
     }
-#ifdef PORT
-    if (Port_NetSession()) { /* an online session begun from those screens: it goes to its character select (the screens'
-                                role is left over from before the session put the game back to its first moment) */
-        gPortDuelRole = 0;
-    }
-    if (gPortDuelRole == 6) { /* "Tenkaichi Budokai Online": its screens, then back to the main menu or, for
-                                 "Train While Waiting", the sparring fight they set up (the search goes on) */
-        Bgm_Play(0x10B16 + 2);
-        if (PortTbo_Run()) {
-            Adx_StopAll();
-            gProgress->mode = 45;
-            result = 1;
-        } else {
-            Adx_StopAll();
-            gProgress->mode = 4;
-            result = 0;
-        }
-        gPortDuelRole = 0;
-        done = 1;
-    }
-#endif
     do {
-#ifdef PORT
-        if (done) { /* (the screens above ran instead) */
-            break;
-        }
-#endif
         switch (gProgress->mode) {
         case 38:
             if (!bgm) {

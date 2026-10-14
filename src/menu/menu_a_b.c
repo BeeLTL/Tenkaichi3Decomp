@@ -98,11 +98,10 @@ s32 Progress_Main(s32 arg) {
         {   /* Tenkaichi Budokai Online's sparring fight (Train While Waiting): its "Back to Budokai Online" goes back
                to the search (menu/port_tbo.c) */
             extern s32 gPortTboSpar;
-            extern s32 gPortDuelRole;
 
             if (gPortTboSpar && (reason & 0x10)) {
-                gPortDuelRole = 6;
-                gProgress->mode = 38;
+                gPortScreen = PORT_SCREEN_TBO;
+                gProgress->mode = MPROG_MODE_PORT_SCREEN;
             }
             gPortTboSpar = 0;
         }
@@ -224,6 +223,13 @@ s32 Progress_Main(s32 arg) {
         case 70:
             Shen_Main();
             break;
+#ifdef PORT
+        case MPROG_MODE_PORT_SCREEN: /* the port's own screens (menu/port_screen.c) */
+            if (PortScreen_Main()) {
+                done = 1;
+            }
+            break;
+#endif
         }
     } while (!done);
 

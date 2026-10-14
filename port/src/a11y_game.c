@@ -3191,6 +3191,7 @@ static const struct {
 };
 #define MODE_DUEL_MENU 38
 #define MODE_DUEL_CHARSEL 39
+#define MODE_PORT_SCREEN 80 /* the port's own screens (include/menu/port_screen.h) */
 #define MODE_TRAIN_CHARSEL 45
 #define MODE_OPTION 62
 
@@ -3270,7 +3271,7 @@ static int own_screen(void) {
     }
     m = gProgress->mode;
     return m == MODE_TITLE || m == MODE_MAIN_MENU || m == MODE_DUEL_MENU || m == MODE_DUEL_CHARSEL ||
-           m == MODE_TRAIN_CHARSEL || m == MODE_OPTION || m == MODE_HIST_SEL || m == MODE_EPISODES;
+           m == MODE_TRAIN_CHARSEL || m == MODE_OPTION || m == MODE_HIST_SEL || m == MODE_EPISODES || m == MODE_PORT_SCREEN;
 }
 
 /* The game's strings drawn lately (PortA11y_FontText), by their hash. */

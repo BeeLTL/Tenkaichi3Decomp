@@ -5,8 +5,8 @@
 
 #ifdef PORT
 /*
- * PC only: "Tenkaichi Budokai Online", the main menu's item 11 (menu_a.c). Duel_Main (menu_g_b.c) runs this screen
- * with gPortDuelRole 6. Its own look for online play, after the mockups of online_design: every picture, piece,
+ * PC only: "Tenkaichi Budokai Online", the main menu's item 11 (menu_a.c). The port's screen mode (port_screen.c)
+ * runs this screen. Its own look for online play, after the mockups of online_design: every picture, piece,
  * letter and button is its own (tbo/ui/*.png, drawn by the renderer at full resolution; see "the pictures" below).
  *
  * The hub lists nine modes. What runs today is what the room-code lobby of port/src/gs/net.c can do (the same as

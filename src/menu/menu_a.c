@@ -29,13 +29,12 @@ MainMenu *gMainMenu = NULL;
  * hidden). Its label is written into the free fourth row of the second label sheet of each plate state (label 11,
  * the item's own number), put together from the letters of the other labels of the player's disc
  * (port/src/gs/menu_text.c, Port_MainItemLabel); without them (another edition of the game) from port_tbo_label.h. Its
- * icon is Dragon Net Battle's. Choosing it opens the Duel mode with gPortDuelRole 6, where Duel_Main runs the
- * screens of menu/port_tbo.c instead of its own. It has no voiced line of the guides.
+ * icon is Dragon Net Battle's. Choosing it opens the port's screen mode (menu/port_screen.c) with the screens of
+ * menu/port_tbo.c. It has no voiced line of the guides.
  */
 #include "port_tbo_label.h"
 
 #define MAINMENU_TBO 11
-s32 gPortDuelRole; /* the Duel mode (progress mode 38) is open for a screen of the PC's: 6 Tenkaichi Budokai Online */
 #define MM_ICON(item) ((item) == MAINMENU_TBO ? 4 : (item)) /* whose icon an item shows */
 
 /* A label sheet's pixels are stored the way the GS keeps 8-bit textures (in blocks): where pixel (x, y) is. */
@@ -530,9 +529,6 @@ void MainMenu_Input(s32 *result) {
             MAINMENU_COUNT();
             break;
         case 3:
-#ifdef PORT
-            gPortDuelRole = 0;
-#endif
             MAINMENU_CHOOSE(38);
             MAINMENU_COUNT();
             break;
@@ -566,10 +562,10 @@ void MainMenu_Input(s32 *result) {
             MAINMENU_CHOOSE(70);
             break;
 #ifdef PORT
-        case MAINMENU_TBO: /* "Tenkaichi Budokai Online": the Duel mode runs its screens (menu/port_tbo.c) */
-            gPortDuelRole = 6;
+        case MAINMENU_TBO: /* "Tenkaichi Budokai Online": the port's screen mode runs its screens (menu/port_tbo.c) */
+            gPortScreen = PORT_SCREEN_TBO;
             MAINMENU_COUNT();
-            MAINMENU_CHOOSE(38);
+            MAINMENU_CHOOSE(MPROG_MODE_PORT_SCREEN);
             break;
 #endif
         }
