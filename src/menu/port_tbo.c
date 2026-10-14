@@ -478,8 +478,10 @@ static void Tb_Note(char *line) {
 static void Tb_SetMode(s32 mode) {
     sTb->typing = mode == TB_JOIN || mode == TB_NAME; /* the keyboard types on a keypad (elsewhere I is triangle ...) */
     Port_TextMode(sTb->typing);
+    if (sTb->mode != mode) { /* (the page that is up again, as when the rival comes on the search: it does not come in anew) */
+        sTb->modeT = 0;
+    }
     sTb->mode = mode;
-    sTb->modeT = 0;
 }
 
 static s32 Tb_Move(s32 *cur, s32 count) {
@@ -1230,8 +1232,11 @@ static void Tb_PageSet(void) {
     sTbPy = (448.0f - sTbPh) * 0.5f;
 }
 
+/* A page coming in (Tb_PageIn): what it draws is moved this far right (from the left, as the hub's bars come). */
+static f32 sTbShift;
+
 static f32 Tb_X(f32 x) {
-    return sTbPx + x * sTbPw / 512.0f;
+    return sTbPx + (x + sTbShift) * sTbPw / 512.0f;
 }
 
 #define TB_BAR_LEFT -30.0f /* the hub's bars start here (off the page: on a 4:3 screen, off its edge) */
@@ -2056,7 +2061,17 @@ static char *Tb_Help(void) {
     return "";
 }
 
+/* What a page draws comes in from the left as it opens, as the hub's bars do (the hub moves its own: Tb_DrawHub);
+   the title, the player card and the box stay where they are. The name's keypad comes in over the profile, which
+   stays (on: 2 for the keypad). */
+static void Tb_PageIn(s32 on) {
+    s32 page = on == 2 || (on == 1 && sTb->mode != TB_HUB && sTb->mode != TB_BLOCK && sTb->mode != TB_NAME);
+
+    sTbShift = page ? (1.0f - Tb_In(0)) * -160.0f : 0.0f;
+}
+
 static void Tb_Draw(void) {
+    Tb_PageIn(1);
     switch (sTb->mode) {
     case TB_HUB:
         Tb_DrawHub();
@@ -2082,6 +2097,7 @@ static void Tb_Draw(void) {
         Tb_DrawProfile();
         break;
     }
+    Tb_PageIn(0);
     Tb_Panel(TBO_KIT_WINDOW, 300.0f, 10.0f, 504.0f, 56.0f, 0x80); /* the player card */
     MsgWin_PortWatchText(); /* where its text would be: the hosts' line goes there (Tb_DrawText) */
     MsgWin_Draw(0, 0, 0); /* the game's box: the hosts' line, and the buttons under it */
@@ -2100,6 +2116,7 @@ static void Tb_DrawText(void) {
 
     /* its capitals centred on the crest beside it (y 32); up to the player card */
     Tb_Heading(Tb_TitleLeft() + 44.0f, Tb_TextTop(32.0f, 1.3f), title[sTb->mode], 1.3f, 248.0f, 0x80);
+    Tb_PageIn(1);
     switch (sTb->mode) {
     case TB_HUB:
         Tb_DrawHubText();
@@ -2125,6 +2142,7 @@ static void Tb_DrawText(void) {
         Tb_DrawProfileText();
         break;
     }
+    Tb_PageIn(0);
     Tb_Text(322.0f, 15.0f, (char *)Port_NetNameGet(), 0.6f, 110.0f, 1);
     Tb_Align(2);
     Tb_Text(484.0f, 17.0f, sTb->mode == TB_WAIT || sTb->mode == TB_SPAR ? "SEARCHING" : "ONLINE", 0.48f, 0.0f, 5);
@@ -2198,7 +2216,9 @@ static void Tb_DrawText(void) {
         Tb_DrawBlockText();
     }
     if (sTb->mode == TB_NAME) {
+        Tb_PageIn(2);
         Tb_DrawName();
+        Tb_PageIn(0);
     }
     if (sTb->note > 0) {
         s32 a = sTb->note > 16 ? 0x80 : sTb->note * 8;
