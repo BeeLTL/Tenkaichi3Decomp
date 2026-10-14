@@ -522,7 +522,14 @@ static int vk_init(void) {
     }
     sDclutFs = shader(SHADER_CODE(kDclutFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1);
     copies_create();
-    if (!Ui_Init(sWindow, sDev, NULL)) {
+    const char *gpuName = NULL;
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    SDL_PropertiesID props = SDL_GetGPUDeviceProperties(sDev);
+    if (props != 0) {
+        gpuName = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, NULL);
+    }
+#endif
+    if (!Ui_Init(sWindow, sDev, NULL, gpuName)) {
         fprintf(stderr, "bt3: the settings window could not be set up\n");
     }
     fprintf(stderr, "bt3: GPU renderer: %s\n", SDL_GetGPUDeviceDriver(sDev));

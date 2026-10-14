@@ -765,7 +765,7 @@ static int gl_init(void) {
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glViewport(0, 0, GS_W * SCALE, GS_H * SCALE);
     /* the overlay (F1's settings, the online window) here too: ImGui's OpenGL3 backend, with the context current */
-    if (!Ui_Init(sWindow, NULL, (void *)sCtx)) {
+    if (!Ui_Init(sWindow, NULL, (void *)sCtx, (const char *)glGetString(GL_RENDERER))) {
         fprintf(stderr, "bt3: gl: the settings window is not available\n");
     }
     return 1;

@@ -20,6 +20,7 @@
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
 static int sGL; // 1: the OpenGL back end draws the window (ImGui's OpenGL3 backend, no SDL GPU device)
+static char sGpuName[256];
 
 extern "C" {
 extern volatile int gPortNetMenuRequest;
@@ -344,13 +345,15 @@ static void style() {
     c[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 1.0f, 1.0f, 0.03f);
 }
 
-int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
+int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const char *gpu_name) {
     static const char *fonts[] = { // a proportional system font if there is one; else the library's built-in font
         "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/noto/NotoSans-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/liberation/LiberationSans-Regular.ttf", "C:\\Windows\\Fonts\\segoeui.ttf",
     };
     ImGui_ImplSDLGPU3_InitInfo info;
+
+    snprintf(sGpuName, sizeof(sGpuName), "%s", gpu_name && gpu_name[0] ? gpu_name : "Unavailable");
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -1140,6 +1143,7 @@ static void video_tab(PortVideo &v) {
         if (api != (sGL ? 1 : 0)) {
             ImGui::TextDisabled("Running now: %s. %s from the next start.", kApi[sGL ? 1 : 0], kApi[api]);
         }
+        ImGui::TextWrapped("Active GPU: %s", sGpuName);
     }
     {
         // In-between pictures (gs_draw.c): the fight is computed 30 times a second, as on the console; with this
