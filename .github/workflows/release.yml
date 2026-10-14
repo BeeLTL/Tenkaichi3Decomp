@@ -10,7 +10,7 @@ name: release
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/*"]
     tags: ["v*"]
     paths-ignore: ["docs/**", "**.md", "LICENSE"]
   workflow_dispatch:
