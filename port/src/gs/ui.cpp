@@ -15,6 +15,7 @@
 #include "../port_release.h"
 #include "menu_text.h"
 #include "../quit_dialog.h"
+#include "net_chat.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -40,6 +41,7 @@ int GsDraw_HudShown(void);                     // ... and 1 while the game is dr
 const char *Port_NetName(int player);          // the name of the player of side 0 or 1 ("" outside a match)
 int Port_HudSwap(void);                        // the two sides of the HUD are in each other's places on this copy
 int Port_NetActive(void);
+int Port_NetMe(void);                          // gs/net.c: this copy's side, 0 or 1
 void *BtlChar_FindByObjId(int objId);          // the game: the fighter of a side, NULL outside a fight
 int Port_NetStats(int *out);                   // gs/net.c: the meter's numbers of an online match
 int Port_LobbyOther(void);
@@ -90,6 +92,13 @@ static bool sPadHold;                          // the controller does not work t
 static int sTab;                               // the settings tab that is open (the shoulder buttons go to its neighbours)
 static bool sPadTab;                           // the shoulder buttons changed the tab this frame
 static SDL_GPUDevice *sDevice;
+// The online chat (net_chat.c): its key opens a line to type, Enter sends it, Esc puts it away.
+static bool sChat;                             // a line is being typed
+static bool sChatFocus;                        // ... and its field takes the keyboard next frame
+static bool sChatKeyHeld;                      // ... and the key that opened it is still down (its letter is not typed)
+static bool sChatSoon;                         // the last Enter came within a second of the line before: not sent
+static char sChatBuf[CHAT_TEXT + 1];
+static void chat_close(void);
 
 /* Name strips (gamedata/stages/names.rgba and gamedata/songs/names.rgba): the names of the stages and tracks added
    from outside the disc, drawn by the port over the menu in the game's own lettering. Raw RGBA, a 12-byte header
@@ -405,6 +414,9 @@ static void input_owner(void) {
 }
 
 static void set_open(bool open) {
+    if (open && sChat) {
+        chat_close();
+    }
     sOpen = open;
     sNet = false;
     sCapKind = 0;
@@ -880,12 +892,61 @@ static void bind(int value) {
         } else if (value < PORT_PAD_LT) { // (a button, not a trigger)
             *PortInput_OverlayPad() = value;
         }
+    } else if (sCapAction == PORT_ACTIONS + 1) { // the row "Open online chat"
+        if (sCapKind == 1) {
+            *PortInput_ChatKey() = value > 0 ? value : SDL_SCANCODE_TAB;
+        }
     } else if (sCapKind == 1) {
         PortInput_Keys(sCapPlayer)[sCapAction] = value;
     } else {
         PortInput_PadButtons(sCapPlayer)[sCapAction] = value;
     }
     PortInput_Save();
+}
+
+static bool chat_can_open(void) {
+    return sReady && !sOpen && !sQuit && PortChat_Enabled() && Port_NetActive();
+}
+
+static void chat_open(void) {
+    sChat = true;
+    sChatFocus = true;
+    sChatKeyHeld = true;
+    sChatSoon = false;
+    gPortChatTyping = 1;
+    ImGui::GetIO().ClearInputKeys(); // (it saw none of the keys while the line was put away: no key is down for it)
+}
+
+static void chat_close(void) {
+    sChat = false;
+    gPortChatTyping = 0;
+    PortInput_SwallowKeys(); // (Enter, which sent the line, is START: not the game's until it is let go)
+}
+
+// The chat while a line is typed: the keyboard is the line's; Esc puts it away. 1 = the event was used.
+static int chat_event(const SDL_Event *ev) {
+    int key = *PortInput_ChatKey();
+    if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode == SDL_SCANCODE_ESCAPE) {
+        chat_close();
+        return 1;
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN && !sChatKeyHeld && !ev->key.repeat && key > 0 && (int)ev->key.scancode == key) {
+        chat_close();
+        return 1;
+    }
+    if (ev->type == SDL_EVENT_KEY_UP && (int)ev->key.scancode == key) {
+        sChatKeyHeld = false;
+    }
+    if (ev->type == SDL_EVENT_TEXT_INPUT && sChatKeyHeld) { // the letter of the key that opened the line
+        return 1;
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN || ev->type == SDL_EVENT_KEY_UP || ev->type == SDL_EVENT_TEXT_INPUT || ev->type == SDL_EVENT_TEXT_EDITING ||
+        ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP || ev->type == SDL_EVENT_MOUSE_WHEEL ||
+        ev->type == SDL_EVENT_MOUSE_MOTION) {
+        ImGui_ImplSDL3_ProcessEvent(ev);
+    }
+    return ev->type == SDL_EVENT_KEY_DOWN || ev->type == SDL_EVENT_KEY_UP || ev->type == SDL_EVENT_TEXT_INPUT ||
+           ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP || ev->type == SDL_EVENT_MOUSE_WHEEL;
 }
 
 int Ui_Event(const SDL_Event *ev) {
@@ -917,6 +978,14 @@ int Ui_Event(const SDL_Event *ev) {
                 PortQuit_Action(PORT_QUIT_MOVE);
             }
         }
+        return 1;
+    }
+    if (sChat && !sOpen && !sQuit) {
+        return chat_event(ev);
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat && *PortInput_ChatKey() > 0 && (int)ev->key.scancode == *PortInput_ChatKey() &&
+        chat_can_open()) {
+        chat_open();
         return 1;
     }
     if (sQuit) { // fallback when the native dialog resource cannot be loaded
@@ -1196,6 +1265,14 @@ static void misc_tab(void) {
         Port_SettingsWrite();
     }
     ImGui::SetItemTooltip("The page of legal text shown for five seconds before the title screen, every time.");
+    ImGui::Spacing();
+    bool chat = PortChat_Enabled() != 0;
+    if (ImGui::Checkbox("Online chat", &chat)) {
+        PortChat_EnabledSet(chat);
+    }
+    ImGui::SetItemTooltip("Text with the other player of an online match. Tab opens a line (setting key_chat), Enter sends it,\n"
+                          "Esc puts it away; while it is typed the keyboard does not play, a controller does. Off: no lines\n"
+                          "are shown or sent. A player without it sees nothing.");
 }
 
 static void ui_tab(PortVideo &v) {
@@ -1507,6 +1584,22 @@ static void controls_tab(void) {
                 capture(2, player, a);
             }
         }
+        {   // what opens the online chat (not a player's: one for the program)
+            const int a = PORT_ACTIONS + 1;
+            bool waitKey = sCapKind == 1 && sCapAction == a;
+            int key = *PortInput_ChatKey();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Open online chat");
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : key > 0 ? SDL_GetScancodeName((SDL_Scancode)key) : "Tab", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                capture(1, player, a);
+            }
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("-");
+        }
         for (int a = 0; a < PORT_ACTIONS; a++) {
             bool waitKey = sCapKind == 1 && sCapPlayer == player && sCapAction == a;
             bool waitPad = sCapKind == 2 && sCapPlayer == player && sCapAction == a;
@@ -1799,6 +1892,156 @@ static void font_draw(ImDrawList *dl, const FontName *n, float x, float y, float
     dl->AddImage(ImTextureRef((ImTextureID)(intptr_t)n->tex), ImVec2(x0, y0), ImVec2(x0 + w, y0 + h));
 }
 
+// The online chat, in the lower left corner. Put away, it shows the newest lines for a few seconds each in a dark
+// rounded card, fading out, and takes no input. While a line is typed it shows the last ones, input field and
+// allows selecting/copying text with mouse.
+enum { CHAT_SHOWN_MS = 8000, CHAT_FADE_MS = 2000, CHAT_ROWS = 4, CHAT_ROWS_TYPING = 6 };
+
+static bool chat_recent(void) {
+    PortChatLine l;
+    unsigned n = PortChat_Count();
+    return n > 0 && PortChat_Line(n - 1, &l) && SDL_GetTicks() - l.atMs < CHAT_SHOWN_MS;
+}
+
+static void chat_draw(void) {
+    ImGuiIO &io = ImGui::GetIO();
+    float w = io.DisplaySize.x * 0.42f < 320.0f ? 320.0f : io.DisplaySize.x * 0.42f;
+    unsigned n = PortChat_Count(), rows = sChat ? CHAT_ROWS_TYPING : CHAT_ROWS, first = n > rows ? n - rows : 0;
+    Uint64 now = SDL_GetTicks();
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav |
+                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
+    if (!sChat) {
+        flags |= ImGuiWindowFlags_NoInputs;
+    }
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.02f, io.DisplaySize.y * 0.86f), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+
+    float bgAlpha = 0.85f;
+    if (!sChat) {
+        float newestAlpha = 1.0f;
+        PortChatLine lastLine;
+        if (n > 0 && PortChat_Line(n - 1, &lastLine)) {
+            Uint64 age = now - lastLine.atMs;
+            if (age >= CHAT_SHOWN_MS) {
+                return;
+            }
+            if (age > CHAT_SHOWN_MS - CHAT_FADE_MS) {
+                newestAlpha = (float)(CHAT_SHOWN_MS - age) / (float)CHAT_FADE_MS;
+            }
+        }
+        bgAlpha = 0.65f * newestAlpha;
+    }
+    ImGui::SetNextWindowBgAlpha(bgAlpha);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, sChat ? 1.0f : 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.75f, 0.2f, 0.5f));
+
+    if (sChat && sChatFocus) {
+        ImGui::SetNextWindowFocus();
+    }
+    if (ImGui::Begin("##chat", NULL, flags)) {
+        const char *names[2] = {Port_NetName(Port_NetMe()), Port_NetName(!Port_NetMe())};
+        if (sChat) {
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.28f, 1.0f), "Online Chat (Tab)");
+            ImGui::SameLine(w - 130.0f);
+            bool mute = PortChat_Muted() != 0;
+            if (ImGui::Checkbox("Mute rival", &mute)) {
+                PortChat_MutedSet(mute);
+                sChatFocus = true;
+            }
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+
+        static unsigned sCopiedIdx;
+        static Uint64 sCopiedTime;
+
+        for (unsigned i = first; i < n; i++) {
+            PortChatLine l;
+            float alpha = 1.0f;
+            if (!PortChat_Line(i, &l)) {
+                continue;
+            }
+            if (!sChat) {
+                Uint64 age = now - l.atMs;
+                if (age >= CHAT_SHOWN_MS) {
+                    continue;
+                }
+                if (age > CHAT_SHOWN_MS - CHAT_FADE_MS) {
+                    alpha = (float)(CHAT_SHOWN_MS - age) / (float)CHAT_FADE_MS;
+                }
+            }
+            const char *sender = names[l.mine ? 0 : 1][0] != '\0' ? names[l.mine ? 0 : 1] : (l.mine ? "You" : "Rival");
+            ImGui::PushID((int)i);
+            ImVec4 nameCol = l.mine ? ImVec4(0.35f, 0.85f, 1.0f, alpha) : ImVec4(1.0f, 0.82f, 0.28f, alpha);
+            ImGui::TextColored(nameCol, "%s:", sender);
+            ImGui::SameLine(0.0f, 6.0f);
+
+            if (sChat) {
+                bool justCopied = (sCopiedIdx == i && now - sCopiedTime < 2000);
+                float btnW = 50.0f;
+                float availW = w - (ImGui::GetCursorPosX() - ImGui::GetWindowPos().x) - btnW - 8.0f;
+                if (availW < 120.0f) availW = 120.0f;
+                ImGui::SetNextItemWidth(availW);
+
+                char msgBuf[CHAT_TEXT + 1];
+                SDL_strlcpy(msgBuf, l.text, sizeof(msgBuf));
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.16f, 0.5f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
+                ImGui::InputText("##t", msgBuf, sizeof(msgBuf), ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_AutoSelectAll);
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+
+                ImGui::SameLine();
+                if (ImGui::SmallButton(justCopied ? "Copied!" : "Copy")) {
+                    SDL_SetClipboardText(l.text);
+                    sCopiedIdx = i;
+                    sCopiedTime = now;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Copy message to clipboard");
+                }
+            } else {
+                ImVec2 at = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddText(NULL, 0.0f, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, (int)(230.0f * alpha)), l.text, NULL, w - (at.x - ImGui::GetWindowPos().x));
+                ImGui::PushTextWrapPos(w);
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, alpha), "%s", l.text);
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::PopID();
+        }
+
+        if (sChat) {
+            ImGui::Spacing();
+            if (sChatFocus) {
+                ImGui::SetKeyboardFocusHere();
+                sChatFocus = false;
+            }
+            ImGui::SetNextItemWidth(w);
+            if (ImGui::InputText("##chatline", sChatBuf, sizeof(sChatBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                const char *p = sChatBuf;
+                while (*p == ' ') {
+                    p++;
+                }
+                if (*p == '\0') {
+                    chat_close();
+                } else if (PortChat_Say(sChatBuf)) {
+                    sChatBuf[0] = '\0';
+                    chat_close();
+                } else { // (said within a second of the line before: kept, to be sent again)
+                    sChatSoon = true;
+                    sChatFocus = true;
+                }
+            }
+            ImGui::TextDisabled(sChatSoon ? "One line a second: Enter again to send" : "Enter: send   Esc / Tab: close   Ctrl+V: paste");
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
+}
+
 // Builds this frame's picture of the overlay (the settings or the online window, the line over the picture).
 // false: there is nothing to draw. The same for both back ends; each then draws ImGui's data its own way.
 static bool frame_build(void) {
@@ -1835,9 +2078,14 @@ static bool frame_build(void) {
     // the players' names under the gauges of an online fight
     bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
     bool bars = sReady && bars_on();
+    bool online = sReady && Port_NetActive() && PortChat_Enabled();
+    if (sChat && !online) { // (the match ended while a line was typed)
+        chat_close();
+    }
+    bool chat = online && (sChat || chat_recent());
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars)) {
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars && !chat)) {
         return false;
     }
     if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
@@ -1853,7 +2101,9 @@ static bool frame_build(void) {
         SDL_free(ids);
         sPadHold = held;
     }
-    if (sPadHold) { // (the button that becomes the binding would also press the row it is bound in)
+    // (the button that becomes the binding would also press the row it is bound in; while a chat line is typed the
+    // controller is the game's)
+    if (sPadHold || (sChat && !sOpen)) {
         ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
     } else {
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -1881,6 +2131,9 @@ static bool frame_build(void) {
     }
     if (meter) {
         meter_draw();
+    }
+    if (chat) {
+        chat_draw();
     }
     if (names && GsDraw_HudShown() && gUiPresentW > 0 && gUiPresentH > 0) { // (with the HUD: not over an intro)
         // Under each side's health bar (the game's 512 x 448 page: the bars end at about y 50). The left place is
