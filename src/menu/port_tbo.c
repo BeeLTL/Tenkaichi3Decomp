@@ -2220,28 +2220,33 @@ static void Tb_Speak(void) {
         PortA11y_Say(line, TB_SAY_INTERRUPT);
         Tb_Copy(said, focus, 160);
         Tb_Copy(typed, now, 40);
-    } else {
+    } else { /* what was typed, then where the cursor went (one line: two in one blank, the second cuts the first) */
+        static char line[256];
         s32 k;
 
+        line[0] = 0;
+        for (k = 0; now[k] == typed[k] && now[k] != 0; k++) {
+        }
+        if (now[k] != typed[k]) { /* the code or the name typed so far */
+            Tb_Copy(typed, now, 40);
+            Tb_Copy(line, sTb->mode == TB_JOIN ? "Code: " : "Name: ", 256);
+            if (sTb->mode == TB_JOIN) {
+                Tb_Spell(part, now, 64);
+                Tb_Cat(line, now[0] != 0 ? part : "empty", 256);
+            } else {
+                Tb_Cat(line, now[0] != 0 ? now : "empty", 256);
+            }
+        }
         for (k = 0; focus[k] == said[k] && focus[k] != 0; k++) {
         }
         if (focus[k] != said[k]) {
             Tb_Copy(said, focus, 160);
-            PortA11y_Say(said, TB_SAY_INTERRUPT);
-        }
-        for (k = 0; now[k] == typed[k] && now[k] != 0; k++) {
-        }
-        if (now[k] != typed[k]) { /* the code or the name typed so far */
-            static char line[96];
-
-            Tb_Copy(typed, now, 40);
-            Tb_Copy(line, sTb->mode == TB_JOIN ? "Code: " : "Name: ", 96);
-            if (sTb->mode == TB_JOIN) {
-                Tb_Spell(part, now, 64);
-                Tb_Cat(line, now[0] != 0 ? part : "empty", 96);
-            } else {
-                Tb_Cat(line, now[0] != 0 ? now : "empty", 96);
+            if (line[0] != 0) {
+                Tb_Cat(line, ". ", 256);
             }
+            Tb_Cat(line, focus, 256);
+        }
+        if (line[0] != 0) {
             PortA11y_Say(line, TB_SAY_INTERRUPT);
         }
     }

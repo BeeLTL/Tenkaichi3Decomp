@@ -3416,8 +3416,11 @@ line is written by the game's own text box in the game's message window (battle/
 TextBox_AttachString, the game's font and place), which the reader already reads as the game's lines; one or two
 lines start at the same height (the box's line offsets, MsgWin_PortSameTop), as before. And the pages say the rest
 themselves (port_tbo.c, Tb_Speak): the title as a page opens, what the cursor is on with its value, a keypad's key,
-the code (letter by letter) or name typed so far, the room's code while searching, the notes. Built, not yet
-checked: BT3_A11Y_LOG writes what would be said into a file, for a check without a speech library.
+the code (letter by letter) or name typed so far, the room's code while searching, the notes. Checked with
+BT3_A11Y_LOG (what would be said, into a file; the user went through the hub, Quick Match, Create Room and Join
+Room): the titles, every item with its value, the box's lines, the keys and the code as typed were all said. One fix
+from it: what was typed and where the cursor went in the same blank are one line (two in one blank, the second cut
+the first: the cursor's jump to JOIN after the sixth letter was lost). Not heard with a speech library here.
 
 The lines of the online screens themselves cannot be made that way: names, room codes and the hosts' lines need
 every character, which the disc's labels do not have. They keep being written with the Menu font. Measured against
