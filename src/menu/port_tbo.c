@@ -2388,10 +2388,9 @@ void PortTbo_SparSign(void) {
     sTbSignFrames++;
     secs = (sTbBgFrames + sTbSignFrames) / 60;
     Tb_PageSet();
-    Tb_Panel(TBO_KIT_DIALOG, 128.0f, 66.0f, 384.0f, 118.0f, 0x70);
-    Tb_Icon(TBO_CREST, 150.0f, 92.0f, 30.0f, 0x80);
+    Tb_Panel(TBO_KIT_DIALOG, 128.0f, 66.0f, 384.0f, 124.0f, 0x70); /* (as much room under the lines as over them) */
     sprintf(line, "Searching for a rival...  %d:%02d", (int)(secs / 60), (int)(secs % 60));
-    Tb_Msg(170.0f, 72.0f, line, 1.0f, 0x80);
+    Tb_Msg(146.0f, 72.0f, line, 1.0f, 0x80);
     if (sTbBgKind == 2) {
         Tb_Copy(line, "Quick Match: ", 64);
         Tb_Cat(line, sTbBgQueue ? "Teams" : "One on One", 64);
@@ -2402,6 +2401,6 @@ void PortTbo_SparSign(void) {
         Tb_Copy(line, "Joining room ", 64);
         Tb_Cat(line, sTbBgCode, 64);
     }
-    Tb_Msg(170.0f, 93.0f, line, 1.0f, 0x80);
+    Tb_Msg(146.0f, 93.0f, line, 1.0f, 0x80);
 }
 #endif

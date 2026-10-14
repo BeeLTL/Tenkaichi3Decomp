@@ -206,6 +206,9 @@ void MainMenu_Init(s32 section) {
         if (i == 4 && !Port_NetMenuListed()) {
             continue;
         }
+        if (i == MAINMENU_TBO) { /* (listed after Dragon Net Battle, below: not again at the end) */
+            continue;
+        }
 #else
         if (i == 4) {
             continue;
