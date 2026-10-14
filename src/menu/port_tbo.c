@@ -1860,7 +1860,7 @@ static void Tb_DrawWaitText(void) {
     if (sTb->host == 2) {
         s32 n = Port_LobbyQueueWaiting(sTb->queue);
 
-        Tb_Text(22.0f, 94.0f, "QUICK MATCH", 0.56f, 0.0f, 2);
+        Tb_Text(22.0f, 94.0f, "QUICK MATCH", 0.56f, 0.0f, 0);
         Tb_Align(1);
         Tb_Text(95.0f, 124.0f, sTb->queue ? "TEAMS" : "ONE ON ONE", 0.86f, 156.0f, 1);
         Tb_Align(0);
@@ -1871,7 +1871,7 @@ static void Tb_DrawWaitText(void) {
             Tb_Text(22.0f, 214.0f, line, 0.42f, 150.0f, 5);
         }
     } else if (sTb->host) {
-        Tb_Text(22.0f, 94.0f, "ROOM CODE", 0.56f, 0.0f, 2);
+        Tb_Text(22.0f, 94.0f, "ROOM CODE", 0.56f, 0.0f, 0);
         Tb_Align(1);
         if (code[0] != 0) {
             Tb_Text(95.0f, 120.0f, (char *)code, 1.2f, 156.0f, 0);
@@ -1885,7 +1885,7 @@ static void Tb_DrawWaitText(void) {
             Tb_Text(22.0f, 214.0f, "ANOTHER VERSION TRIED", 0.42f, 150.0f, 3);
         }
     } else {
-        Tb_Text(22.0f, 94.0f, "JOINING ROOM", 0.56f, 0.0f, 2);
+        Tb_Text(22.0f, 94.0f, "JOINING ROOM", 0.56f, 0.0f, 0);
         Tb_Align(1);
         Tb_Text(95.0f, 120.0f, sTb->code, 1.2f, 156.0f, 0);
         Tb_Align(0);
