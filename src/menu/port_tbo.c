@@ -280,6 +280,7 @@ extern int Port_LobbyStartCode(int host, const char *code);
 extern int Port_LobbyPoll(void);
 extern void Port_LobbyCancel(void);
 extern void Port_LobbyLaunch(void);
+extern int Port_NetSessionsEnded(void); /* gs/net.c */
 extern const char *Port_LobbyCode(void);
 extern const char *Port_LobbyError(void);
 extern int Port_LobbyOther(void);
@@ -373,6 +374,7 @@ typedef struct TboScreen {
     s32 host;           /* this side opened the room */
     s32 waitFrom;       /* frames when the search began */
     s32 found;          /* the other player is there: the match is starting */
+    s32 ended;          /* Port_NetSessionsEnded when it started: a change says the match has been played */
     s32 waitBack;       /* the screen a cancelled search goes back to */
     /* Quick Match */
     s32 queue;          /* 0 one on one, 1 teams */
@@ -630,10 +632,19 @@ static void Tb_BeginSearch(s32 host) {
 /* What the search says (each frame on the screens that wait): the rival came (the match starts), or it failed.
    Returns 1 when the screen that called has nothing more to do this frame. */
 static s32 Tb_SearchNews(void) {
-    s32 state = sTb->found ? 2 : Port_LobbyPoll();
+    s32 state;
 
+    /* The session is over: the game is back as it was when it was asked for (the rival had just come), so these
+       screens are again where they were then. The match has been played: back to the first page. */
+    if (sTb->found && Port_NetSessionsEnded() != sTb->ended) {
+        sTb->found = 0;
+        Tb_SetMode(TB_HUB);
+        return 1;
+    }
+    state = sTb->found ? 2 : Port_LobbyPoll();
     if (state == 2 && !sTb->found) {
         sTb->found = 1;
+        sTb->ended = Port_NetSessionsEnded();
         Snd_PlaySe(1, 1);
         Tb_SetMode(TB_WAIT);
         Port_LobbyLaunch(); /* the session begins at the game's next blank, from the game's first moment */

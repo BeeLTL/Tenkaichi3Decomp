@@ -1403,7 +1403,16 @@ void Port_NetSessionBegin(int role, const char *address, int port) {
     net_start(role, role == 1 ? host : NULL, role == 2 ? join : NULL);
 }
 
+/* How many sessions have ended in this run. The port's own memory: the game's is put back to the moment the session
+   was asked for, so this is how the screens that asked for it (menu/port_tbo.c) know it has been and gone. */
+static int sSessionsEnded;
+
+int Port_NetSessionsEnded(void) {
+    return sSessionsEnded;
+}
+
 void Port_NetSessionEnd(void) {
+    sSessionsEnded++;
     Relay_Close(sSock);
     if (sSock >= 0) {
         closesocket(sSock);
