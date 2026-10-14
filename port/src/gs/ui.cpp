@@ -1286,10 +1286,10 @@ static void misc_tab(void) {
             Port_SettingSave("chat_size", sChatSize);
             Port_SettingsWrite();
         }
-        ImGui::SetItemTooltip("Scale and history lines of the online chat window.\n"
-                              "Compact: 3 lines, smaller card.\n"
-                              "Normal: 4 lines, balanced layout.\n"
-                              "Large: 6 lines, wider card for large screens.");
+        ImGui::SetItemTooltip("How wide the online chat is and how many lines it shows (while typing / otherwise).\n"
+                              "Compact: 4 / 2, narrower.\n"
+                              "Normal: 6 / 4.\n"
+                              "Large: 8 / 6, wider, for large screens.");
     }
 }
 
@@ -1927,20 +1927,19 @@ static void chat_draw(void) {
         sChatSize = Port_Setting("chat_size", 1);
         if (sChatSize < 0 || sChatSize > 2) sChatSize = 1;
     }
-    int rowsTyping = 4, rowsPassive = 3;
-    float wFactor = 0.30f, minW = 270.0f, maxW = 360.0f;
+    int rowsTyping = 6, rowsPassive = 4; // Normal: as the chat always was
+    float wFactor = 0.42f, minW = 320.0f, maxW = 100000.0f;
     if (sChatSize == 0) { // Compact
-        rowsTyping = 3;
+        rowsTyping = 4;
         rowsPassive = 2;
-        wFactor = 0.24f;
-        minW = 220.0f;
-        maxW = 290.0f;
+        wFactor = 0.28f;
+        minW = 240.0f;
+        maxW = 380.0f;
     } else if (sChatSize == 2) { // Large
-        rowsTyping = 6;
-        rowsPassive = 4;
-        wFactor = 0.38f;
-        minW = 340.0f;
-        maxW = 440.0f;
+        rowsTyping = 8;
+        rowsPassive = 6;
+        wFactor = 0.52f;
+        minW = 400.0f;
     }
     float w = io.DisplaySize.x * wFactor;
     if (w < minW) w = minW;
@@ -1953,16 +1952,16 @@ static void chat_draw(void) {
         flags |= ImGuiWindowFlags_NoInputs;
     }
 
-    static ImVec2 sChatPos = ImVec2(-1.0f, -1.0f);
-    if (sChatPos.x < 0.0f || sChatPos.x > io.DisplaySize.x - 50.0f) {
-        sChatPos.x = io.DisplaySize.x * 0.02f;
+    // In the lower left corner (growing upwards) until it is dragged; then where it was left (off the screen: back).
+    static ImVec2 sChatPos;
+    static bool sChatMoved;
+    if (sChatMoved && (sChatPos.x < 0.0f || sChatPos.y < 0.0f || sChatPos.x > io.DisplaySize.x - 50.0f ||
+                       sChatPos.y > io.DisplaySize.y - 50.0f)) {
+        sChatMoved = false;
     }
-    if (sChatPos.y < 0.0f || sChatPos.y > io.DisplaySize.y - 50.0f) {
-        sChatPos.y = io.DisplaySize.y * 0.52f;
-    }
-    if (sChat) {
-        ImGui::SetNextWindowPos(sChatPos, ImGuiCond_Appearing);
-    } else {
+    if (!sChatMoved) {
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.02f, io.DisplaySize.y * 0.86f), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    } else if (!sChat) {
         ImGui::SetNextWindowPos(sChatPos, ImGuiCond_Always);
     }
 
@@ -1993,7 +1992,10 @@ static void chat_draw(void) {
         ImGui::SetNextWindowFocus();
     }
     if (ImGui::Begin("##chat", NULL, flags)) {
-        if (sChat) {
+        if (sChat && ImGui::IsWindowHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            sChatMoved = true;
+        }
+        if (sChat && sChatMoved) {
             sChatPos = ImGui::GetWindowPos();
         }
         const char *names[2] = {Port_NetName(Port_NetMe()), Port_NetName(!Port_NetMe())};
@@ -2002,7 +2004,7 @@ static void chat_draw(void) {
             ImGui::SameLine();
             ImGui::TextDisabled("::");
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Drag anywhere to move chat window");
+                ImGui::SetTooltip("Drag anywhere to move the chat window. Click a line to copy it.");
             }
             ImGui::SameLine(w - 70.0f);
             bool mute = PortChat_Muted() != 0;
@@ -2041,6 +2043,20 @@ static void chat_draw(void) {
             ImGui::PushTextWrapPos(w);
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, alpha), "%s", l.text);
             ImGui::PopTextWrapPos();
+            if (sChat) { // a click copies the line (a room code or an address is passed on this way); a drag does not
+                static unsigned sCopiedIdx;
+                static Uint64 sCopiedMs;
+                bool copied = sCopiedIdx == i + 1 && now - sCopiedMs < 1500;
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(copied ? "Copied" : "Click to copy");
+                    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < 16.0f) {
+                        SDL_SetClipboardText(l.text);
+                        sCopiedIdx = i + 1;
+                        sCopiedMs = now;
+                        sChatFocus = true;
+                    }
+                }
+            }
             ImGui::PopID();
         }
 
@@ -2109,15 +2125,10 @@ static bool frame_build(void) {
     // the players' names under the gauges of an online fight
     bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
     bool bars = sReady && bars_on();
-    static bool sWasOnline;
     bool online = sReady && Port_NetActive() && PortChat_Enabled();
     if (sChat && !online) { // (the match ended while a line was typed)
         chat_close();
     }
-    if (sWasOnline && !online) {
-        PortChat_Reset();
-    }
-    sWasOnline = online;
     bool chat = online && (sChat || chat_recent());
     meter_count();
     sBuilt = false;
