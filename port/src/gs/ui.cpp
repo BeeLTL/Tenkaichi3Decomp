@@ -1895,7 +1895,7 @@ static void font_draw(ImDrawList *dl, const FontName *n, float x, float y, float
 // The online chat, in the lower left corner. Put away, it shows the newest lines for a few seconds each in a dark
 // rounded card, fading out, and takes no input. While a line is typed it shows the last ones, input field and
 // allows selecting/copying text with mouse.
-enum { CHAT_SHOWN_MS = 8000, CHAT_FADE_MS = 2000, CHAT_ROWS = 4, CHAT_ROWS_TYPING = 6 };
+enum { CHAT_SHOWN_MS = 8000, CHAT_FADE_MS = 2000, CHAT_ROWS = 3, CHAT_ROWS_TYPING = 4 };
 
 static bool chat_recent(void) {
     PortChatLine l;
@@ -1905,7 +1905,9 @@ static bool chat_recent(void) {
 
 static void chat_draw(void) {
     ImGuiIO &io = ImGui::GetIO();
-    float w = io.DisplaySize.x * 0.42f < 320.0f ? 320.0f : io.DisplaySize.x * 0.42f;
+    float w = io.DisplaySize.x * 0.32f;
+    if (w < 280.0f) w = 280.0f;
+    if (w > 380.0f) w = 380.0f;
     unsigned n = PortChat_Count(), rows = sChat ? CHAT_ROWS_TYPING : CHAT_ROWS, first = n > rows ? n - rows : 0;
     Uint64 now = SDL_GetTicks();
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav |
@@ -1913,7 +1915,19 @@ static void chat_draw(void) {
     if (!sChat) {
         flags |= ImGuiWindowFlags_NoInputs;
     }
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.02f, io.DisplaySize.y * 0.86f), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+
+    static ImVec2 sChatPos = ImVec2(-1.0f, -1.0f);
+    if (sChatPos.x < 0.0f || sChatPos.x > io.DisplaySize.x - 50.0f) {
+        sChatPos.x = io.DisplaySize.x * 0.02f;
+    }
+    if (sChatPos.y < 0.0f || sChatPos.y > io.DisplaySize.y - 50.0f) {
+        sChatPos.y = io.DisplaySize.y * 0.52f;
+    }
+    if (sChat) {
+        ImGui::SetNextWindowPos(sChatPos, ImGuiCond_Appearing);
+    } else {
+        ImGui::SetNextWindowPos(sChatPos, ImGuiCond_Always);
+    }
 
     float bgAlpha = 0.85f;
     if (!sChat) {
@@ -1933,25 +1947,33 @@ static void chat_draw(void) {
     ImGui::SetNextWindowBgAlpha(bgAlpha);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, sChat ? 1.0f : 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.75f, 0.2f, 0.5f));
 
     if (sChat && sChatFocus) {
         ImGui::SetNextWindowFocus();
     }
     if (ImGui::Begin("##chat", NULL, flags)) {
+        if (sChat) {
+            sChatPos = ImGui::GetWindowPos();
+        }
         const char *names[2] = {Port_NetName(Port_NetMe()), Port_NetName(!Port_NetMe())};
         if (sChat) {
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.28f, 1.0f), "Online Chat (Tab)");
-            ImGui::SameLine(w - 130.0f);
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.28f, 1.0f), "Chat (Tab)");
+            ImGui::SameLine();
+            ImGui::TextDisabled("::");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Drag anywhere to move chat window");
+            }
+            ImGui::SameLine(w - 70.0f);
             bool mute = PortChat_Muted() != 0;
-            if (ImGui::Checkbox("Mute rival", &mute)) {
+            if (ImGui::Checkbox("Mute", &mute)) {
                 PortChat_MutedSet(mute);
                 sChatFocus = true;
             }
             ImGui::Separator();
-            ImGui::Spacing();
         }
 
         static unsigned sCopiedIdx;
@@ -1976,24 +1998,24 @@ static void chat_draw(void) {
             ImGui::PushID((int)i);
             ImVec4 nameCol = l.mine ? ImVec4(0.35f, 0.85f, 1.0f, alpha) : ImVec4(1.0f, 0.82f, 0.28f, alpha);
             ImGui::TextColored(nameCol, "%s:", sender);
-            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::SameLine(0.0f, 4.0f);
 
             if (sChat) {
                 bool justCopied = (sCopiedIdx == i && now - sCopiedTime < 2000);
-                float btnW = 50.0f;
-                float availW = w - (ImGui::GetCursorPosX() - ImGui::GetWindowPos().x) - btnW - 8.0f;
-                if (availW < 120.0f) availW = 120.0f;
+                float btnW = 44.0f;
+                float availW = w - (ImGui::GetCursorPosX() - ImGui::GetWindowPos().x) - btnW - 6.0f;
+                if (availW < 90.0f) availW = 90.0f;
                 ImGui::SetNextItemWidth(availW);
 
                 char msgBuf[CHAT_TEXT + 1];
                 SDL_strlcpy(msgBuf, l.text, sizeof(msgBuf));
                 ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.12f, 0.12f, 0.16f, 0.5f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f, 1.0f));
                 ImGui::InputText("##t", msgBuf, sizeof(msgBuf), ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_AutoSelectAll);
                 ImGui::PopStyleVar();
                 ImGui::PopStyleColor();
 
-                ImGui::SameLine();
+                ImGui::SameLine(0.0f, 4.0f);
                 if (ImGui::SmallButton(justCopied ? "Copied!" : "Copy")) {
                     SDL_SetClipboardText(l.text);
                     sCopiedIdx = i;
@@ -2013,7 +2035,6 @@ static void chat_draw(void) {
         }
 
         if (sChat) {
-            ImGui::Spacing();
             if (sChatFocus) {
                 ImGui::SetKeyboardFocusHere();
                 sChatFocus = false;
@@ -2034,12 +2055,12 @@ static void chat_draw(void) {
                     sChatFocus = true;
                 }
             }
-            ImGui::TextDisabled(sChatSoon ? "One line a second: Enter again to send" : "Enter: send   Esc / Tab: close   Ctrl+V: paste");
+            ImGui::TextDisabled(sChatSoon ? "1 line/s: Enter to send" : "Enter: send   Esc/Tab: close   Ctrl+V: paste");
         }
     }
     ImGui::End();
     ImGui::PopStyleColor();
-    ImGui::PopStyleVar(3);
+    ImGui::PopStyleVar(4);
 }
 
 // Builds this frame's picture of the overlay (the settings or the online window, the line over the picture).
