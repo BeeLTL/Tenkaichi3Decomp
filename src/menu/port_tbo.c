@@ -421,6 +421,17 @@ static void Tb_Copy(char *dst, const char *src, s32 max) {
     dst[i] = 0;
 }
 
+/* `src` after what `dst` (`max` bytes) holds. (No sprintf "%s" in this file: the game's code has 32-bit pointers,
+   and one passed through sprintf's "..." can reach the C library with garbage in its upper half.) */
+static void Tb_Cat(char *dst, const char *src, s32 max) {
+    s32 n = 0;
+
+    while (n < max - 1 && dst[n] != 0) {
+        n++;
+    }
+    Tb_Copy(dst + n, src, max - n);
+}
+
 static s32 Tb_Len(const char *s) {
     s32 n = 0;
 
@@ -533,7 +544,10 @@ static void Tb_DelayText(char *out, s32 delay) {
     if (delay < 0) {
         sprintf(out, "AUTOMATIC");
     } else {
-        sprintf(out, "%d FRAME%s", (int)delay, delay == 1 ? "" : "S");
+        sprintf(out, "%d FRAME", (int)delay);
+        if (delay != 1) {
+            Tb_Cat(out, "S", 32);
+        }
     }
 }
 
@@ -672,7 +686,7 @@ static char *Tb_Fighter(s32 chara) {
         return "-";
     }
     if (!got[chara]) {
-        sprintf(name[chara], "%.47s", chara < (s32)(sizeof(sTbNames) / sizeof(sTbNames[0])) ? sTbNames[chara] : "?");
+        Tb_Copy(name[chara], chara < (s32)(sizeof(sTbNames) / sizeof(sTbNames[0])) ? sTbNames[chara] : "?", 48);
         got[chara] = 1;
     }
     return name[chara];
@@ -1715,7 +1729,7 @@ static void Tb_DrawCreateText(void) {
     s32 i;
 
     sprintf(value[CR_BATTLE], sTb->battle ? "TEAMS (UP TO 5)" : "ONE ON ONE");
-    sprintf(value[CR_TIME], "%s", sTbTime[sTb->time]);
+    Tb_Copy(value[CR_TIME], sTbTime[sTb->time], 32);
     Tb_DelayText(value[CR_DELAY], sTb->delay);
     Tb_RollText(value[CR_ROLL], sTb->roll);
     value[CR_OPEN][0] = 0;
@@ -1840,7 +1854,8 @@ static void Tb_DrawBlockText(void) {
         m++;
     }
     if (*m != 0) { /* which parts differ, as the data check says it */
-        sprintf(parts, "Changed: %.80s", m + 10);
+        Tb_Copy(parts, "Changed: ", 96);
+        Tb_Cat(parts, m + 10, 9 + 81);
     } else if (Port_DataFingerprint(NULL) == 1) {
         sprintf(parts, "Your game data is not the disc's.");
     } else {
@@ -1866,7 +1881,8 @@ static void Tb_DrawName(void) {
     Tb_Panel(TBO_KIT_WINDOW, 64.0f, 62.0f, 448.0f, 340.0f, 0x80);
     Tb_Text(84.0f, 70.0f, "TYPE YOUR NAME", 0.6f, 0.0f, 2);
     Tb_Pill(TBO_KIT_BAR, 84.0f, 94.0f, 428.0f, 124.0f, 0x80);
-    sprintf(line, "%s%s", sTb->typed, (sTb->frames / 16) & 1 ? "_" : " ");
+    Tb_Copy(line, sTb->typed, 40);
+    Tb_Cat(line, (sTb->frames / 16) & 1 ? "_" : " ", 40);
     Tb_Text(100.0f, 97.0f, line, 0.86f, 310.0f, 1);
     Tb_Keypad(94.0f, 134.0f, NAME_ROWS, sTbNameKeys[sTb->lower], sTbNameBtn, 4);
 }
@@ -2250,11 +2266,14 @@ void PortTbo_SparSign(void) {
     sprintf(line, "Searching for a rival...  %d:%02d", (int)(secs / 60), (int)(secs % 60));
     Tb_Msg(170.0f, 72.0f, line, 1.0f, 0x80);
     if (sTbBgKind == 2) {
-        sprintf(line, "Quick Match: %s", sTbBgQueue ? "Teams" : "One on One");
+        Tb_Copy(line, "Quick Match: ", 64);
+        Tb_Cat(line, sTbBgQueue ? "Teams" : "One on One", 64);
     } else if (sTbBgKind == 1) {
-        sprintf(line, "Your room: %s", Port_LobbyCode());
+        Tb_Copy(line, "Your room: ", 64);
+        Tb_Cat(line, Port_LobbyCode(), 64);
     } else {
-        sprintf(line, "Joining room %s", sTbBgCode);
+        Tb_Copy(line, "Joining room ", 64);
+        Tb_Cat(line, sTbBgCode, 64);
     }
     Tb_Msg(170.0f, 93.0f, line, 1.0f, 0x80);
 }
