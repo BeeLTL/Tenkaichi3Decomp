@@ -1353,8 +1353,10 @@ static void Tb_Icon(s32 id, f32 cx, f32 cy, f32 height, s32 alpha) {
    stand on the message box's line are drawn half behind it (the box is drawn over them, and is see-through): their
    pictures run down to the foot of the screen. */
 #define TB_HOSTS_BOX_TOP 326.0f /* the top edge of the message box (the game's, MsgWin) */
+#define TB_HOSTS_SCALE 1.2f     /* those half behind the box, larger than the pages ask */
 static void Tb_Hosts(s32 pose, f32 cx, f32 feet, f32 height) {
     if (feet >= 300.0f) { /* (on the box's line) half the picture behind the box: its middle on the box's top edge */
+        height *= TB_HOSTS_SCALE;
         feet = TB_HOSTS_BOX_TOP + height * 0.5f;
     }
     Tb_Stand(pose, cx, feet + 2.0f * Tb_Beat(90) - 1.0f, height, 0x80);
