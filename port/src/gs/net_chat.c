@@ -21,6 +21,8 @@
 
 extern int Port_Setting(const char *name, int def); /* plat_settings.c */
 extern void Port_SettingSave(const char *name, int value), Port_SettingsWrite(void);
+extern const char *Port_NetName(int player);         /* gs/net.c */
+extern int Port_NetMe(void);
 
 enum { LINES = 32, OUTBOX = 4, SENDS = 3, RESEND_MS = 120, SAY_EVERY_MS = 1000, HEAR_EVERY_MS = 500, SEEN = 8 };
 
@@ -86,10 +88,28 @@ static int clean(const char *in, int len, char *out) {
 
 static void keep(const char *text, int mine) { /* (under the lock) */
     PortChatLine *l = &sLines[sCount % LINES];
+    const char *name = Port_NetName(mine ? Port_NetMe() : !Port_NetMe());
     SDL_strlcpy(l->text, text, sizeof(l->text));
+    SDL_strlcpy(l->sender, name != NULL && name[0] != '\0' ? name : (mine ? "You" : "Rival"), sizeof(l->sender));
     l->atMs = SDL_GetTicks();
     l->mine = mine;
     sCount++;
+}
+
+void PortChat_Reset(void) {
+    SDL_LockSpinlock(&sLock);
+    sCount = 0;
+    sSeq = 0;
+    sSeenAt = 0;
+    sSaid = 0;
+    sHeard = 0;
+    sSaidMs = 0;
+    sHeardMs = 0;
+    sMuted = 0;
+    memset(sLines, 0, sizeof(sLines));
+    memset(sOut, 0, sizeof(sOut));
+    memset(sSeen, 0, sizeof(sSeen));
+    SDL_UnlockSpinlock(&sLock);
 }
 
 int PortChat_Enabled(void) {

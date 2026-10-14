@@ -1972,7 +1972,7 @@ static void chat_draw(void) {
                     alpha = (float)(CHAT_SHOWN_MS - age) / (float)CHAT_FADE_MS;
                 }
             }
-            const char *sender = names[l.mine ? 0 : 1][0] != '\0' ? names[l.mine ? 0 : 1] : (l.mine ? "You" : "Rival");
+            const char *sender = l.sender[0] != '\0' ? l.sender : (names[l.mine ? 0 : 1][0] != '\0' ? names[l.mine ? 0 : 1] : (l.mine ? "You" : "Rival"));
             ImGui::PushID((int)i);
             ImVec4 nameCol = l.mine ? ImVec4(0.35f, 0.85f, 1.0f, alpha) : ImVec4(1.0f, 0.82f, 0.28f, alpha);
             ImGui::TextColored(nameCol, "%s:", sender);
@@ -2078,10 +2078,15 @@ static bool frame_build(void) {
     // the players' names under the gauges of an online fight
     bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
     bool bars = sReady && bars_on();
+    static bool sWasOnline;
     bool online = sReady && Port_NetActive() && PortChat_Enabled();
     if (sChat && !online) { // (the match ended while a line was typed)
         chat_close();
     }
+    if (sWasOnline && !online) {
+        PortChat_Reset();
+    }
+    sWasOnline = online;
     bool chat = online && (sChat || chat_recent());
     meter_count();
     sBuilt = false;
