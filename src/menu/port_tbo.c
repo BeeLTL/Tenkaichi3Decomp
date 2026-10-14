@@ -1768,10 +1768,6 @@ static void Tb_DrawWait(void) {
     }
     Tb_Radar(264.0f, 188.0f, 80.0f);
     Tb_Panel(TBO_KIT_WINDOW, 10.0f, 84.0f, 180.0f, 246.0f, 0x80);
-    if (!sTb->found) {
-        Tb_Pill(TBO_KIT_SEL, 10.0f, 262.0f, 182.0f, 294.0f, 0x80);
-        Tb_Button(1, 28.0f, 278.0f, 22.0f);
-    }
     Tb_Pill(TBO_KIT_BAR, 176.0f, 296.0f, 348.0f, 326.0f, 0x80);
 }
 
@@ -1814,9 +1810,6 @@ static void Tb_DrawWaitText(void) {
         Tb_Align(0);
         Tb_Text(22.0f, 172.0f, "LOOKING FOR", 0.46f, 150.0f, 0);
         Tb_Text(22.0f, 190.0f, "THE HOST...", 0.46f, 150.0f, 0);
-    }
-    if (!sTb->found) {
-        Tb_Text(42.0f, Tb_TextTop(278.0f, 0.5f), "TRAIN WHILE WAITING", 0.5f, 134.0f, 1);
     }
     Tb_Align(1);
     if (sTb->found) {
