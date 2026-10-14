@@ -46,6 +46,10 @@ game's data from it, and it stays on your computer.
   The host also chooses the battle (single, team, or DP battle with a limit of 10, 15 or 20) and the time limit.
   Each player sees their own gauges on the left with the players' names under them, and hears the voice language
   chosen in their own save.
+  The two players can write to each other: T opens a line, Enter sends it, Esc puts it away (the keyboard does not
+  play while a line is typed; a controller does). Lines show in the lower left corner for a few seconds. F1, Misc
+  turns the chat off; the line also has "Mute the other player". It is not part of the game's state and a copy
+  without it simply sees nothing.
 
 Online play is new. It has been played over the internet between a Linux and a Windows machine. The input delay
 is chosen from the connection when a match starts (or set by the host), both players need the same release (the
