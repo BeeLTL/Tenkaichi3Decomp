@@ -3410,6 +3410,15 @@ mode 39 (headless.c), and Duel_Main runs these screens whenever gPortDuelRole is
 chosen and cleared only after the screens return, was still 6 in the session, so it is not among what the session
 puts back. Duel_Main now clears it in a session.
 
+The screen reader said nothing on these pages (reported by a tester with speech on): port/src/a11y_game.c reads each
+of the game's own screens from its state, and these pages drew their text as pictures of their own. Now the hosts'
+line is written by the game's own text box in the game's message window (battle/view_a_b.c, MsgWin_PortDrawString:
+TextBox_AttachString, the game's font and place), which the reader already reads as the game's lines; one or two
+lines start at the same height (the box's line offsets, MsgWin_PortSameTop), as before. And the pages say the rest
+themselves (port_tbo.c, Tb_Speak): the title as a page opens, what the cursor is on with its value, a keypad's key,
+the code (letter by letter) or name typed so far, the room's code while searching, the notes. Built, not yet
+checked: BT3_A11Y_LOG writes what would be said into a file, for a check without a speech library.
+
 The lines of the online screens themselves cannot be made that way: names, room codes and the hosts' lines need
 every character, which the disc's labels do not have. They keep being written with the Menu font. Measured against
 the disc's letters (cap height, widths of "Dragon Net Battle" and "Ultimate Training"), the game's lettering is a

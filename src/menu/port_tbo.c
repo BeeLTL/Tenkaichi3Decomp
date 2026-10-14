@@ -2072,6 +2072,185 @@ static char *Tb_Help(void) {
     return "";
 }
 
+/* Each page's title (by TB_ mode), as its heading shows it and the screen reader says it. */
+static char *sTbTitle[9] = {"Tenkaichi Budokai Online", "Create Room", "Join Room", "Searching", "Profile", "Profile", "Quick Match",
+                            "Train While Waiting", "Tenkaichi Budokai Online"};
+
+/* ---- the screen reader (port/src/gs/a11y.c; silent unless the player has it on). The game's own screens are read
+   from their state by port/src/a11y_game.c; these pages say what they show themselves: the page's title as it opens,
+   then what the cursor is on (and its value), the code or the name typed so far, and the notes. The hosts' line is
+   the box's, which the reader reads as it reads the game's. ---- */
+extern void PortA11y_Say(const char *text, int flags);
+#define TB_SAY_INTERRUPT 1
+
+/* A room code letter by letter ("J D Y 2 T E"). */
+static void Tb_Spell(char *out, const char *code, s32 max) {
+    s32 n = 0;
+    s32 i;
+
+    for (i = 0; code[i] != 0 && n < max - 3; i++) {
+        if (n > 0) {
+            out[n++] = ' ';
+        }
+        out[n++] = code[i];
+    }
+    out[n] = 0;
+}
+
+/* What a keypad's cursor is on: a key's character, or a button's label. */
+static void Tb_KeyFocus(char *out, s32 rows, char (*keys)[KEY_COLS + 1], const TbKeyBtn *b, s32 nb) {
+    s32 k;
+
+    out[0] = 0;
+    if (sTb->keyRow < rows) {
+        out[0] = keys[sTb->keyRow][sTb->keyCol];
+        out[1] = 0;
+        return;
+    }
+    for (k = 0; k < nb; k++) {
+        if (sTb->keyCol >= b[k].c0 && sTb->keyCol <= b[k].c1) {
+            Tb_Copy(out, b[k].label, 32);
+        }
+    }
+}
+
+/* Once a frame, after the page's update. */
+static void Tb_Speak(void) {
+    static s32 mode = -1;
+    static char said[160];
+    static char typed[40];
+    static s32 noted;
+    char focus[160];
+    char part[64];
+    char now[40];
+
+    if (sTb->frames == 0) { /* (the screens opened again) */
+        mode = -1;
+        typed[0] = 0;
+    }
+    focus[0] = 0;
+    now[0] = 0;
+    switch (sTb->mode) {
+    case TB_HUB:
+        Tb_Copy(focus, sTbHubName[sTb->hubCur], 160);
+        if (!sTbHubReady[sTb->hubCur]) {
+            Tb_Cat(focus, ", soon", 160);
+        }
+        break;
+    case TB_CREATE: {
+        static char *label[CR_COUNT] = {"Battle", "Time Limit", "Input Delay", "Rollback", "Open Room"};
+
+        Tb_Copy(focus, label[sTb->crCur], 160);
+        part[0] = 0;
+        if (sTb->crCur == CR_BATTLE) {
+            Tb_Copy(part, sTb->battle ? "Teams, up to 5" : "One on one", 64);
+        } else if (sTb->crCur == CR_TIME) {
+            Tb_Copy(part, sTbTime[sTb->time], 64);
+        } else if (sTb->crCur == CR_DELAY) {
+            Tb_DelayText(part, sTb->delay);
+        } else if (sTb->crCur == CR_ROLL) {
+            Tb_RollText(part, sTb->roll);
+        }
+        if (part[0] != 0) {
+            Tb_Cat(focus, ": ", 160);
+            Tb_Cat(focus, part, 160);
+        }
+        break;
+    }
+    case TB_JOIN:
+        Tb_KeyFocus(focus, KEY_ROWS, sTbKeys, sTbJoinBtn, 3);
+        Tb_Copy(now, sTb->code, 40);
+        break;
+    case TB_NAME:
+        Tb_KeyFocus(focus, NAME_ROWS, sTbNameKeys[sTb->lower], sTbNameBtn, 4);
+        Tb_Copy(now, sTb->typed, 40);
+        break;
+    case TB_WAIT:
+        if (sTb->found) {
+            Tb_Copy(focus, "Your rival is here! The match begins.", 160);
+        } else if (sTb->host == 2) {
+            Tb_Copy(focus, sTb->queue ? "Quick match, teams: searching" : "Quick match, one on one: searching", 160);
+        } else if (sTb->host) {
+            if (Port_LobbyCode()[0] != 0) {
+                Tb_Copy(focus, "Your room code: ", 160);
+                Tb_Spell(part, Port_LobbyCode(), 64);
+                Tb_Cat(focus, part, 160);
+            } else {
+                Tb_Copy(focus, "Getting a room code", 160);
+            }
+        } else {
+            Tb_Copy(focus, "Joining room ", 160);
+            Tb_Spell(part, sTb->code, 64);
+            Tb_Cat(focus, part, 160);
+        }
+        break;
+    case TB_QUICK:
+        if (sTb->qkCur == 0) {
+            Tb_Copy(focus, sTb->queue ? "Battle: teams" : "Battle: one on one", 160);
+        } else {
+            Tb_Copy(focus, "Search", 160);
+        }
+        break;
+    case TB_SPAR:
+        if (sTb->spCur == 0) {
+            Tb_Copy(focus, "You: ", 160);
+            Tb_Cat(focus, Tb_Fighter(sTb->spMe), 160);
+        } else if (sTb->spCur == 1) {
+            Tb_Copy(focus, "Partner: ", 160);
+            Tb_Cat(focus, Tb_Fighter(sTb->spFoe), 160);
+        } else {
+            Tb_Copy(focus, "Start training", 160);
+        }
+        break;
+    case TB_BLOCK:
+        Tb_Copy(focus, "Cannot go online. Online matches are only between two unmodded games.", 160);
+        break;
+    default:
+        Tb_Copy(focus, "Name: ", 160);
+        Tb_Cat(focus, (char *)Port_NetNameGet(), 160);
+        break;
+    }
+    if (sTb->mode != mode) {
+        static char line[224];
+
+        mode = sTb->mode;
+        Tb_Copy(line, sTbTitle[mode], 224);
+        Tb_Cat(line, ". ", 224);
+        Tb_Cat(line, focus, 224);
+        PortA11y_Say(line, TB_SAY_INTERRUPT);
+        Tb_Copy(said, focus, 160);
+        Tb_Copy(typed, now, 40);
+    } else {
+        s32 k;
+
+        for (k = 0; focus[k] == said[k] && focus[k] != 0; k++) {
+        }
+        if (focus[k] != said[k]) {
+            Tb_Copy(said, focus, 160);
+            PortA11y_Say(said, TB_SAY_INTERRUPT);
+        }
+        for (k = 0; now[k] == typed[k] && now[k] != 0; k++) {
+        }
+        if (now[k] != typed[k]) { /* the code or the name typed so far */
+            static char line[96];
+
+            Tb_Copy(typed, now, 40);
+            Tb_Copy(line, sTb->mode == TB_JOIN ? "Code: " : "Name: ", 96);
+            if (sTb->mode == TB_JOIN) {
+                Tb_Spell(part, now, 64);
+                Tb_Cat(line, now[0] != 0 ? part : "empty", 96);
+            } else {
+                Tb_Cat(line, now[0] != 0 ? now : "empty", 96);
+            }
+            PortA11y_Say(line, TB_SAY_INTERRUPT);
+        }
+    }
+    if (sTb->note > 0 && !noted) { /* a note (copied, a code that did not work ...) */
+        PortA11y_Say(sTb->noteLine, 0);
+    }
+    noted = sTb->note > 0;
+}
+
 /* The hosts' line (Tb_Help) for the game's box, in the game's text: 16-bit, 0xFEFF first, cut at spaces into lines of
    what fits (three at most) up to the step of the box's top right corner (at about 410 of the screen's 512: the box
    is the game's movie, over the whole screen). Another buffer for another line (the screen reader tells them apart by
@@ -2183,8 +2362,7 @@ static void Tb_Draw(void) {
 }
 
 static void Tb_DrawText(void) {
-    static char *title[9] = {"Tenkaichi Budokai Online", "Create Room", "Join Room", "Searching", "Profile", "Profile", "Quick Match", "Train While Waiting",
-                             "Tenkaichi Budokai Online"};
+    char **title = sTbTitle;
 
     /* its capitals centred on the crest beside it (y 32); up to the player card */
     Tb_Heading(Tb_TitleLeft() + 44.0f, Tb_TextTop(32.0f, 1.3f), title[sTb->mode], 1.3f, 248.0f, 0x80);
@@ -2331,6 +2509,7 @@ s32 PortTbo_Run(void) {
             Tb_BlockUpdate(live);
             break;
         }
+        Tb_Speak();
         Tb_PageSet();
         Tb_Backdrop();
         IconWin_Draw(); /* the clouds in the corners, the emblem, the line under the title */
