@@ -1349,8 +1349,14 @@ static void Tb_Icon(s32 id, f32 cx, f32 cy, f32 height, s32 alpha) {
     Tb_Stand(id, cx, cy + height * 0.5f, height, alpha);
 }
 
-/* Goten and Trunks in a pose (TBO_HOSTS_*), standing on `feet` around `cx`, `height` units tall; they breathe. */
+/* The host in a pose (TBO_HOSTS_*), standing on `feet` around `cx`, `height` units tall; they breathe. The ones that
+   stand on the message box's line are drawn half behind it (the box is drawn over them, and is see-through): their
+   pictures run down to the foot of the screen. */
+#define TB_HOSTS_BOX_TOP 326.0f /* the top edge of the message box (the game's, MsgWin) */
 static void Tb_Hosts(s32 pose, f32 cx, f32 feet, f32 height) {
+    if (feet >= 300.0f) { /* (on the box's line) half the picture behind the box: its middle on the box's top edge */
+        feet = TB_HOSTS_BOX_TOP + height * 0.5f;
+    }
     Tb_Stand(pose, cx, feet + 2.0f * Tb_Beat(90) - 1.0f, height, 0x80);
 }
 
