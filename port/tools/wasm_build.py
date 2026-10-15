@@ -118,7 +118,7 @@ def game_object(f):
 # ImGui) is not built either: the page has its own settings panel, and port/src/web/web_ui.c is the engine's side of
 # ui.h for it. With that the browser build has no C++ at all. The crash handlers (plat_crash.c: signals, Windows
 # exceptions) are not built either: in the browser the page catches a crash, and web/web_crash.c gives it the context.
-WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c", "plat_crash.c"}
+WASM_SKIP = {"net.c", "net_io.c", "net_match.c", "net_relay.c", "gs_gpu.c", "plat_crash.c"}
 HARD = {"plat_libm.c", "plat_fastvec.c"}  # host floats on purpose (undefined.py)
 SDL = ["-sUSE_SDL=3"]
 # Renderer back ends that exist only in the browser build: in port/src/web/, compiled with the renderer's flags and

@@ -59,6 +59,7 @@ enum { NET_VERSION = 4, IN_HEAD = 44 }; /* 3 (0.1.15): the host's battle rules t
    in their head; the goodbye can say why. */
 static int sVersionBad; /* the other side answered with another version */
 static const uint32_t kVersion = NET_VERSION;
+#include "net_io.h"
 #include "net_match.h"
 #include "net_relay.h"
 #include "net_chat.h"
@@ -336,7 +337,7 @@ static void net_send(const void *buf, int n, const struct sockaddr_in *to) {
     if (Relay_IsPeer(to)) {
         sStatOutVia++;
         Relay_Send(sSock, buf, n, to);
-    } else if (sendto(sSock, (const char *)buf, n, 0, (const struct sockaddr *)to, sizeof(*to)) != n) {
+    } else if (NetIo_SendTo(sSock, buf, n, to) != n) {
         sStatErr++;
     }
 }
@@ -345,9 +346,8 @@ static int net_recv(uint8_t *pkt, int size, struct sockaddr_in *from) {
     Relay_Tick(sSock);
     net_stat();
     for (;;) {
-        socklen_t fromLen = sizeof(*from);
         uint8_t *data = NULL;
-        int len = 0, n = (int)recvfrom(sSock, (char *)pkt, size, 0, (struct sockaddr *)from, &fromLen), kind;
+        int len = 0, n = NetIo_RecvFrom(sSock, pkt, size, from), kind;
         if (n <= 0) {
             return n;
         }
@@ -713,16 +713,7 @@ static void net_start(int role, const char *host, const char *join) {
         sSock = sHandSock;
         sHandSock = -1;
     } else {
-#ifdef _WIN32
-        WSADATA w;
-        u_long on = 1;
-        WSAStartup(MAKEWORD(2, 2), &w);
-        sSock = (int)socket(AF_INET, SOCK_DGRAM, 0);
-        ioctlsocket(sSock, FIONBIO, &on);
-#else
-        sSock = socket(AF_INET, SOCK_DGRAM, 0);
-        fcntl(sSock, F_SETFL, fcntl(sSock, F_GETFL, 0) | O_NONBLOCK);
-#endif
+        sSock = NetIo_Open();
     }
     sMe = sMode - 1;
     if (getenv("BT3_NET_LOCALPORT") != NULL && sCodeLocalPort == 0) { /* (across the restart into the session) */
@@ -797,7 +788,7 @@ static void net_start(int role, const char *host, const char *join) {
     if (sMode == 1) {
         seed_draw();
         local.sin_port = htons((uint16_t)atoi(host));
-        if (!sFromLobby && bind(sSock, (struct sockaddr *)&local, sizeof(local)) != 0) {
+        if (!sFromLobby && NetIo_Bind(sSock, &local) != 0) {
             fprintf(stderr, "bt3: net: cannot use port %s\n", host);
             exit(2);
         }
@@ -825,7 +816,7 @@ static void net_start(int role, const char *host, const char *join) {
             /* a match found with a room code: from the port the lobby used, so that the routers on the way keep
                taking this for the same conversation */
             local.sin_port = htons((uint16_t)sCodeLocalPort);
-            bind(sSock, (struct sockaddr *)&local, sizeof(local));
+            NetIo_Bind(sSock, &local);
         }
         /* The address is only printed when the player typed it. One that came from the matchmaking service (a
            room code, a quick match) is the other player's, and logs get pasted into bug reports. */
@@ -1395,7 +1386,7 @@ void Port_NetSessionBegin(int role, const char *address, int port) {
     snprintf(host, sizeof(host), "%d", port);
     snprintf(join, sizeof(join), "%s:%d", address, port);
     if (sSock >= 0) {
-        closesocket(sSock);
+        NetIo_Close(sSock);
         sSock = -1;
     }
     sSession = 1;
@@ -1406,7 +1397,7 @@ void Port_NetSessionBegin(int role, const char *address, int port) {
 void Port_NetSessionEnd(void) {
     Relay_Close(sSock);
     if (sSock >= 0) {
-        closesocket(sSock);
+        NetIo_Close(sSock);
         sSock = -1;
     }
     sMode = 0;
@@ -1469,24 +1460,13 @@ int Port_LobbyStart(int host, const char *address, int port) {
     struct sockaddr_in local;
 
     if (sHandSock >= 0) { /* (a session that was asked for and never began) */
-        closesocket(sHandSock);
+        NetIo_Close(sHandSock);
         sHandSock = -1;
     }
     if (sSock >= 0) {
-        closesocket(sSock);
+        NetIo_Close(sSock);
     }
-#ifdef _WIN32
-    {
-        WSADATA w;
-        u_long on = 1;
-        WSAStartup(MAKEWORD(2, 2), &w);
-        sSock = (int)socket(AF_INET, SOCK_DGRAM, 0);
-        ioctlsocket(sSock, FIONBIO, &on);
-    }
-#else
-    sSock = socket(AF_INET, SOCK_DGRAM, 0);
-    fcntl(sSock, F_SETFL, fcntl(sSock, F_GETFL, 0) | O_NONBLOCK);
-#endif
+    sSock = NetIo_Open();
     sCodeMode = 0;
     sCodeVia = 0;
     sCodeLocalPort = 0;
@@ -1504,7 +1484,7 @@ int Port_LobbyStart(int host, const char *address, int port) {
         local.sin_family = AF_INET;
         local.sin_addr.s_addr = htonl(INADDR_ANY);
         local.sin_port = htons((uint16_t)port);
-        if (bind(sSock, (struct sockaddr *)&local, sizeof(local)) != 0) {
+        if (NetIo_Bind(sSock, &local) != 0) {
             sLobby = -1;
         }
     } else {
@@ -1525,13 +1505,12 @@ static int sQuickQueue = -1; /* Port_LobbyStartQuick: the search that Port_Lobby
 
 int Port_LobbyStartCode(int host, const char *code) {
     struct sockaddr_in local;
-    socklen_t len = sizeof(local);
 
     Port_LobbyStart(1, "", 0); /* a socket on a port of the system's choosing */
     if (sLobby < 0) {
         return sLobby;
     }
-    if (getsockname(sSock, (struct sockaddr *)&local, &len) != 0) {
+    if (NetIo_LocalAddr(sSock, &local) != 0) {
         sLobby = -1;
         return sLobby;
     }
@@ -1574,7 +1553,7 @@ void Port_LobbyCancel(void) {
     }
     Relay_Close(sSock);
     if (sSock >= 0) {
-        closesocket(sSock);
+        NetIo_Close(sSock);
         sSock = -1;
     }
     sLobby = 0;
@@ -1791,7 +1770,7 @@ void Port_LobbyLaunch(void) {
     if (sCodeMode && Port_SessionCan()) {
         sHandSock = sSock; /* the session goes on with this socket (see sHandSock) */
     } else {
-        closesocket(sSock);
+        NetIo_Close(sSock);
     }
     sSock = -1;
     sLobby = 0;
