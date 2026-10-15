@@ -252,7 +252,7 @@ values:
    `BT3_NET_HOST=1` against `BT3_NET_JOIN=127.0.0.1:1` moved those addresses by 16 bytes (5 bytes of the state differ,
    found with `BT3_HASH_AT`); with settings of equal length every one of the 7,384 pages of the state is the same. The
    test now gives both pages settings of equal length.
-2. **Intermittent, unexplained: one stack address.** In some runs of the clean scenario (not in others: 2 of 3, then
+2. **Intermittent, unexplained at the time** (explained and fixed since: "P2 recheck" below; not a stack address). In some runs of the clean scenario (not in others: 2 of 3, then
    0 of 2, then 0 of 1), one 4-byte value of `gFileReq` (the game's file request queue, `include/sys/file.h`) differs
    for 2 to 4 blanks at a time, 4 to 24 blanks in a run, after which the two copies are the same again. The values
    (`0x1E1410F0` against `0x1E140BF8`) are addresses in the C stack: the game stored the address of a buffer while
@@ -315,6 +315,73 @@ screenshots identical to 0.1.35; the ten page tests pass.
 Not covered: a real network or two machines; a player relaunched while the other is not (one page reloads, the other
 waits: net.c's own time-outs apply, not tested here); sound after a relaunch without a click (the browser may keep it
 muted until one: headless Chrome here allows autoplay).
+
+### P2 recheck (2026-10-15): the four-byte difference explained and fixed
+
+**What differed.** Two shapes, both one 4-byte word, every other byte of the state equal:
+- *bursts* (clean scenario, some runs): `gFileReq.adxf` (the game's file request queue, `include/sys/file.h`) for the
+  2 to 4 blanks a read is in flight, e.g. `0x1E563520` against `0x1E5640C0`; all 32 queue entries equal;
+- *persistent* (loss scenario, about 1 run in 2, from blank 1028 on): the first word of a 248-byte game heap block
+  allocated at blank 1027 and freed at blank 1299 (`0x1E150C50` against `0x1E156C90`), kept afterwards as stale data
+  in free heap space, which the checksum covers.
+
+**Where the value comes from.** Temporary logging (removed again) of every `Port_LowAlloc` and every game heap block,
+in both pages: both values are exactly `Port_LowAlloc` block 17 of its page, 140 bytes: a `PortFile`, the handle
+`ADXF_Open` returns (`plat_file.c`). Both pages made the same 23 `Port_LowAlloc` requests in the same order and
+sizes, and the same game heap allocations (sizes, addresses, blanks); only the addresses `calloc` chose differed. The
+game uses the handle opaquely (tests for NULL, passes it back to `ADXF_*`), never computes with it.
+
+**Classification: a process-local pointer, not a divergence of the game.** `calloc`'s layout follows everything else
+the page allocated (the environment's text, the renderer's, timing), so the two peers got different addresses for
+the same handle. The fight values agreed, the networked demo fight equals the offline one, and `net.c`'s sync check
+never fired. **Correction:** P2's finding 2 called these "addresses in the C stack": that came from reading the dump
+without its region headers (each region of `BT3_HASH_AT`'s `.dump` is preceded by a line "what address size"); read
+correctly they are the port's block addresses. P2's finding 1 (settings of different length) was the same thing.
+
+**Upstream's rule.** Upstream met this natively and solved it in `Port_LowAlloc` for its 64-bit builds
+(`PORT_LOW_REGION`): one region at a fixed address, handed out in order, freed blocks reused by size, "so that the
+addresses depend only on the order of the requests". Its checksum (`Port_StateHash`) covers the game's variables and
+heap, not that region; saved states (rollback) add it (`Port_StateExtra`). Its 32-bit build uses `calloc` and has
+the same difference.
+
+**Fix.** The browser build uses upstream's allocator (`plat_mem.c`, `PORT_LOW_ORDERED` = `PORT_LOW_REGION` or the
+browser), from a fixed range of linear memory: 64 MB at `0x08000000`, between the PS2's 32 MB and its hardware
+registers, which nothing else uses (checked at start like the PS2 regions). The browser's 23 requests take under
+1 MB. What the checksum covers is unchanged; nothing is masked or normalised. The browser gets only the allocator:
+`Port_GameBigAlloc`, `Port_StateExtra` and `Port_LowRegionSize` stay as they were (64-bit only). Native builds compile
+the same code with renamed guards. O2 no longer needs settings of equal length and is back to the natural
+`BT3_NET_HOST=1` / `BT3_NET_JOIN=127.0.0.1:1`.
+
+Also fixed on the way: `port/tools/wasm_sig.py` reused an earlier repair (`.sig.ll`) of an object as the starting
+point of the next one, which kept a stale signature (found when a stub was replaced by the real function); repairs
+now always start from the unrepaired IR and are measured against the object as compiled (`<name>.o.orig`).
+
+**Results after the fix** (two headless Chrome pages on one machine, scripted input; the checksum is the whole state:
+the game's variables and heap, every blank):
+
+| Runs | Blanks each | Rate | Host = joiner, whole state | Desync |
+|---|---|---|---|---|
+| clean, delay 2, 5 runs + 1 in the full O2 | 4,411 | 58.8 / s | every blank, all 6 runs | none |
+| 10% loss, 100 ms latency, delay 2, 5 runs + 1 | 1,852 | 24.7 / s | every blank, all 6 runs (before: about 1 in 2 differed) | none |
+| attract demo fight, delay 2 (full O2) | 4,428 (4,242 fighting) | 59.0 / s | every blank | none |
+| the same fight offline | | | fight values equal at every blank | |
+
+"Whole state" is the game's variables and heap, byte for byte; it is not the whole of each process's memory (the
+port's block region, the renderer, the page and the C library's heap are not compared, natively either).
+
+Browser regressions: demo trace `8ad198bf58dbed33` and 12 of 12 screenshots identical to 0.1.35.2 on WebGL 2 and on
+WebGPU; boot 12 of 12 on both; page tests dashboard, controllers, touch, start options, saves, extras, audio,
+controller picture, connection notifications: pass; O3 10 of 10 cycles (one earlier O3 run failed, at the page's
+data check after a reload, while the native check's Docker image was being built on the same machine; run alone it
+passed).
+
+Native (`port/tests/native/compare.sh`, Docker release image, Linux x86-64; the Windows builds compiled, not run):
+pre-P2 `da638d3` against P2 `481f12c` (`state.c`), P2 against P3 `e32a829` (`net.c`), and `3cdb91f` against the fix
+`c107e78` (`plat_mem.c`): all three pairs identical: the headless demo trace (70 lines), the OpenGL trace and 4
+screenshots, the Vulkan trace and 15 screenshots. **Not run:** the native network scenarios (`net_compare.sh`) after
+P1; started, then stopped on request before any result. P1's own run (`da638d3`) is the last native network result.
+
+Not covered: a real network or two machines (P4 / P6).
 
 ## 7. Later, and why
 
