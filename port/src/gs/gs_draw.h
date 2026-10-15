@@ -212,6 +212,9 @@ typedef struct GsPipeState {
     GsVertexSource vertices;
     int tablePass;       /* the full-screen table pass: blend and write mask only, no vertices, no depth */
     int noFragDepth;     /* gs.frag without its depth output (gsnz.frag): see GsPipeState_FragDepthRedundant */
+    int shadow;          /* the flat-shadow stencil mask (upstream PR 104): a pixel is drawn only where the stencil is 0, and
+                            the stencil is then raised, so overlapping triangles of one shadow darken it once; the back
+                            end clears the stencil where a run of such draws starts on a target */
 } GsPipeState;
 
 /* gs_pipekey.c. FromGs: the state of a draw from the GS registers of its context (ALPHA, PRIM.ABE, TEST, ZBUF, the

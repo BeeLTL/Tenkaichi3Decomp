@@ -18,6 +18,7 @@ with its licence, and the list `fonts.tsv`:
 
 ```
 # file <tab> name in the list <tab> use: 1 = Menu font, 2 = Dialogue / UI font, 3 = both
+fira/FiraSansCondensed-Bold.ttf	Fira Sans Condensed Bold	1
 dejavu/DejaVuSansCondensed-Bold.ttf	DejaVu Sans Condensed Bold	1
 dejavu/DejaVuSansCondensed.ttf	DejaVu Sans Condensed	2
 ```
@@ -34,8 +35,10 @@ bt3: font "DejaVu Sans Condensed Bold" (fonts/dejavu/DejaVuSansCondensed-Bold.tt
 the file (the file is cut short or damaged). The setting is back on "Original".
 ```
 
-Bundled: DejaVu Sans Condensed for Dialogue / UI and Condensed Bold for menus (Bitstream Vera licence,
-`dejavu/LICENSE`).
+Bundled: Fira Sans Condensed Bold for menus (SIL Open Font License 1.1, `fira/OFL.txt`; the first Menu font of
+the list, so the one Tenkaichi Budokai Online's headings and buttons are written in while the setting is on
+"Original": of the bundled fonts, the nearest to the lettering of the game's menus), DejaVu Sans Condensed for
+Dialogue / UI and Condensed Bold for menus (Bitstream Vera licence, `dejavu/LICENSE`).
 
 ## The menu labels
 

@@ -3132,7 +3132,8 @@ Two settings in F1 > UI, both "Original" unless chosen:
   hands the renderer the game's glyph table; the renderer packs the new glyphs into an atlas of its own and moves
   the sprite's texture coordinates there. The game's placement, line breaks, colours and shadows are untouched.
 
-The bundled fonts (DejaVu Sans Condensed for Dialogue / UI and Condensed Bold for menus, with their licence) are in
+The bundled fonts (DejaVu Sans Condensed for Dialogue / UI and Condensed Bold for menus, with their licence; later
+Fira Sans Condensed Bold for menus, under the SIL Open Font License: see the section on Tenkaichi Budokai Online) are in
 `port/third_party/fonts`, with the list `fonts.tsv`; a release has them as `fonts/`.
 
 What was changed on top of the pull request:
@@ -3376,3 +3377,62 @@ Not checked: with a window on a real display, and by feel; the sound (the game's
 and those now come two at once in a fight); V-sync on; Windows and macOS; a machine too slow to compute and show
 a tick in time, where the picture then comes late instead of the game's start of the tick.
 
+
+## Tenkaichi Budokai Online: lettered like the game's menus (2026-10-14)
+
+The main menu's labels are not written in a font: every one is a picture on the disc (two label sheets per plate
+state, 512 x 256 and 512 x 128, eight bits with a 256-colour table, eight rows of 32 on the first and three used of
+four on the second). The PC's item "Tenkaichi Budokai Online" goes into the free fourth row of the second sheet of
+each state (src/menu/menu_a.c).
+
+Its label is now put together at start from the letters of the other ten labels of the player's own disc, with the
+letter cutter the names of added stages use (port/src/gs/namefont.c, run on the files by menu_labels.c,
+MenuLabels_MainItem). The main menu's labels have every letter it needs but the k; that one is lent from the stage
+select's names (Rocky, Lookout) and brought to the menu's size, as namefont.c already does between the stage and the
+song names. Read from archives 448 and 449 (size and CRC checked), the job takes about 60 ms in a thread of its own
+started with the first frame; the main menu waits for it if it is not done. The picture is turned into the sheet's
+own palette indices (the nearest colour of its table, alpha first) and written into the row. Composed again,
+"Dragon Net Battle" cannot be told from the disc's. Nothing of the disc is in the repository: the letters exist in
+memory only. With another edition of the game (archives that are not the USA release's) the label of
+port_tbo_label.h is written instead, as before.
+
+With a Menu font chosen, the item stayed in the disc's lettering, and so did the three labels on the same sheet
+(Character Reference, Options, Shenron): menu_text.c finds a sheet by a hash of all its pixels, and the list of labels
+had hashed the disc's sheet, without the item. (This was so from the start, with port_tbo_label.h too.) The list now
+writes the item into that sheet as the game writes it (the same nearest colours of the sheet's table,
+MenuLabels_ItemPixels, used by both), hashes that, and lists the item as the sheet's twelfth label; its version is
+v8, so an older list is made again.
+
+A room match found on these screens opened the screens again instead of the character select (seen by the user,
+two copies on one machine: both logs say "the start-up is over ... the character select", then the hub, then the
+session ended when it was left for the main menu). The session puts the game back to its first moment and goes to
+mode 39 (headless.c), and Duel_Main runs these screens whenever gPortDuelRole is 6: the role, set when the item was
+chosen and cleared only after the screens return, was still 6 in the session, so it is not among what the session
+puts back. Duel_Main now clears it in a session.
+
+The screen reader said nothing on these pages (reported by a tester with speech on): port/src/a11y_game.c reads each
+of the game's own screens from its state, and these pages drew their text as pictures of their own. Now the hosts'
+line is written by the game's own text box in the game's message window (battle/view_a_b.c, MsgWin_PortDrawString:
+TextBox_AttachString, the game's font and place), which the reader already reads as the game's lines; one or two
+lines start at the same height (the box's line offsets, MsgWin_PortSameTop), as before. And the pages say the rest
+themselves (port_tbo.c, Tb_Speak): the title as a page opens, what the cursor is on with its value, a keypad's key,
+the code (letter by letter) or name typed so far, the room's code while searching, the notes. Checked with
+BT3_A11Y_LOG (what would be said, into a file; the user went through the hub, Quick Match, Create Room and Join
+Room): the titles, every item with its value, the box's lines, the keys and the code as typed were all said. One fix
+from it: what was typed and where the cursor went in the same blank are one line (two in one blank, the second cut
+the first: the cursor's jump to JOIN after the sixth letter was lost). Not heard with a speech library here.
+
+Also learnt on the way (how menus are made is in [menus.md](menus.md)): the message box is drawn after the
+hosts and is see-through, so a host picture cut off at its edge shows the cut through the box (the announcer looked
+legless until his picture was made to run down behind the box to the foot of the screen); and a game file that
+fails to compile still lets the program link, with that file's old object (menu_labels.c once: "link OK", but one
+stub more than before). Look for `error:` in the build's output, not only for "link OK".
+
+The lines of the online screens themselves cannot be made that way: names, room codes and the hosts' lines need
+every character, which the disc's labels do not have. They keep being written with the Menu font. Measured against
+the disc's letters (cap height, widths of "Dragon Net Battle" and "Ultimate Training"), the game's lettering is a
+bold, slightly condensed humanist sans, not a rounded one; of the open fonts tried (DejaVu Sans Condensed Bold, Fira
+Sans Bold, Condensed Bold and Condensed ExtraBold, Noto Sans Bold), Fira Sans Condensed Bold is the nearest in
+proportions and shapes. It is bundled (port/third_party/fonts/fira, SIL Open Font License 1.1, from Mozilla's Fira
+release 4.301) and first in fonts.tsv, so it is the font of those screens while the Menu font setting is on
+"Original". Saved choices are kept by the file's path, so adding it at the top moved no one's setting.

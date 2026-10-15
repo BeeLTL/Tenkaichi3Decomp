@@ -374,8 +374,8 @@ static int capture_event(const SDL_Event *ev) {
 
 /* ---- ui.h --------------------------------------------------------------------------------------------------- */
 
-int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
-    (void)window; (void)device; (void)gl_context;
+int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const char *gpu_name) {
+    (void)window; (void)device; (void)gl_context; (void)gpu_name; /* (the page shows the GPU's name itself: dashboard.js) */
     sEventType = SDL_RegisterEvents(1);
     if (sEventType == 0) {
         fprintf(stderr, "bt3: no SDL event for the page's settings: %s\n", SDL_GetError());

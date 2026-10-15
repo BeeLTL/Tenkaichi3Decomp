@@ -18,6 +18,7 @@
 #define KEY_VERTICES_SHIFT 20
 #define KEY_TABLE_PASS_SHIFT 22
 #define KEY_NO_FRAG_DEPTH_SHIFT 23
+#define KEY_SHADOW_SHIFT 24 /* (upstream 0.1.35.2: the flat-shadow stencil mask) */
 #define KEY_BLEND_K_MASK 7u /* GsBlendK */
 #define KEY_TWO_BITS 3u     /* GsBlendC, GsDepthTest, GsTopology, GsVertexSource */
 #define KEY_WRITE_MASK_ALL (GS_CC_R | GS_CC_G | GS_CC_B | GS_CC_A)
@@ -109,7 +110,7 @@ uint32_t GsPipeKey_Encode(const GsPipeState *s) {
     }
     return key | (uint32_t)s->depthTest << KEY_DEPTH_TEST_SHIFT | (uint32_t)s->depthWrite << KEY_DEPTH_WRITE_SHIFT |
            (uint32_t)s->topology << KEY_TOPOLOGY_SHIFT | (uint32_t)s->vertices << KEY_VERTICES_SHIFT |
-           (uint32_t)(s->noFragDepth != 0) << KEY_NO_FRAG_DEPTH_SHIFT;
+           (uint32_t)(s->noFragDepth != 0) << KEY_NO_FRAG_DEPTH_SHIFT | (uint32_t)(s->shadow != 0) << KEY_SHADOW_SHIFT;
 }
 
 void GsPipeKey_Decode(uint32_t key, GsPipeState *s) {
@@ -124,6 +125,7 @@ void GsPipeKey_Decode(uint32_t key, GsPipeState *s) {
     s->vertices = (GsVertexSource)((key >> KEY_VERTICES_SHIFT) & KEY_TWO_BITS);
     s->tablePass = (int)((key >> KEY_TABLE_PASS_SHIFT) & 1u);
     s->noFragDepth = (int)((key >> KEY_NO_FRAG_DEPTH_SHIFT) & 1u);
+    s->shadow = (int)((key >> KEY_SHADOW_SHIFT) & 1u);
 }
 
 static GsBlendFactor blend_factor(GsBlendK k) {

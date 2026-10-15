@@ -299,6 +299,14 @@ def link():
         write_stubs()
     for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
         (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
+    # Tenkaichi Budokai Online's pictures (port/tbo/ui, with their credits): the page puts them at /tbo/ui in the game's
+    # file system (the program's folder is "/"), where gs_draw.c tbo_texture looks; files.txt lists them for it
+    tbo = WEB / "tbo/ui"
+    tbo.mkdir(parents=True, exist_ok=True)
+    names = sorted(f.name for f in (ROOT / "port/tbo/ui").iterdir() if f.is_file())
+    for name in names:
+        (tbo / name).write_bytes((ROOT / "port/tbo/ui" / name).read_bytes())
+    (tbo / "files.txt").write_text("\n".join(n for n in names if n.endswith(".png")) + "\n", newline="\n")
     if r.returncode == 0:  # the game's variables in bt3.wasm, for state.c's checksum (bt3.mem; wasm_state.py)
         st = run([sys.executable, str(ROOT / "port/tools/wasm_state.py")])
         print((st.stdout or st.stderr).strip())

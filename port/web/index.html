@@ -407,6 +407,11 @@ async function start() {
   // where the game's own variables lie in bt3.wasm (port/tools/wasm_state.py): what state.c's checksum covers
   // (BT3_HASH, online play's sync check). Without it the checksum covers the game's heap only, and says so.
   const stateList = await fetch('bt3.mem').then((r) => (r.ok ? r.arrayBuffer() : null), () => null);
+  // Tenkaichi Budokai Online's pictures (port/tbo/ui): put at /tbo/ui, where the game looks for them (gs_draw.c)
+  const tboNames = await fetch('tbo/ui/files.txt').then((r) => (r.ok ? r.text() : ''), () => '');
+  const tboFiles = await Promise.all(tboNames.split('\n').filter(Boolean).map((n) =>
+    fetch('tbo/ui/' + n).then((r) => (r.ok ? r.arrayBuffer() : null), () => null).then((b) => [n, b])));
+  if (tboNames && tboFiles.some(([, b]) => !b)) log(`tbo: ${tboFiles.filter(([, b]) => !b).length} of its pictures could not be fetched`);
   s(`fetched ${early.map((r) => `${r} (${pre[r].length} bytes)`).join(', ')}`, 'ok');
   s = step('compiling and instantiating bt3.wasm');
   const t0 = performance.now();
@@ -424,6 +429,8 @@ async function start() {
           m.FS.writeFile(path, pre[rel]);
         }
         if (stateList) m.FS.writeFile('/bt3.mem', new Uint8Array(stateList));
+        if (tboFiles.length) m.FS.mkdirTree('/tbo/ui');
+        for (const [n, b] of tboFiles) if (b) m.FS.writeFile('/tbo/ui/' + n, new Uint8Array(b));
         Object.assign(m.ENV, env);
         Bt3Settings.restore(m.FS);  // the settings saved by an earlier visit
         settings.attach(m);
