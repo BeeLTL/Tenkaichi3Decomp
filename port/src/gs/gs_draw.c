@@ -1710,6 +1710,7 @@ void GsGpu_GetSettings(PortVideo *v) {
     v->texPack = sTexPackOn;
     v->texPackCount = TexPack_Count();
     v->menuFont = MenuText_GetFont();
+    v->battleFont = MenuText_GetBattleFont();
     v->textFont = MenuText_GetSharedFont();
     v->smooth2d = sSmooth2d;
     v->vsync = Port_Setting("vsync", 0) != 0;
@@ -1754,7 +1755,9 @@ void GsGpu_SetSettings(const PortVideo *v) {
     sDisplaySetting = v->display;
     sTexPackOn = v->texPack != 0;
     MenuText_SetFont(v->menuFont);
+    MenuText_SetBattleFont(v->battleFont);
     MenuText_SetSharedFont(v->textFont);
+    Port_SettingSave("battle_font_id", MenuText_BattleFontIdToSave());
     Port_SettingSave("text_font_id", MenuText_FontId(MenuText_GetSharedFont()));
     Port_SettingSave("menu_font_id", MenuText_FontIdToSave());
     sSmooth2d = v->smooth2d != 0;
@@ -1822,6 +1825,7 @@ int GsGpu_Init(void) {
     gsFxOff = (unsigned)(getenv("BT3_FX_OFF") != NULL ? atoi(getenv("BT3_FX_OFF")) : Port_Setting("fx_off", 0)) & 63;
     gsGlowPercent = getenv("BT3_GLOW") != NULL ? atoi(getenv("BT3_GLOW")) : Port_Setting("glow", GLOW_DEFAULT);
     MenuText_SetFontId(Port_Setting("menu_font_id", 0));
+    MenuText_SetBattleFontId(Port_Setting("battle_font_id", 0));
     MenuText_SetSharedFontId(Port_Setting("text_font_id", 0));
     sTexPackOn = Port_Setting("texture_pack", 1) != 0;
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;
