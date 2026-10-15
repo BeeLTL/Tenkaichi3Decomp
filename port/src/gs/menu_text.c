@@ -1057,7 +1057,9 @@ static int menu_text_row(Face *font, const MenuLabel *label, int resolution, Row
     float *faceDistance = NULL;
     int *sites = NULL;
     Ink *ink;
-    const Face *face = label->fontFace ? &sBattleFont : &sFont;
+    /* (the font asked for: the Menu font for the menus' labels, the PC screens' own for their headings; drawing
+       those from sFont, which is empty while the Menu font is "Original", read outside the font's file) */
+    const Face *face = label->fontFace ? &sBattleFont : font;
     int glyphs[256], len = menu_text_codes(face, label->text, glyphs);
     int i, x, y, c, advance, bearing, previous = 0, width = 0, ok = 0;
     int w = label->rowWidth * resolution, h = label->rowHeight * resolution, count;
