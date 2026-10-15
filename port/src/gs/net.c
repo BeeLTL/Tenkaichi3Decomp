@@ -1319,6 +1319,11 @@ static void relaunch(int role, const char *join, int port) {
     if (CreateProcessA(exe, NULL, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
         ExitProcess(0);
     }
+#elif defined(__EMSCRIPTEN__)
+    {   /* the browser: the page loads itself again with these variables (port/src/web/net_web.c); does not return */
+        extern void WebNet_Relaunch(void);
+        WebNet_Relaunch();
+    }
 #elif defined(__APPLE__)
     {
         extern int _NSGetExecutablePath(char *buf, uint32_t *size); /* <mach-o/dyld.h> */

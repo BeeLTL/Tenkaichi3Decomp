@@ -87,6 +87,41 @@ void NetIo_Close(int h) {
     sLastToSet = 0; /* (the connection is the page's: it stays for the next session) */
 }
 
+/* ---- a session starts and ends by starting the program again (net.c relaunch): the page loads itself again ----
+   relaunch() has just set the environment the next program needs (BT3_NET_HOST / _JOIN, BT3_NET_SESSION, BT3_SAVES,
+   BT3_SOUND_TICKS, ...) or taken it away (the end of a session). Here every BT3_* variable goes to the page
+   (`bt3Net.relaunch`), which keeps them in the tab's session storage and loads itself again: the new page starts the
+   game with them at once (index.html). As natively, nothing of this program goes on: the game waits here until the
+   page is replaced. Only on the game's own thread (it waits). */
+extern char **environ;
+EM_JS(void, web_net_relaunch, (const char *env), {
+    globalThis.bt3Net.relaunch(UTF8ToString(env));
+});
+
+void WebNet_Relaunch(void) {
+    static char text[8192];
+    size_t used = 0;
+    char **e;
+
+    text[0] = '\0';
+    for (e = environ; e != NULL && *e != NULL; e++) {
+        size_t n = strlen(*e);
+        if (strncmp(*e, "BT3_", 4) != 0 || used + n + 2 > sizeof(text)) {
+            continue;
+        }
+        memcpy(text + used, *e, n);
+        used += n;
+        text[used++] = '\n';
+        text[used] = '\0';
+    }
+    fprintf(stderr, "bt3: net: the page starts the game again%s\n", strstr(text, "BT3_NET_SESSION=1") != NULL ? " for the session" : "");
+    fflush(NULL);
+    web_net_relaunch(text);
+    for (;;) {
+        emscripten_sleep(1000); /* (the page is being replaced) */
+    }
+}
+
 /* ---- no relay: WebRTC does its own (net_relay.h) ---- */
 int Relay_Allocate(int sock, const char *server, const char *username, const char *password, char *out, int size) {
     (void)sock; (void)server; (void)username; (void)password; (void)out; (void)size;

@@ -166,6 +166,10 @@ static int get_unlock_done(void) { return gPortUnlockDone; }
 /* (the unlock is carried out only with a save loaded: headless.c drops the request otherwise) */
 static int get_save_loaded(void) { return gSaveData != NULL; }
 static int get_frame(void) { return (int)gGsFrame; }
+/* online play (net.c): a match is on; it is a session (started from a lobby); the session's start-up is over (the
+   character select is reached: headless.c Port_NetArrived) */
+extern int Port_NetActive(void), Port_NetSession(void), Port_NetWarp(void);
+static int get_net_arrived(void) { return Port_NetSession() && !Port_NetWarp(); }
 static int get_vblanks(void) { return (int)gPortLiveBlanks; }
 static int get_interp_shown(void) { return (int)gInterpShown; }
 static int get_webgpu_errors(void) { return (int)GsWgpu_DeviceErrors(); }
@@ -213,6 +217,9 @@ static const struct {
     {"unlock_done", get_unlock_done, NULL},
     {"save_loaded", get_save_loaded, NULL},
     {"frame", get_frame, NULL},
+    {"net_active", Port_NetActive, NULL},
+    {"net_session", Port_NetSession, NULL},
+    {"net_arrived", get_net_arrived, NULL},
     {"vblanks", get_vblanks, NULL},
     {"interp_shown", get_interp_shown, NULL},
     {"webgpu_errors", get_webgpu_errors, NULL},
@@ -236,7 +243,7 @@ static int setting_index(const char *name) {
 
 /* ---- the queue of changes ------------------------------------------------------------------------------------- */
 
-typedef enum { REQ_SETTING, REQ_UNLOCK_ALL, REQ_RESET_CONTROLS, REQ_RESET_KEYS, REQ_RESET_PADS, REQ_SCREENSHOT } RequestKind;
+typedef enum { REQ_SETTING, REQ_UNLOCK_ALL, REQ_RESET_CONTROLS, REQ_RESET_KEYS, REQ_RESET_PADS, REQ_SCREENSHOT, REQ_NET_LAUNCH } RequestKind;
 static struct {
     RequestKind kind;
     int index, value;
@@ -296,6 +303,7 @@ static void queue_apply(void) {
         case REQ_RESET_KEYS:
         case REQ_RESET_PADS: reset_half(sQueue[i].kind == REQ_RESET_KEYS, sQueue[i].value); break;
         case REQ_SCREENSHOT: screenshot(); break;
+        case REQ_NET_LAUNCH: { extern void Port_LobbyLaunch(void); Port_LobbyLaunch(); } break; /* (does not return) */
         }
     }
     sQueued = 0;
@@ -616,8 +624,22 @@ EMSCRIPTEN_KEEPALIVE int Bt3Ui_Action(const char *name, int arg) {
     if (strcmp(name, "reset_keys") == 0) { return queue_push(REQ_RESET_KEYS, 0, arg & 1); }
     if (strcmp(name, "reset_pads") == 0) { return queue_push(REQ_RESET_PADS, 0, arg & 1); }
     if (strcmp(name, "screenshot") == 0) { return queue_push(REQ_SCREENSHOT, 0, 0); }
+    if (strcmp(name, "net_launch") == 0) { return queue_push(REQ_NET_LAUNCH, 0, 0); }
     fprintf(stderr, "bt3: unknown settings action %s\n", name);
     return 0;
+}
+
+/* Online play's lobby (net.c, as the native window drives it), over the page's connection (net_web.c: one peer, the
+   address does not matter). Start: host (1) or join (0); then Poll until 2 (the other player is there) and the action
+   "net_launch", which starts the session on the game's own thread (the program starts again: the page reloads).
+   Poll: 0 idle, 1 waiting, 2 the other player is there, < 0 failed (-2: the other side is another release). */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_NetLobbyStart(int host) {
+    extern int Port_LobbyStart(int host, const char *address, int port);
+    return Port_LobbyStart(host, host ? NULL : "127.0.0.2", 1);
+}
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_NetLobbyPoll(void) {
+    extern int Port_LobbyPoll(void);
+    return Port_LobbyPoll();
 }
 
 /* The panel is open: neither the keyboard nor a controller reaches the game (gs_input.c), as with the native window. */

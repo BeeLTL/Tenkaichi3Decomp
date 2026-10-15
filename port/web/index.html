@@ -373,6 +373,9 @@ async function start() {
     // of its own, so the data folder's `textures` (read over HTTP, web_fs.c). ?env=BT3_TEXTURES=... names another.
     BT3_TEXTURES: 'gamedata/textures',
   };
+  // A relaunch (online play: a session starts or ends, net_web.js): the program's BT3_* variables as the old one left
+  // them replace the page's own, as the environment of a program started again; nothing of the address bar's ?env.
+  const relaunched = Bt3Net.takeRelaunch();
   // NAME=value,NAME=value; a part without "=" belongs to the value before it (BT3_PAD=2800:start,2950:cross)
   let last = null;
   for (const kv of (q.get('env') || '').split(',').filter(Boolean)) {
@@ -381,6 +384,12 @@ async function start() {
     last = kv.slice(0, i);
     env[last] = kv.slice(i + 1);
   }
+  if (relaunched) {
+    for (const k of Object.keys(env)) if (k.startsWith('BT3_')) delete env[k];
+    Object.assign(env, relaunched);
+    log(`online play: started again ${env.BT3_NET_SESSION === '1' ? 'for a session' : 'after a session'} (${Object.keys(relaunched).length} variables)`);
+  }
+  saves.sessionActive = env.BT3_NET_SESSION === '1';  // (a session has a card of its own, net_session: nothing to keep)
   let s = step('loading bt3.js');
   await new Promise((res, rej) => {
     const el = document.createElement('script');
@@ -455,7 +464,7 @@ checks().then((ok) => {
   btn.disabled = false;
   btn.textContent = 'Start';
   btn.onclick = () => start().catch((e) => stop('Start-up failed', (e && e.stack) || String(e)));
-  if (q.get('autostart')) btn.click();
+  if (q.get('autostart') || Bt3Net.relaunchPending()) btn.click();  // (a relaunch starts at once, as a program would)
 });
 </script>
 </body>

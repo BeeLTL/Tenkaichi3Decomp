@@ -14,6 +14,7 @@
 const NET_CHANNEL = { ordered: false, maxRetransmits: 0 };
 const NET_GATHER_MS = 5000;  // at most this long for the ICE candidates (then what there is)
 const NET_QUEUE_MAX = 4096;  // packets kept while the game does not take them (the oldest go first, as a full socket buffer)
+const NET_RELAUNCH_KEY = 'bt3.relaunch';  // (the tab's session storage: what a relaunch hands to the next page)
 
 class Bt3Net {
   constructor() {
@@ -93,6 +94,30 @@ class Bt3Net {
   }
 
   recv() { return this.queue.shift(); }
+
+  // The game starts a session, or ends one, by starting the program again (net.c relaunch, net_web.c): here the page
+  // loads itself again and starts the game at once with these variables ("NAME=value" lines, every BT3_* one the
+  // program had), as the next program would get them (index.html). The connection does not survive a reload: it is
+  // made again after it (P3: by the test; P4: the matchmaking service).
+  relaunch(envText) {
+    try { sessionStorage.setItem(NET_RELAUNCH_KEY, envText); } catch (e) { /* (no storage: the page starts as it was) */ }
+    this.close();
+    location.reload();
+  }
+
+  // index.html, at start: the variables of a relaunch (and forgets them), or null
+  static takeRelaunch() {
+    let text = null;
+    try { text = sessionStorage.getItem(NET_RELAUNCH_KEY); sessionStorage.removeItem(NET_RELAUNCH_KEY); } catch (e) { /* (none) */ }
+    if (text === null) return null;
+    const env = {};
+    for (const line of text.split('\n')) { const i = line.indexOf('='); if (i > 0) env[line.slice(0, i)] = line.slice(i + 1); }
+    return env;
+  }
+
+  static relaunchPending() {
+    try { return sessionStorage.getItem(NET_RELAUNCH_KEY) !== null; } catch (e) { return false; }
+  }
 }
 
 globalThis.bt3Net = new Bt3Net();

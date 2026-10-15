@@ -271,6 +271,51 @@ arrives instead of on a 5 ms timer: not needed for 59 blanks a second on one mac
 latency in P4); native builds (only `state.c` changed among shared files, inside `#ifdef __EMSCRIPTEN__`; not rebuilt
 natively in P2).
 
+### P3 (2026-10-15): starting a session in the page
+
+**Decision D3 changed: (b), the page loads itself again, not (a).** Looked at closer, recreating the game module in a
+live page means tearing down a module that is suspended in the middle of a call (JSPI), whose SDL and Emscripten
+listeners on the window and document keep its 400 MB alive, and re-attaching the page's own parts (settings, saves,
+controllers, dashboard): fragile, and against O3's "no growth over ten sessions". A reload is what `relaunch()` does
+natively (a fresh program, `execv`) and frees everything. Its cost: the WebRTC connection does not survive and is made
+again after the reload (in P3 by the test; in P4 by the matchmaking service, which keeps the room).
+
+**As built.**
+- `net.c` `relaunch()`: one branch, `#elif defined(__EMSCRIPTEN__)`, calls `WebNet_Relaunch()` (the only change to a
+  shared file in P3).
+- `net_web.c` `WebNet_Relaunch()`: every `BT3_*` variable of the program, as `relaunch()` has just set them (the
+  session's `BT3_NET_HOST` / `_JOIN`, `BT3_NET_SESSION`, `BT3_SAVES=net_session`, `BT3_SOUND_TICKS`, `BT3_NOMOVIE`, the
+  names, options, rules; or, at the end of a session, without them), to the page; then waits until the page is replaced.
+- `net_web.js` `relaunch()`: keeps them in the tab's session storage, closes the connection, reloads. `index.html`: a
+  page with such variables takes them in place of its own `BT3_*` ones (as a program started again gets its
+  environment) and starts the game at once.
+- `web_ui.c`: `Bt3Ui_NetLobbyStart(host)` / `Bt3Ui_NetLobbyPoll()` (net.c's address lobby, the native window's, over the
+  connection) and the action `net_launch` (`Port_LobbyLaunch` on the game's own thread, as the native window calls it);
+  read-only `net_active`, `net_session`, `net_arrived`.
+- `saves.js`: during a session (its card is `net_session/`) nothing is kept: the player's saves are not touched.
+
+**Test O3** (`port/tests/web/net_o3.js`), per cycle: both pages run the game normally, the test connects them; the
+lobby greets over the connection (both reach state 2); both launch, both pages load again for the session, the test
+connects them again; both reach the character select (`net_arrived`), no desync; the host backs out (Triangle /
+Circle held over a few blanks) to the main menu, which ends the session on both (`menu_a.c` `Port_NetLeave`, the other
+side told); both pages load again without a session. Each page's memory is measured at the title every cycle.
+
+**Results (2026-10-15):** `RESULT: PASS`, 10 cycles of 10: every one started (both pages relaunched for the session,
+connected again), reached the character select on both with no desync, and ended by backing out (both pages relaunched
+without a session). Memory at the title, MB, host / join: 571/578, 572/572, 573/573, 574/574, 575/575, 575/575,
+576/576, 577/577, 578/578, 579/579, 579/579: within the test's 15%, but rising about 0.8 MB a cycle although every
+cycle is a fresh page; probably the browser's own caches rather than the page, **not established**. The sessions did
+not write their card in these runs (0 times), so `saves.js`'s new guard was not exercised; the player's saves were not
+kept anew in any session page ("saves: kept" never logged there).
+
+After P3: O2 passes again (whole state equal at every blank in all three scenarios this run, 4,464 / 1,852 / 4,428
+blanks; the demo fight equals the offline one); demo trace `8ad198bf58dbed33` on both renderers and 48 of 48
+screenshots identical to 0.1.35; the ten page tests pass.
+
+Not covered: a real network or two machines; a player relaunched while the other is not (one page reloads, the other
+waits: net.c's own time-outs apply, not tested here); sound after a relaunch without a click (the browser may keep it
+muted until one: headless Chrome here allows autoplay).
+
 ## 7. Later, and why
 
 - **Rollback in the browser.** `state.c` restores the game thread's stack and registers (`ucontext` / `setjmp` and a
