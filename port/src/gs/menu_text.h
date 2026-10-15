@@ -9,10 +9,14 @@ extern "C" {
    an allocated texture `scale` times the size with the labels drawn from the font, or NULL when no row was
    replaced. Caller owns the result. Original pixels are never modified; output dimensions are set only on success. */
 uint8_t *MenuText_Render(const uint8_t *rgba, int width, int height, int indexed, int scale, int *outWidth, int *outHeight);
+/* Whether the original indexed texture contains a Battle font label, also when Battle font is on Original. */
+int MenuText_IsBattleTexture(const uint8_t *rgba, int width, int height, int indexed);
+/* Whether a texture's dimensions match any Battle label, for deciding if a texture-pack source needs decoding. */
+int MenuText_MayHaveBattleTexture(int width, int height, int indexed);
 /* The size text is drawn at for an internal resolution: that resolution, at least 2 and at most 4 times the PS2's. */
 int MenuText_RasterScale(int internalScale);
-/* For the renderer's texture cache: a value that changes when a font setting or `scale` changes what
-   MenuText_Render / MenuText_RenderGlyphs make of this texture. 0 with all settings on Original. */
+/* For the renderer's texture cache: changes with font settings, raster scale, or a newly made label catalog.
+   The catalog change refreshes Battle texture classification even when all fonts are Original. */
 uint32_t MenuText_TexKey(int width, int height, int indexed, int tbp, int cbp, int scale);
 /* 0: Original game sprites (default); other choices come from the font list (fonts.tsv next to the fonts).
    A font is read and checked when it is chosen; one that cannot be used leaves the choice on Original. */

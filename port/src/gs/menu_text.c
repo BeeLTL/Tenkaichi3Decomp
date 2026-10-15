@@ -637,6 +637,7 @@ typedef struct Row {
 
 static MenuLabel sLabels[MENU_TEXT_MAX], sNameStyles[3];
 static int sCount, sLabelsLoaded;
+static volatile uint32_t sCatalogEpoch; /* a newly made catalog changes cached texture classification */
 static volatile int sFontChoice, sBattleChoice;
 static Face sFont, sBattleFont;
 static struct { int width, height; } sSizes[32]; /* the sizes of the textures that have labels */
@@ -765,6 +766,45 @@ static int label_size(int width, int height) {
     return 0;
 }
 
+static int battle_texture_size_loaded(int width, int height) {
+    int n;
+    for (n = 0; n < sCount; n++) {
+        if (sLabels[n].fontFace && sLabels[n].width == width && sLabels[n].height == height) { return 1; }
+    }
+    return 0;
+}
+
+int MenuText_MayHaveBattleTexture(int width, int height, int indexed) {
+    int result;
+    if (!indexed || width < 1 || height < 1) { return 0; }
+    pthread_mutex_lock(&sLock);
+    menu_text_labels();
+    result = battle_texture_size_loaded(width, height);
+    pthread_mutex_unlock(&sLock);
+    return result;
+}
+
+int MenuText_IsBattleTexture(const uint8_t *rgba, int width, int height, int indexed) {
+    uint64_t hash = UINT64_C(14695981039346656037);
+    size_t i, bytes;
+    int n;
+    if (!indexed || rgba == NULL || width < 1 || height < 1) { return 0; }
+    pthread_mutex_lock(&sLock);
+    menu_text_labels();
+    if (battle_texture_size_loaded(width, height)) {
+        bytes = (size_t)width * height * 4;
+        for (i = 0; i < bytes; i++) { hash = (hash ^ rgba[i]) * UINT64_C(1099511628211); }
+        for (n = 0; n < sCount; n++) {
+            if (sLabels[n].fontFace && sLabels[n].width == width && sLabels[n].height == height && sLabels[n].hash == hash) {
+                pthread_mutex_unlock(&sLock);
+                return 1;
+            }
+        }
+    }
+    pthread_mutex_unlock(&sLock);
+    return 0;
+}
+
 static void set_font(int choice) {
     if (!font_available(choice, MENU_TEXT_MENU)) { choice = 0; }
     if (choice == sFontChoice) { return; }
@@ -852,6 +892,7 @@ static void labels_take(void) {
     sWantedId = 0;
     sWantedBattleId = 0;
     sLabelsThere = sMakeResult == MENU_LABELS_MADE || sLabelsOld;
+    ++sCatalogEpoch;
     if (!sLabelsThere) { return; }
     sLabelsLoaded = 0; /* (asked for before the list was there, it was found empty) */
     if (id != 0 && sFontChoice == 0) { set_font(font_by_id(id)); }
@@ -1629,12 +1670,17 @@ static SharedSheet *shared_sheet(int tbp, int cbp) {
     return NULL;
 }
 
-/* What of the settings here a decoded texture depends on, for the renderer's texture cache: 0 with all
-   settings on "Original", and for every texture none of them would touch. */
+/* What of the settings here a decoded texture depends on, for the renderer's texture cache. A new catalog also
+   changes the key so Battle artwork decoded before the catalog was ready can be identified on its next draw. */
 uint32_t MenuText_TexKey(int width, int height, int indexed, int tbp, int cbp, int scale) {
     uint32_t key = 0;
-    if (sFontChoice == 0 && sBattleChoice == 0 && sSharedChoice == 0) { return 0; }
+    if (sFontChoice == 0 && sBattleChoice == 0 && sSharedChoice == 0) {
+        return indexed ? sCatalogEpoch * 0x9E3779B9u : 0;
+    }
     pthread_mutex_lock(&sLock);
+    if (indexed) {
+        key ^= sCatalogEpoch * 0x9E3779B9u;
+    }
     if (indexed && label_size(width, height) && (sFontChoice != 0 || sBattleChoice != 0)) {
         key ^= (uint32_t)scale * 0x9E3779B9u ^ (uint32_t)sFontChoice * 0x85EBCA6Bu ^
                (uint32_t)sBattleChoice * 0x27D4EB2Du;
