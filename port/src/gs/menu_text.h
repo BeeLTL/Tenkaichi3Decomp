@@ -27,6 +27,10 @@ enum { MENU_TEXT_MENU = 0, MENU_TEXT_DIALOGUE = 1, MENU_TEXT_BATTLE = 2 };
 int MenuText_FontAvailable(int choice, int setting);
 const char *MenuText_FontName(int choice);
 int MenuText_FontId(int choice);
+/* For drawing in a listed font elsewhere (the fight panels): its file once checked (0: not usable); the choice a
+   saved id names (0: none). */
+int MenuText_FontFile(int choice, char *out, int size);
+int MenuText_FontChoice(int id);
 void MenuText_SetFontId(int id);
 /* The Menu font to write into the settings file: the one in use, or the one the settings asked for at start while
    the list of labels it needs is still being made from the disc. */

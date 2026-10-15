@@ -567,6 +567,23 @@ static int font_open(Face *f, int choice) {
     return 1;
 }
 
+/* For the PC's own drawing in a listed font (the fight panels, gs/fight_panels_ui.cpp, through ImGui): the file of
+   a choice of the list, once it has been read and checked as the other font settings check theirs. 0: no such
+   choice, or it cannot be used (said once in the log; not offered again). */
+int MenuText_FontFile(int choice, char *out, int size) {
+    Face f;
+    int ok = 0;
+    pthread_mutex_lock(&sLock);
+    menu_text_fonts();
+    if (choice > 0 && choice <= sFontCount && (sFonts[choice - 1].uses[FONT_MENU] || sFonts[choice - 1].uses[FONT_DIALOGUE] || sFonts[choice - 1].uses[FONT_BATTLE]) && font_open(&f, choice)) {
+        snprintf(out, (size_t)size, "%s/%s", sFontDir, sFonts[choice - 1].file);
+        face_close(&f);
+        ok = 1;
+    }
+    pthread_mutex_unlock(&sLock);
+    return ok;
+}
+
 int MenuText_FontCount(void) {
     int n;
     pthread_mutex_lock(&sLock);
@@ -614,6 +631,15 @@ static int font_by_id(int id) {
         if (sFonts[i - 1].id == id) { return i; }
     }
     return 0;
+}
+
+/* The choice of the list a saved font id names (0: none of them). */
+int MenuText_FontChoice(int id) {
+    int r;
+    pthread_mutex_lock(&sLock);
+    r = id != 0 ? font_by_id(id) : 0;
+    pthread_mutex_unlock(&sLock);
+    return r;
 }
 
 int MenuText_RasterScale(int internalScale) { return internalScale < 2 ? 2 : internalScale > 4 ? 4 : internalScale; }
