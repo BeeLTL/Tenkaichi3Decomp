@@ -642,6 +642,27 @@ EMSCRIPTEN_KEEPALIVE int Bt3Ui_NetLobbyPoll(void) {
     return Port_LobbyPoll();
 }
 
+/* The same lobby with a room code (P4: the page's signalling Worker, net_web.js): host (1) makes a room, its code
+   comes with Bt3Ui_NetCode once known; join (0) with `code`. Poll as above: 3 while the room is being made or the
+   other page connects, then as with an address; -3: the room failed (Bt3Ui_NetError says why), -4: the two pages
+   could not reach each other. Cancel: Bt3Ui_NetLobbyCancel. */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_NetCodeStart(int host, const char *code) {
+    extern int Port_LobbyStartCode(int host, const char *code);
+    return Port_LobbyStartCode(host, code != NULL ? code : "");
+}
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetCode(void) {
+    extern const char *Port_LobbyCode(void);
+    return Port_LobbyCode();
+}
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetError(void) {
+    extern const char *Port_LobbyError(void);
+    return Port_LobbyError();
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_NetLobbyCancel(void) {
+    extern void Port_LobbyCancel(void);
+    Port_LobbyCancel();
+}
+
 /* The panel is open: neither the keyboard nor a controller reaches the game (gs_input.c), as with the native window. */
 EMSCRIPTEN_KEEPALIVE void Bt3Ui_SetOpen(int open) {
     if (!open && sCapKind != CAPTURE_NONE) {

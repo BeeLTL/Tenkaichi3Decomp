@@ -383,6 +383,55 @@ P1; started, then stopped on request before any result. P1's own run (`da638d3`)
 
 Not covered: a real network or two machines (P4 / P6).
 
+### P4 (2026-10-15): room codes through our own signalling Worker (on one machine)
+
+**Decision D1 as built: (b), our own service, separate from upstream's.** `port/web/signal/worker.js` is a new Worker
+of its own (Cloudflare Workers + D1, like `port/matchmaking`), not a change to upstream's `worker.js`: the browser
+needs other things passed on (WebRTC offers and answers, not UDP addresses), and nothing of the browser's goes to
+upstream's service. It is not deployed: deploying it is for whoever runs it, on their own account (its README says
+how).
+
+**As built.**
+- `port/web/signal/worker.js`: rooms with a six-letter code. The host's offer and the joiner's answer are passed on,
+  by round: round 1 is the lobby; round 2 comes after both pages have loaded again for the session, since the
+  connection does not survive the reload and the room is how they find each other again. ICE servers: Cloudflare's
+  STUN, plus its TURN relay when the Worker has a TURN key, within daily limits. CORS for the page's origin
+  (`ALLOWED_ORIGINS`). Limits per address on rooms, new rooms and wrong codes. A room lasts ten minutes after its
+  last use, and is given up as soon as both pages are connected for the session. `schema.sql`, `README.md`.
+- `port/web/signal/local.mjs`: the same Worker on this machine, with Node's SQLite in place of D1 (tests; play on
+  one network). `test.mjs`: the Worker's own test, 28 checks.
+- `net_web.c`: `Match_Begin` / `Match_Poll` / `Match_Cancel` (`net_match.h`, what `net.c`'s room-code lobby calls)
+  go to the page. State 3 gives the lobby one stand-in address, and `net.c` knocks and greets over the page's
+  connection as it does natively over UDP. `net.c` is unchanged.
+- `net_web.js`: `matchBegin` / `matchStatus` / `matchCancel`, the rounds, and the room kept across the session's
+  reload (`resume`). A room the game is done with is given up 1.5 s later, unless the page reloads for the session.
+  The Worker's address is given once with `?signal=` and kept in local storage. Errors are worded for the game's
+  window: no room, full, another release, too many tries, no service set, service unreachable.
+- `web_ui.c`: `Bt3Ui_NetCodeStart(host, code)`, `Bt3Ui_NetCode`, `Bt3Ui_NetError`, `Bt3Ui_NetLobbyCancel`, for the
+  page's window (P5). Upstream's own `BT3_LOBBY=host` / `join:CODE` work too.
+- Not in the browser yet: quick match (the window is told so) and the release check (`Match_Release`, the
+  newest-release notice).
+
+**Test O4, on one machine** (`port/tests/web/net_o4.js`): two headless pages, with the Worker run by `local.mjs`,
+meet by code with nothing passed by hand. Each cycle runs: room, join, lobby, launch, reload, automatic
+reconnection through the room, character select, then backing out. The errors are checked too. Results:
+
+| | cycle 1 | 2 | 3 |
+|---|---|---|---|
+| room code | 1.0 s | 0.26 s | 0.26 s |
+| joined, lobby greets over the connection | 3.8 s (18 requests) | 1.6 s (14) | 1.6 s (14) |
+| connected again after the session's reload, by themselves | 1.05 s | 1.04 s | 1.05 s |
+| character select, no desync, room given up, session ended by backing out | yes | yes | yes |
+
+Errors as the window gets them: a code that names no room, a room given up (cancel), and no service set. All are
+refused with their message.
+
+Unchanged: O3 (by hand, 3 cycles) passes. O2 passes: the whole state is equal at every blank in all three
+scenarios, at 58.8 / 24.7 / 58.8 blanks a second, and the demo fight equals the offline one.
+
+**O4 proper is not done:** two machines on different networks, NAT, and the TURN relay need a deployed Worker and
+two people. Only then is P4 cleared. Until then: same machine, local Worker, no NAT, no relay.
+
 ## 7. Later, and why
 
 - **Rollback in the browser.** `state.c` restores the game thread's stack and registers (`ucontext` / `setjmp` and a

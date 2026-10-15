@@ -10,7 +10,7 @@
  *     joiner's greeting), from a fixed stand-in address, which the host then sends back to;
  *   - "nothing there" is -1, as recvfrom on a non-blocking socket says it;
  *   - a packet sent while the channel is not open is lost (-1, counted by net.c as a failed send), as UDP would lose it.
- * No relay (WebRTC's ICE uses TURN itself, in the page) and no matchmaking yet (P4): those calls say so.
+ * No relay (WebRTC's ICE uses TURN itself, in the page); room codes go through the page's signalling Worker (P4).
  */
 #include <emscripten.h>
 #include <stdio.h>
@@ -139,14 +139,29 @@ void Relay_Send(int sock, const void *data, int len, const struct sockaddr_in *t
 void Relay_SawDirect(const struct sockaddr_in *from) { (void)from; }
 void Relay_Close(int sock) { (void)sock; }
 
-/* ---- no matchmaking yet (P4): room codes and quick match say so (net_match.h) ---- */
+/* ---- room codes (net_match.h) through the page's signalling Worker (port/web/signal, net_web.js matchBegin):
+   the room is made or joined there, and the two pages' offer and answer pass through it. Once this side's part is
+   done (state 3) the other player has one address, a stand-in: the page's connection is the only one, and net.c's
+   lobby knocks and greets over it as natively over UDP (P4). No quick match yet, and no release check. ---- */
 const char *const kMatchQueues[MATCH_QUEUES] = {"S", "T", "D10", "D15", "D20"};
-static const char kNoMatch[] = "Room codes are not available in the browser version yet.";
-static int sMatchState;
+
+EM_JS(void, web_match_begin, (int role, const char *code, const char *name, int version), {
+    globalThis.bt3Net.matchBegin(role, code ? UTF8ToString(code) : "", UTF8ToString(name), version);
+});
+EM_JS(int, web_match_poll, (char *code, int codeSize, char *error, int errorSize, char *peer, int peerSize), {
+    const m = globalThis.bt3Net.matchStatus();
+    stringToUTF8(m.code || "", code, codeSize);
+    stringToUTF8(m.error || "", error, errorSize);
+    stringToUTF8(m.peerName || "", peer, peerSize);
+    return m.state;
+});
+EM_JS(void, web_match_cancel, (void), {
+    globalThis.bt3Net.matchCancel();
+});
 
 void Match_Begin(int role, int sock, int localPort, const char *code, const char *name, int version) {
-    (void)role; (void)sock; (void)localPort; (void)code; (void)name; (void)version;
-    sMatchState = -1;
+    (void)sock; (void)localPort;
+    web_match_begin(role, code, name != NULL ? name : "Player", version);
 }
 int Match_SocketBusy(void) { return 0; }
 void Match_QueuesAsk(int version) { (void)version; }
@@ -157,10 +172,11 @@ int Match_Release(int *min, int *latest) { if (min) *min = 0; if (latest) *lates
 int Match_QueueWaiting(int queue) { (void)queue; return 0; }
 void Match_Poll(MatchStatus *out) {
     memset(out, 0, sizeof(*out));
-    out->state = sMatchState;
-    if (sMatchState < 0) {
-        snprintf(out->error, sizeof(out->error), "%s", kNoMatch);
+    out->state = web_match_poll(out->code, sizeof(out->code), out->error, sizeof(out->error), out->peerName, sizeof(out->peerName));
+    if (out->state == 3) {
+        snprintf(out->peerAddr[0], sizeof(out->peerAddr[0]), "127.0.0.2:1"); /* (the stand-in, as NetIo_RecvFrom's) */
+        out->peerCount = 1;
     }
 }
-void Match_Cancel(void) { sMatchState = 0; }
+void Match_Cancel(void) { web_match_cancel(); }
 int Match_SignTest(void) { return 0; }
