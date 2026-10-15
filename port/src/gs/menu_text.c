@@ -719,7 +719,7 @@ static void menu_text_labels(void) {
                    &label.outlineBottom, &label.bevelMilli, &label.bevelLight, &label.bevelDark,
                    &label.depthMilli, &label.midGradient, &label.fontFace, &pos) != 30 || pos == 0) { continue; }
         if (label.outlineMilli < -1 || label.outlineMilli > 8000 || label.outerMilli < 0 || label.outerMilli > 8000 ||
-            label.outerColor > 0xFFFFFF || label.shadow < 0 || label.shadow > 2 ||
+            label.outerColor > 0xFFFFFF || label.shadow < 0 || label.shadow > 3 ||
             label.outlineBottom > 0xFFFFFF || label.bevelMilli < 0 || label.bevelMilli > 4000 ||
             label.bevelLight > 0xFFFFFF || label.bevelDark > 0xFFFFFF ||
             label.depthMilli < 0 || label.depthMilli > 8000 || label.midGradient < 0 || label.midGradient > 1 ||
@@ -1034,7 +1034,7 @@ static int menu_text_row(Face *font, const MenuLabel *label, int resolution, Row
     int w = label->rowWidth * resolution, h = label->rowHeight * resolution, count;
     int radius = resolution, window = radius * 2 + 1;
     /* Keep Battle outlines and hard shadows inside the cell before fitting to the artwork bounds. */
-    int padding = label->fontFace && label->rowWidth == 32 ? (label->shadow == 2 ? 4 : 1) :
+    int padding = label->fontFace && label->rowWidth == 32 ? (label->shadow >= 2 ? 4 : 1) :
                   label->fontFace && label->rowHeight == 32 && label->artWidth >= label->rowWidth - 8 ? 6 :
                   (label->rowWidth < 32 ? label->rowWidth / 8 : 4);
     float border = label->rowWidth < 48 ? label->rowWidth / 16 : 3;
@@ -1302,15 +1302,15 @@ static int menu_text_row(Face *font, const MenuLabel *label, int resolution, Row
         }
         for (x = 0; x < fw; x++) {
             int at = y*fw+x;
-            int sx = x-(label->shadow == 2 ? resolution + resolution/2 : (label->fontFace ? 2 : 4)*resolution);
-            int sy = y-(label->shadow == 2 ? resolution + resolution/2 : (label->fontFace ? 2 : 3)*resolution);
+            int sx = x-(label->shadow >= 2 ? resolution + resolution/2 : (label->fontFace ? 2 : 4)*resolution);
+            int sy = y-(label->shadow >= 2 ? resolution + resolution/2 : (label->fontFace ? 2 : 3)*resolution);
             float f = fill[at]/255.0f, b = body[at]/255.0f;
             float o = outer != NULL ? outer[at]/255.0f : b;
             float shadow = label->shadow && sx >= 0 && sy >= 0 ? distance[sy*fw+sx] : 0;
-            if (label->shadow == 2 && sx >= 0 && sy >= 0) {
+            if (label->shadow >= 2 && sx >= 0 && sy >= 0) {
                 int left = sx > 0 ? sx-1 : sx, right = sx+1 < fw ? sx+1 : sx;
                 int up = sy > 0 ? sy-1 : sy, down = sy+1 < fh ? sy+1 : sy;
-                /* Feather only the hard shadow's edge by one render pixel; its core stays solid black. */
+                /* Feather only the hard shadow's edge by one render pixel. */
                 shadow = (4*body[sy*fw+sx] +
                           2*(body[sy*fw+left] + body[sy*fw+right] + body[up*fw+sx] + body[down*fw+sx]) +
                           body[up*fw+left] + body[up*fw+right] + body[down*fw+left] + body[down*fw+right]) / 4080.0f;
@@ -1326,16 +1326,20 @@ static int menu_text_row(Face *font, const MenuLabel *label, int resolution, Row
                 extrusion *= 1-o;
             }
             if (label->fontFace) {
-                /* Battle announcements use black depth and a translucent shadow; hard shadows stay opaque. */
+                /* Battle announcements use black depth; compact hard shadows can be translucent. */
                 extrusion *= 0.72f;
-                if (label->shadow != 2) { shadow *= 0.90f; }
+                if (depthPixels && label->depthMilli < 1000 && !label->bevelMilli) {
+                    extrusion *= (label->depthMilli * resolution / 1000.0f) / depthPixels;
+                }
+                if (label->shadow == 3) { shadow *= 0.65f; }
+                else if (label->shadow != 2) { shadow *= 0.90f; }
             }
             float shadowPart = shadow*(1-o-extrusion);
             float alpha = o + extrusion + shadowPart;
             float outerBand = 0, innerBand = 0, bottomShade = 0, topShade = 0, rightShade = 0;
             float faceLight = 0, faceShade = 0;
             float edgeLight = 0;
-            if (label->shadow == 2 && f > 0) {
+            if (label->shadow >= 2 && f > 0) {
                 int up = y >= resolution ? y-resolution : 0;
                 int left = x >= resolution ? x-resolution : 0;
                 /* A small red glint on the top and left face edges, inside the black border. */
@@ -1380,8 +1384,10 @@ static int menu_text_row(Face *font, const MenuLabel *label, int resolution, Row
                     color = ((label->top >> shift)&255)*(1-ramp) + ((label->bottom >> shift)&255)*ramp;
                 }
                 if (label->fontFace && (label->hasMiddle || label->top != label->bottom)) {
-                    color += (255.0f-color)*faceLight*0.28f;
-                    color *= 1.0f-faceShade*0.95f;
+                    float relief = label->depthMilli > 0 && label->depthMilli < 1000 && !label->bevelMilli
+                        ? label->depthMilli / 1000.0f : 1.0f;
+                    color += (255.0f-color)*faceLight*0.28f*relief;
+                    color *= 1.0f-faceShade*0.95f*relief;
                 }
                 color += (255.0f-color)*edgeLight*0.15f;
                 float outline;

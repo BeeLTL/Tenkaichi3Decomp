@@ -74,13 +74,13 @@ static const struct { int number; uint32_t size, crc; } kMlFiles[ML_FILES] = {
 typedef struct MlColors {
     const char *name;
     uint8_t top[3], bottom[3], outline[3];
-    int outlineWidth; /* pixels of the original texture; -1: the renderer's own (usually 3) */
+    float outlineWidth; /* pixels of the original texture; -1: the renderer's own (usually 3) */
     int outer;        /* a second outline around the first: */
     uint8_t outerColor[3];
     int outerWidth;
-    int shadow;
+    int shadow; /* 0 none, 1 soft, 2 hard opaque, 3 hard translucent */
     int bevelWidth;
-    int depth;
+    float depth;
     int midGradient;
     int hasMiddle;
     uint8_t middle[3];
@@ -98,15 +98,15 @@ static const MlColors kMlColors[] = {
     {"notice-green", {192, 226, 188}, {96, 151, 95}, {37, 83, 34}, 3, 1, {0, 0, 0}, 1, 1, 2, 3, 1},
     {"notice-gold", {244, 245, 229}, {177, 165, 100}, {89, 61, 30}, 3, 1, {0, 0, 0}, 1, 1, 2, 3, 1},
     {"notice-purple", {210, 210, 226}, {127, 125, 151}, {56, 48, 95}, 3, 1, {0, 0, 0}, 1, 1, 2, 3, 1},
-    {"combo-red-digits", {234, 28, 37}, {222, 22, 28}, {0, 0, 0}, 1, 0, {0, 0, 0}, 0, 2, 0, 0, 0},
-    {"combo-hits", {255, 245, 223}, {216, 215, 1}, {102, 61, 18}, 2, 1, {0, 0, 0}, 1, 2, 0, 0, 1},
-    {"combo-orange-digits", {255, 190, 47}, {255, 34, 34}, {0, 0, 0}, 1, 0, {0, 0, 0}, 0, 2, 0, 0, 0},
-    {"combo-message", {254, 93, 13}, {254, 60, 15}, {102, 61, 18}, 2, 1, {18, 10, 3}, 1, 2, 0, 0, 0, 1, {255, 254, 1}},
-    {"combo-power", {119, 186, 253}, {92, 172, 253}, {20, 41, 86}, 2, 1, {6, 16, 42}, 1, 2, 0, 0, 0, 1, {255, 255, 255}},
-    {"timer-white", {196, 196, 196}, {196, 196, 196}, {0, 0, 0}, 3, 0, {0, 0, 0}, 0, 0, 0, 0, 0},
-    {"timer-yellow", {196, 196, 36}, {196, 196, 36}, {0, 0, 0}, 3, 0, {0, 0, 0}, 0, 0, 0, 0, 0},
-    {"timer-red", {196, 36, 36}, {196, 36, 36}, {0, 0, 0}, 3, 0, {0, 0, 0}, 0, 0, 0, 0, 0},
-    {"win-counter", {242, 242, 242}, {150, 150, 150}, {68, 68, 68}, 1, 1, {20, 20, 20}, 1, 2, 0, 0, 0, 1, {216, 216, 216}},
+    {"combo-red-digits", {234, 28, 37}, {222, 22, 28}, {0, 0, 0}, 1, 0, {0, 0, 0}, 0, 2, 0, 0.3f, 0},
+    {"combo-hits", {255, 245, 223}, {216, 215, 1}, {102, 61, 18}, 1.5f, 0, {0, 0, 0}, 0, 3, 0, 0, 1},
+    {"combo-orange-digits", {255, 190, 47}, {255, 34, 34}, {0, 0, 0}, 1, 0, {0, 0, 0}, 0, 2, 0, 0.3f, 0},
+    {"combo-message", {254, 93, 13}, {254, 60, 15}, {102, 61, 18}, 1.5f, 0, {18, 10, 3}, 0, 3, 0, 0, 0, 1, {255, 254, 1}},
+    {"combo-power", {119, 186, 253}, {92, 172, 253}, {20, 41, 86}, 1.5f, 0, {6, 16, 42}, 0, 3, 0, 0, 0, 1, {255, 255, 255}},
+    {"timer-white", {238, 238, 238}, {196, 196, 196}, {36, 36, 36}, 3, 0, {0, 0, 0}, 0, 0, 0, 0.3f, 0},
+    {"timer-yellow", {238, 238, 108}, {196, 196, 36}, {38, 38, 24}, 3, 0, {0, 0, 0}, 0, 0, 0, 0.3f, 0},
+    {"timer-red", {238, 100, 100}, {196, 36, 36}, {41, 27, 27}, 3, 0, {0, 0, 0}, 0, 0, 0, 0.3f, 0},
+    {"win-counter", {242, 242, 242}, {150, 150, 150}, {68, 68, 68}, 1.5f, 0, {20, 20, 20}, 0, 3, 0, 0, 0, 1, {216, 216, 216}},
     {"blast-stock-counter", {255, 139, 0}, {254, 122, 2}, {0, 0, 0}, 3, 0, {0, 0, 0}, 0, 0, 0, 0, 0, 1, {255, 254, 0}},
 };
 enum { ML_TITLE_PROMPT, ML_MAIN_MENU, ML_MAIN_HEADING, ML_PURPLE, ML_ORANGE,
@@ -1467,12 +1467,12 @@ static int ml_tsv(MlCtx *c, MlText *labels, MlText *styles, int *count) {
                r->widthMilli ? r->widthMilli : 1000, r->x, r->w, strcmp(text, r->text) == 0 ? r->art : 0,
                ml_hex(col->top, top), ml_hex(col->bottom, bottom), ml_hex(col->middle, middle), col->hasMiddle,
                ml_hex(col->outline, outline), r->italic,
-               col->outlineWidth < 0 ? -1 : col->outlineWidth * 1000, col->outerWidth * 1000, ml_hex(col->outerColor, outer), col->shadow,
+               col->outlineWidth < 0 ? -1 : (int)(col->outlineWidth * 1000.0f + 0.5f), col->outerWidth * 1000, ml_hex(col->outerColor, outer), col->shadow,
                ml_hex(r->colors == ML_MAIN_HEADING ? kHeadingOutlineBottom : col->depth ? col->outerColor : col->outline, outlineBottom),
                r->colors == ML_MAIN_HEADING ? 1000 : col->bevelWidth * 1000,
                ml_hex(r->colors == ML_MAIN_HEADING ? kHeadingBevelLight : col->top, bevelLight),
                ml_hex(r->colors == ML_MAIN_HEADING ? kHeadingBevelDark : col->depth ? col->outerColor : col->outline, bevelDark),
-               col->depth * 1000, col->midGradient, ml_starts(r->id, "notice-") || ml_starts(r->id, "combo-") ||
+               (int)(col->depth * 1000.0f + 0.5f), col->midGradient, ml_starts(r->id, "notice-") || ml_starts(r->id, "combo-") ||
                ml_starts(r->id, "timer-") || ml_starts(r->id, "win-counter/") || ml_starts(r->id, "blast-stock-counter/"), text);
         ++*count;
     }
@@ -1527,7 +1527,7 @@ static int ml_json(MlCtx *c, MlText *t) {
         if (col->hasMiddle) { ml_json_rgb(t, "middle", col->middle, ","); }
         ml_json_rgb(t, "outline", col->outline, more ? "," : "");
         if (more) {
-            ml_put(t, "      \"outline_width\": %d,\n", col->outlineWidth);
+            ml_put(t, "      \"outline_width\": %g,\n", (double)col->outlineWidth);
             ml_json_rgb(t, "outer_outline", col->outerColor, ",");
             ml_put(t, "      \"outer_outline_width\": %d,\n", col->outerWidth);
             if (i == ML_MAIN_HEADING || col->bevelWidth) {
@@ -1537,9 +1537,10 @@ static int ml_json(MlCtx *c, MlText *t) {
                 ml_json_rgb(t, "bevel_dark", i == ML_MAIN_HEADING ? kHeadingBevelDark : col->outerColor, ",");
             }
             if (col->depth || col->midGradient) {
-                ml_put(t, "      \"depth\": %d,\n      \"mid_gradient\": %s,\n", col->depth, col->midGradient ? "true" : "false");
+                ml_put(t, "      \"depth\": %g,\n      \"mid_gradient\": %s,\n", (double)col->depth, col->midGradient ? "true" : "false");
             }
-            ml_put(t, "      \"shadow\": %s\n", col->shadow == 2 ? "\"hard\"" : col->shadow ? "true" : "false");
+            ml_put(t, "      \"shadow\": %s\n", col->shadow == 3 ? "\"translucent-hard\"" :
+                   col->shadow == 2 ? "\"hard\"" : col->shadow ? "true" : "false");
         }
         ml_put(t, "    }%s\n", i + 1 < (int)(sizeof(kMlColors) / sizeof(kMlColors[0])) ? "," : "");
     }

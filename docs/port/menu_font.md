@@ -108,6 +108,7 @@ Set the PNG path with `--output path/to/comparison.png`.
 | `italic` | `true` slants this label; default `false`. Enabled for “Press START button” and battle announcements. |
 | `font_face` | `battle` uses the separate Battle font setting; `selected` uses the chosen Menu font |
 | `color_style` | A shared palette such as `purple`, `main-heading`, or one of the `notice-*` styles |
+| `shadow` | `false`, `true`, `hard`, or `translucent-hard` (a black, partly transparent bottom-right shadow) |
 | `cap_height`, `baseline` | Letter height and baseline, in original texture pixels |
 | `align`, `margin` | `left` or `center`, with horizontal margin |
 | `width_scale` | Horizontal scale, 0.5–2.0; default 1.0 |

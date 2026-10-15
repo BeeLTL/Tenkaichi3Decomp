@@ -132,8 +132,8 @@ def apply_labels(out, fonts):
             else:
                 widths.append(round(value * 1000))
         shadow = colors.get('shadow', True)
-        if type(shadow) != bool and shadow != 'hard':
-            raise ValueError('shadow must be true, false, or "hard"')
+        if type(shadow) != bool and shadow not in ('hard', 'translucent-hard'):
+            raise ValueError('shadow must be true, false, "hard", or "translucent-hard"')
         depth = colors.get('depth', 0)
         midpoint = colors.get('mid_gradient', False)
         if type(depth) not in (int, float) or not 0 <= depth <= 8:
@@ -141,7 +141,7 @@ def apply_labels(out, fonts):
         if type(midpoint) != bool:
             raise ValueError('mid_gradient must be true or false')
         return [widths[0], widths[1], rgb(colors.get('outer_outline', [0, 0, 0]), 'outer_outline'),
-                2 if shadow == 'hard' else int(shadow),
+                3 if shadow == 'translucent-hard' else 2 if shadow == 'hard' else int(shadow),
                 rgb(colors.get('outline_bottom', colors['outline']), 'outline_bottom'), widths[2],
                 rgb(colors.get('bevel_light', colors['top']), 'bevel_light'),
                 rgb(colors.get('bevel_dark', colors['outline']), 'bevel_dark'), round(depth * 1000), int(midpoint)]
