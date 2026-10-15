@@ -117,6 +117,30 @@ page is served by `play.py` / the dev server (it needs the Worker's address, set
 
 Rough size: P0–P3 a few days of work; P4–P5 a few more; P6 needs two people and two networks.
 
+## 6a. Results
+
+### P0 (2026-10-15): timing in the page: passed
+
+A probe built like the game (Emscripten 6.0.12, `-sJSPI=1`, SDL3, `-O2`): `net.c`'s kind of waits, then a lockstep
+loop at 30 ticks a second over a real `RTCPeerConnection` data channel (`ordered: false, maxRetransmits: 0`) whose
+other end, a second connection in the same page, echoes every message. Headless Chrome 154, Windows 11.
+
+| Measured | Result |
+|---|---|
+| `emscripten_has_asyncify()` | 2 (JSPI): SDL's delays call `emscripten_sleep`, so the game's waits suspend and the page's events (data channel messages) are delivered meanwhile |
+| `SDL_Delay(1)`, `SDL_DelayNS(200000)`, `SDL_Delay(0)` | **4.7–5.0 ms** each on average (min 2–4, max 7): the browser's timer clamp. `net.c` asks for 0.2–1 ms |
+| Data channel open (offer / answer in the page) | 10–22 ms |
+| Lockstep, delay 2, 300 ticks | **30.00 ticks/s**; 0–1 waits for the other side (at most 5 ms) |
+| Round trip, measured where the message arrives | median 0.38–0.43 ms, p95 0.73–0.84, max 5.9–12.8 (loopback, one machine) |
+| Chrome's default (local addresses hidden behind mDNS names) | works the same (open in 22 ms) |
+
+Conclusions:
+- Lockstep at 30 ticks a second fits: a wait costs about 5 ms of a 33 ms tick.
+- The 5 ms granularity adds jitter to every wait. The browser `net_io` should wait with a promise that the data
+  channel's `onmessage` resolves (with the timeout as a fallback), not with timers, so the game resumes when the
+  packet arrives. To be built and measured in P2.
+- Not measured yet: two separate pages, real networks, loss. Those are P2 (O2) and P4 (O4).
+
 ## 7. Later, and why
 
 - **Rollback in the browser.** `state.c` restores the game thread's stack and registers (`ucontext` / `setjmp` and a
