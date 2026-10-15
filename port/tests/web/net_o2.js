@@ -53,14 +53,13 @@ async function hashes(p) {
 async function scenario(name, extra, { script = true } = {}) {
   console.log(`--- ${name}`);
   const common = ['BT3_NET_SCRIPT=/net_script.bin', 'BT3_HASH=/net.hash', 'BT3_SOUND_TICKS=1', ...extra];
-  // The two settings have the same length on purpose. The game keeps the addresses of blocks the port gives it (file
-  // handles) in its memory; in this build they come from the C library's allocator (as in upstream's 32-bit build;
-  // the 64-bit builds have a region of their own, plat_mem.c PORT_LOW_REGION), whose layout follows the length of the
-  // environment's text: with "BT3_NET_HOST=1" against "BT3_NET_JOIN=127.0.0.1:1" those addresses differ by 16
-  // and nothing else does (5 bytes, found with BT3_HASH_AT). The game never computes with them. (The host's port and
-  // the joiner's address are not used by the browser's transport: one peer, the page's data channel.)
-  const host = await page(['BT3_NET_HOST=999999999', ...common], script);
-  const join = await page(['BT3_NET_JOIN=9.9.9.9:9', ...common], script);
+  // The two settings differ in length on purpose. The game keeps the addresses of blocks the port gives it (file
+  // handles) in its memory; were they the C library's, their layout would follow everything else the page allocated
+  // (the environment's text among it) and the two states would differ in those words. They come from the port's
+  // ordered region (plat_mem.c PORT_LOW_ORDERED), as in upstream's 64-bit builds. (The host's port and the joiner's
+  // address are not used by the browser's transport: one peer, the page's data channel.)
+  const host = await page(['BT3_NET_HOST=1', ...common], script);
+  const join = await page(['BT3_NET_JOIN=127.0.0.1:1', ...common], script);
   const t0 = Date.now();
   const offer = await host.ev(`bt3Net.offer()`);
   const answer = await join.ev(`bt3Net.answer(${JSON.stringify(offer)})`);
@@ -103,8 +102,9 @@ async function offlineDemo() {
 }
 
 (async () => {
-  if (process.env.O2_ONLY === 'clean') {  // (diagnosis: the first scenario alone)
-    await scenario('clean, delay 2', ['BT3_NET_DELAY=2']);
+  if (process.env.O2_ONLY === 'clean' || process.env.O2_ONLY === 'loss') {  // (repeated runs: one scenario alone)
+    if (process.env.O2_ONLY === 'clean') await scenario('clean, delay 2', ['BT3_NET_DELAY=2']);
+    else await scenario('10% loss, 100 ms latency, delay 2', ['BT3_NET_DELAY=2', 'BT3_NET_LOSS=10', 'BT3_NET_LATENCY=100']);
     console.log(failed ? `RESULT: FAIL (${failed})` : 'RESULT: PASS');
     process.exit(failed ? 1 : 0);
   }
