@@ -24,7 +24,8 @@ static uint32_t ref_blend_key(uint64_t alpha, int abe) {
     }
     return 1u | (uint32_t)k[0] << 1 | (uint32_t)k[1] << 4 | (uint32_t)C << 7;
 }
-static uint32_t ref_key(uint64_t alpha, int abe, uint64_t test, uint64_t zb, uint32_t m, int topo, int vu, int nz) {
+/* (upstream 0.1.35.2 pipeline_get: bit 24 the flat-shadow stencil mask, given by the caller; not in the table pass) */
+static uint32_t ref_key(uint64_t alpha, int abe, uint64_t test, uint64_t zb, uint32_t m, int topo, int vu, int nz, int shadow) {
     int zte = (test >> 16) & 1, ztst = (test >> 17) & 3, zwrite = !((zb >> 32) & 1);
     uint32_t bkey = ref_blend_key(alpha, abe), wmask, key;
     if (!zte) {
@@ -32,7 +33,8 @@ static uint32_t ref_key(uint64_t alpha, int abe, uint64_t test, uint64_t zb, uin
     }
     wmask = ((m & 0xFF) != 0xFF ? GS_CC_R : 0) | ((m & 0xFF00) != 0xFF00 ? GS_CC_G : 0) |
             ((m & 0xFF0000) != 0xFF0000 ? GS_CC_B : 0) | ((m & 0xFF000000u) != 0xFF000000u ? GS_CC_A : 0);
-    key = bkey | (uint32_t)ztst << 10 | (uint32_t)zwrite << 12 | (uint32_t)topo << 13 | wmask << 16 | (uint32_t)vu << 20;
+    key = bkey | (uint32_t)ztst << 10 | (uint32_t)zwrite << 12 | (uint32_t)topo << 13 | wmask << 16 | (uint32_t)vu << 20 |
+          (uint32_t)shadow << 24;
     if (nz && !zwrite && ztst != 3 && vu != 4) {
         key |= 1u << 23;
     }
@@ -60,7 +62,7 @@ static char factor_char(GsBlendFactor f) {
 int main(void) {
     static const uint32_t channel[3] = {0x00, 0xFF, 0x0F}; /* written, masked, partly masked (counts as written) */
     unsigned long checked = 0, bad[3] = {0, 0, 0};
-    unsigned alpha, abe, test, zmsk, fb, topo, vu, nz;
+    unsigned alpha, abe, test, zmsk, fb, topo, vu, nz, sh;
 
     for (alpha = 0; alpha < 256; alpha++)
     for (abe = 0; abe < 2; abe++)
@@ -69,14 +71,16 @@ int main(void) {
     for (fb = 0; fb < 81; fb++)               /* each of the four FBMSK bytes one of channel[] */
     for (topo = 0; topo < 3; topo++)
     for (vu = 0; vu < 5; vu++)                /* 0..3 vertex sources, 4: the old code's "table pass" */
-    for (nz = 0; nz < 2; nz++) {              /* BT3_NZ: the variant without depth output allowed or not */
+    for (nz = 0; nz < 2; nz++)                /* BT3_NZ: the variant without depth output allowed or not */
+    for (sh = 0; sh < 2; sh++) {              /* the flat-shadow stencil mask (upstream 0.1.35.2) */
         uint64_t t = (uint64_t)test << 16, z = (uint64_t)zmsk << 32;
         uint32_t m = channel[fb % 3] | channel[fb / 3 % 3] << 8 | channel[fb / 9 % 3] << 16 | channel[fb / 27 % 3] << 24;
-        uint32_t want = ref_key(alpha, (int)abe, t, z, m, (int)topo, (int)vu, (int)nz), key, again;
+        uint32_t want = ref_key(alpha, (int)abe, t, z, m, (int)topo, (int)vu, (int)nz, (int)sh), key, again;
         GsPipeState s = GsPipeState_FromGs(alpha, (int)abe, t, z, m, (GsTopology)topo, vu == 4 ? GS_VERTS_GS : (GsVertexSource)vu, vu == 4);
         GsPipeState d;
 
         s.noFragDepth = nz && GsPipeState_FragDepthRedundant(&s); /* (as gs_draw.c pipeline_get) */
+        s.shadow = sh && vu != 4;                                  /* (as gs_draw.c pipeline_get) */
 
         key = GsPipeKey_Encode(&s);
         GsPipeKey_Decode(key, &d);

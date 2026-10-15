@@ -14,7 +14,7 @@ Environment:
 | Boot, intro movie, title, menus | Yes | Yes | boot runs, both renderers |
 | Battles (demo, versus) | Yes | Yes | demo runs; trace `8ad198bf58dbed33` |
 | WebGL 2 renderer (default) | Yes | — (native: GL, Vulkan) | demo/boot shots |
-| WebGPU renderer (`?gpu=webgpu`) | Yes | — | demo/boot shots identical to WebGL 2 |
+| WebGPU renderer (`?gpu=webgpu`) | Yes | — | the same game trace as WebGL 2; boot shots identical to WebGL 2's, the demo fight's not pixel for pixel (each renderer is compared with its own earlier shots). Upstream 0.1.35.2's flat-shadow stencil needs `depth32float-stencil8` (requested; without it shadows lack the mask, said in the log) |
 | Widescreen, HUD layout, effect switches | Yes (page settings panel) | Yes (ImGui window) | status doc, settings section |
 | Settings kept | Yes (localStorage) | settings file | status doc |
 | Controllers: set-up, presets, live view, test | Yes | ImGui | `controllers.js` |
