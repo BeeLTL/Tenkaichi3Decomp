@@ -18,7 +18,7 @@ import os, pathlib, shutil, sys, zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WEB = ROOT / "port/build/web"
-PAGE = ["index.html", "bt3.js", "bt3.wasm", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "saves.js", "touch.js", "gamepad.svg"]
+PAGE = ["index.html", "bt3.js", "bt3.wasm", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "bt3.mem", "saves.js", "touch.js", "gamepad.svg"]
 EMSDK = pathlib.Path(os.environ.get("EMSDK", ROOT.parent / "tools/emsdk"))
 LICENSES = {
     "Tenkaichi3Decomp-AGPL.txt": ROOT / "LICENSE",       # (AGPL-3.0-only from the original project's 06e4671 on)

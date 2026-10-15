@@ -214,6 +214,63 @@ as in P0 (the probe does not use `net_io`; this only shows the machine and the t
 `net_io.c` are not in it); demo fight trace `8ad198bf58dbed33` on WebGL 2 and WebGPU, 48 of 48 screenshots (demo and
 boot, both renderers) identical to the 0.1.35 results.
 
+### P2 (2026-10-15): `net.c` in the browser over WebRTC
+
+**As built.**
+- `net.c` is now in the browser build; `port/src/web/net_off.c` (the "no match" stand-in) is gone: `net.c` provides
+  every function it had.
+- `port/src/web/net_web.c`: the browser `net_io` (4.1) over the page's data channel, plus what `net.c` needs of the two
+  native-only files: the relay ("no relay": WebRTC's ICE does it) and matchmaking (room codes say "not available in the
+  browser version yet", P4).
+- `port/web/net_web.js` (`bt3Net`): one `RTCPeerConnection`, one data channel (`ordered: false, maxRetransmits: 0`),
+  complete offers / answers (no trickling), a receive queue. Signalling by hand: `offer()`, `answer(offer)`,
+  `accept(answer)`.
+- Starting a session by restarting the program (`relaunch()`) is not possible in a page: `execv` fails and `net.c`
+  says "could not start the program again". Unchanged in P2; P3. Rollback stays off (`Port_RollCan` = 0).
+- **The state checksum in the browser** (needed by test O2): `state.c` read the scratchpad, which the browser build keeps
+  outside its memory (a crash at the first blank with `BT3_HASH`), and had no list of the game's variables. Now:
+  `wasm_build.py` links with a map (`-Wl,-Map`), `port/tools/wasm_state.py` writes `bt3.mem` from it by
+  `make_state.py`'s own rule (12 ranges, 577,405 bytes), the page puts it at `/bt3.mem`, and `state.c` has two browser
+  branches (the list's place, no scratchpad). The native builds compile the same code (`#ifdef __EMSCRIPTEN__` only).
+
+**Test O2** (`port/tests/web/net_o2.js`): two headless Chrome instances on this machine, the page served by the dev
+server with the user's data, the test doing the signalling; both copies fed the same input table (`net_script.py`),
+a state checksum every blank (`BT3_HASH`, the whole state: the game's variables and heap). Last run:
+
+| Scenario | Blanks | Rate | Host = joiner, whole state | Desync |
+|---|---|---|---|---|
+| clean, delay 2 | 4,438 | 59.2 / s | every blank | none |
+| 10% loss, 100 ms latency (`BT3_NET_LOSS`, `BT3_NET_LATENCY`), delay 2 | 1,852 | 24.7 / s (lockstep waits out the latency) | every blank | none |
+| attract demo fight, delay 2 | 4,428 (4,242 fighting) | 59.0 / s | every blank | none |
+| the same fight offline, one page | | | fight values equal to the networked fight at every blank | |
+
+Findings on the way, both about **addresses of the port's own memory** kept in the game's memory, never about game
+values:
+1. **The C library's allocations.** The game keeps the addresses of blocks the port gives it (file handles). In this
+   build they come from the C library's allocator (as in upstream's 32-bit build; the 64-bit builds have an ordered
+   region of their own, `PORT_LOW_REGION`), whose layout follows the length of the environment's text:
+   `BT3_NET_HOST=1` against `BT3_NET_JOIN=127.0.0.1:1` moved those addresses by 16 bytes (5 bytes of the state differ,
+   found with `BT3_HASH_AT`); with settings of equal length every one of the 7,384 pages of the state is the same. The
+   test now gives both pages settings of equal length.
+2. **Intermittent, unexplained: one stack address.** In some runs of the clean scenario (not in others: 2 of 3, then
+   0 of 2, then 0 of 1), one 4-byte value of `gFileReq` (the game's file request queue, `include/sys/file.h`) differs
+   for 2 to 4 blanks at a time, 4 to 24 blanks in a run, after which the two copies are the same again. The values
+   (`0x1E1410F0` against `0x1E140BF8`) are addresses in the C stack: the game stored the address of a buffer while
+   the two pages were at different stack depths. Every other byte of the state is equal at those blanks, the request's
+   own values (id, progress) are equal, the fight is unaffected and `net.c`'s sync check never fired. Not found yet:
+   which code stores it (the callers declare `File_Request` with three arguments, the definition has two, so the
+   decoding of the entry may be off). **Open before real matches** (P6): to be explained, or the browser given a fixed
+   region for such buffers as the 64-bit builds have.
+
+**Regressions:** demo fight trace `8ad198bf58dbed33` on WebGL 2 and WebGPU; 48 of 48 screenshots (demo and boot, both
+renderers) identical to 0.1.35; page tests dashboard, controllers, touch, start options, data check, audio, controller
+picture, connection notifications, saves, extras: all pass.
+
+**Not done in P2:** a real network or two machines (P4 / P6); the P0 timing improvement (waking the game when a packet
+arrives instead of on a 5 ms timer: not needed for 59 blanks a second on one machine, measured again with real
+latency in P4); native builds (only `state.c` changed among shared files, inside `#ifdef __EMSCRIPTEN__`; not rebuilt
+natively in P2).
+
 ## 7. Later, and why
 
 - **Rollback in the browser.** `state.c` restores the game thread's stack and registers (`ucontext` / `setjmp` and a

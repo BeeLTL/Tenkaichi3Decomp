@@ -196,6 +196,7 @@
 <script src="bt3_data.js"></script>
 <script src="dashboard.js"></script>
 <script src="toasts.js"></script>
+<script src="net_web.js"></script>
 <script src="controllers.js"></script>
 <script src="saves.js"></script>
 <script src="touch.js"></script>
@@ -365,7 +366,8 @@ async function start() {
     // SDL hears the keyboard on the canvas only (its default is the whole window): keys typed in the page's controls do
     // not reach the game, and SDL does not swallow Tab and the arrows of the page.
     SDL_EMSCRIPTEN_KEYBOARD_ELEMENT: '#canvas',
-    // Dragon Net Battle (main-menu item 4): online play is not in the browser build (port/src/web/net_off.c)
+    // Dragon Net Battle (main-menu item 4): its window (the PC's ImGui lobby) is not in the browser build; the page's own
+    // comes later (docs/BROWSER_ONLINE_PLAN.md, P5). Online play itself (net.c, port/src/web/net_web.c) is.
     BT3_MENU_ITEM4: '0',
     // Texture packs (gs_texpack.c): natively the folder `textures` next to the program; here the program has no folder
     // of its own, so the data folder's `textures` (read over HTTP, web_fs.c). ?env=BT3_TEXTURES=... names another.
@@ -393,6 +395,9 @@ async function start() {
   const pre = {};
   s = step('fetching the game\'s programs from the data folder');
   for (const rel of early) pre[rel] = await data.whole(rel);
+  // where the game's own variables lie in bt3.wasm (port/tools/wasm_state.py): what state.c's checksum covers
+  // (BT3_HASH, online play's sync check). Without it the checksum covers the game's heap only, and says so.
+  const stateList = await fetch('bt3.mem').then((r) => (r.ok ? r.arrayBuffer() : null), () => null);
   s(`fetched ${early.map((r) => `${r} (${pre[r].length} bytes)`).join(', ')}`, 'ok');
   s = step('compiling and instantiating bt3.wasm');
   const t0 = performance.now();
@@ -409,9 +414,11 @@ async function start() {
           m.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
           m.FS.writeFile(path, pre[rel]);
         }
+        if (stateList) m.FS.writeFile('/bt3.mem', new Uint8Array(stateList));
         Object.assign(m.ENV, env);
         Bt3Settings.restore(m.FS);  // the settings saved by an earlier visit
         settings.attach(m);
+        if (typeof globalThis.bt3TestPreRun === 'function') globalThis.bt3TestPreRun(m);  // (tests: files for the game, e.g. BT3_NET_SCRIPT)
       }],
     });
   } catch (e) {

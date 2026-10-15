@@ -30,7 +30,7 @@ Environment:
 | Added stages and songs | **Found** in the data folder's `stages` / `songs` over HTTP (M3a); unavailable and said when the server does not list folders. **A battle on an added stage and playing an added song: not seen** (audit §6a) | Yes | `web/extras.js` |
 | Texture packs | **Yes**: the data folder's `textures`, found and used (M3b; a replacement seen on WebGL 2 and WebGPU) | Yes | `web/extras.js`, bench screenshots |
 | `mods/` file overrides | **Probably yes, untested** | Yes | code reading |
-| Online play | No: menu item hidden, `net_off.c` | Yes | by design |
+| Online play | **In progress** (docs/BROWSER_ONLINE_PLAN.md): upstream's `net.c` over a WebRTC data channel (`net_web.c`, `net_web.js`); two pages play in lockstep (`port/tests/web/net_o2.js`). No rollback, no matchmaking or lobby window yet; the menu item stays hidden | Yes | `web/net_o2.js` |
 | Vulkan, installer, release packaging | No | Yes | by design |
 
 ## 2. Baseline test results

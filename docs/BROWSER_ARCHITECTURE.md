@@ -15,7 +15,7 @@ compatibility / runtime      port/include, port/third_party/newlib_libm, softflo
         │                    headless.c, data tables (port/data shapes + values from the user's disc)
         ▼
 browser engine               port/src/gs/ (GS emulation, draw lists, pipeline keys, input, audio, state),
-        │                    port/src/web/ (file system, GL context, settings/pads/saves bridge, net_off)
+        │                    port/src/web/ (file system, GL context, settings/pads/saves bridge, net_web)
         ▼
 renderers                    gs_gl.c → WebGL 2 (default)        gs_wgpu.c → WebGPU (?gpu=webgpu)
         ▼
@@ -29,7 +29,7 @@ The one place where the layering leaks is **shared platform files with browser b
 ## 2. Game-facing interface (fact)
 
 The game reaches the platform only through four channels:
-1. **`Port_*` functions** called from `#ifdef PORT` blocks. There are 27; each is mapped to its browser definition in the audit, section 2. They are defined in `plat_stub.c`, `plat_mem.c`, `plat_gs.c`, `plat_fastvec.c`, `plat_stages.c`, `plat_songs.c`, `gs_marker.c`, `headless.c`, `gs/gs_draw.c`, `gs/gs_input.c`, `gs/namefont.c` and `web/net_off.c`.
+1. **`Port_*` functions** called from `#ifdef PORT` blocks. There are 27; each is mapped to its browser definition in the audit, section 2. They are defined in `plat_stub.c`, `plat_mem.c`, `plat_gs.c`, `plat_fastvec.c`, `plat_stages.c`, `plat_songs.c`, `gs_marker.c`, `headless.c`, `gs/gs_draw.c`, `gs/gs_input.c`, `gs/namefont.c` and `gs/net.c` (online play; its transport in the browser is `web/net_web.c`, docs/BROWSER_ONLINE_PLAN.md).
 2. **Link-time wraps** (`wasm_build.py`, `LINK`):
 
    | Wrapped call | Wrapper (file) | Purpose |

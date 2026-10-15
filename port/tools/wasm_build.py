@@ -118,7 +118,7 @@ def game_object(f):
 # ImGui) is not built either: the page has its own settings panel, and port/src/web/web_ui.c is the engine's side of
 # ui.h for it. With that the browser build has no C++ at all. The crash handlers (plat_crash.c: signals, Windows
 # exceptions) are not built either: in the browser the page catches a crash, and web/web_crash.c gives it the context.
-WASM_SKIP = {"net.c", "net_io.c", "net_match.c", "net_relay.c", "gs_gpu.c", "plat_crash.c"}
+WASM_SKIP = {"net_io.c", "net_match.c", "net_relay.c", "gs_gpu.c", "plat_crash.c"}
 HARD = {"plat_libm.c", "plat_fastvec.c"}  # host floats on purpose (undefined.py)
 SDL = ["-sUSE_SDL=3"]
 # Renderer back ends that exist only in the browser build: in port/src/web/, compiled with the renderer's flags and
@@ -217,7 +217,7 @@ LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000
         "-sEMULATE_FUNCTION_POINTER_CASTS=1",
         "-sMODULARIZE=1", "-sEXPORT_NAME=createBt3", "-sENVIRONMENT=web",
         "-sFORCE_FILESYSTEM=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV,HEAPU8,UTF8ToString,callMain,ccall",
-        "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext,_malloc,_free", "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
+        "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext,_malloc,_free", "-Wl,-Map=" + str(ROOT / "port/build/bt3_wasm.map"), "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
         "-Wl,--wrap=Progress_Main", "-Wl,--wrap=fopen",  # fopen: the data folder over HTTP (port/src/web/web_fs.c)
         "-Wl,--wrap=Port_PadRead",  # what the game receives from the pads, for the page (port/src/web/web_ui.c)
         # content added from outside the disc: said when it cannot be found here, and why
@@ -297,8 +297,11 @@ def link():
             break
         need |= more
         write_stubs()
-    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
+    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
         (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
+    if r.returncode == 0:  # the game's variables in bt3.wasm, for state.c's checksum (bt3.mem; wasm_state.py)
+        st = run([sys.executable, str(ROOT / "port/tools/wasm_state.py")])
+        print((st.stdout or st.stderr).strip())
     mism = re.findall(r"signature mismatch: (\S+)", r.stderr)
     errs = [l for l in r.stderr.splitlines() if "error" in l]
     print(f"{len(need)} stubs (port/build/wasm_stubs.txt); {len(mism)} signature mismatches left; link "
