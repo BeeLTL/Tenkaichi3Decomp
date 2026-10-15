@@ -18,14 +18,17 @@ The fonts are in `port/third_party/fonts/` (in a release: `fonts/` next to the p
 with its licence, and the list `fonts.tsv`:
 
 ```
-# file <tab> name in the list <tab> uses: 1 = Menu, 2 = Dialogue / UI, 3 = Battle (comma-separated)
-dejavu/DejaVuSansCondensed-Bold.ttf	DejaVu Sans Condensed Bold	1
+# file <tab> name in the list <tab> use: 1 = Menu, 2 = Dialogue / UI, 4 = Battle, added up for several
 fira/FiraSansCondensed-Bold.ttf	Fira Sans Condensed Bold	1
+dejavu/DejaVuSansCondensed-Bold.ttf	DejaVu Sans Condensed Bold	1
 dejavu/DejaVuSansCondensed.ttf	DejaVu Sans Condensed	2
-anton/Anton-Regular.ttf	Anton	3
+anton/Anton-Regular.ttf	Anton	4
 ```
 
-To offer one font in several settings, list its uses together, for example `1,2,3`.
+To offer one font in several settings, add their numbers: `3` for Menu and Dialogue / UI, `7` for all three. The
+column is the one it was before the Battle font came (1, 2, 3 = both), so lines added to an earlier list keep
+their meaning, and a line without it is offered for Menu and Dialogue / UI as before. Fira Sans Condensed Bold is
+first: it is the lettering of the PC's own screens (Tenkaichi Budokai Online) while the Menu font is "Original".
 To add a font, put the `.ttf` there and add a line; restart the game. A font has to be a static TrueType file
 (glyf outlines; not `.otf`, not a collection, not a variable font), have a capital `H` (the letter height is taken
 from it) and be at most 16 MB. Choices are kept by file path, not by their place in the list.

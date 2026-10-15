@@ -504,26 +504,29 @@ static void fonts_read(void) {
     while (fgets(line, sizeof(line), fp) != NULL) {
         MenuFont font, *next;
         char *name, *usage;
+        int bits;
         size_t n, i;
         unsigned id = 2166136261u;
         if (line[0] == '#' || (name = strchr(line, '\t')) == NULL) { continue; }
         *name++ = '\0';
+        /* The use: one number, the sum of 1 (Menu), 2 (Dialogue / UI) and 4 (Battle), as the column was before the
+           Battle font came (3 = both of the first two); without the column, those two, as before too. Lines that
+           players added keep their meaning. */
         usage = strchr(name, '\t');
-        if (usage == NULL) { continue; }
-        *usage++ = '\0';
-        memset(font.uses, 0, sizeof(font.uses));
-        for (;;) {
-            char *end = usage + strcspn(usage, ",\r\n");
-            char *last = end;
-            while (*usage == ' ') { usage++; }
-            while (last > usage && last[-1] == ' ') { last--; }
-            if (last - usage == 1 && usage[0] >= '1' && usage[0] <= '0' + FONT_BATTLE) {
-                font.uses[usage[0] - '0'] = 1;
-            } else { memset(font.uses, 0, sizeof(font.uses)); break; }
-            if (*end != ',') { break; }
-            usage = end + 1;
+        bits = 3;
+        if (usage != NULL) {
+            char *end;
+            long v;
+            *usage++ = '\0';
+            v = strtol(usage, &end, 10);
+            while (*end == ' ' || *end == '\r' || *end == '\n') { end++; }
+            bits = end == usage || *end != '\0' || v < 1 || v > 7 ? 0 : (int)v;
         }
-        if (!font.uses[FONT_MENU] && !font.uses[FONT_DIALOGUE] && !font.uses[FONT_BATTLE]) { continue; }
+        memset(font.uses, 0, sizeof(font.uses));
+        font.uses[FONT_MENU] = (bits & 1) != 0;
+        font.uses[FONT_DIALOGUE] = (bits & 2) != 0;
+        font.uses[FONT_BATTLE] = (bits & 4) != 0;
+        if (bits == 0) { continue; }
         n = strlen(line);
         if (!n || n >= sizeof(font.file) || line[0] == '/' || strchr(line, '\\') || strchr(line, ':') ||
             strcmp(line, "..") == 0 || strncmp(line, "../", 3) == 0 || strstr(line, "/../")) { continue; }

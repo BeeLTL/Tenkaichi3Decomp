@@ -73,15 +73,16 @@ def font_entries(fonts):
         if not line or line.startswith('#'):
             continue
         fields = line.split('\t')
-        if len(fields) != 3:
+        if len(fields) not in (2, 3):
             continue
-        path, name, uses = fields
-        roles = [role.strip() for role in uses.split(',')]
+        path, name = fields[0], fields[1].strip()
+        use = fields[2].strip() if len(fields) == 3 else '3'  # (the sum of 1 Menu, 2 Dialogue / UI, 4 Battle)
         if (not path or len(path) >= 256 or path.startswith('/') or '\\' in path or ':' in path or
                 path == '..' or path.startswith('../') or '/../' in path or
-                not name or len(name) >= 256 or not roles or any(role not in ('1', '2', '3') for role in roles)):
+                not name or len(name) >= 256 or not use.isdigit() or not 1 <= int(use) <= 7):
             continue
-        entries.append((path, name, {int(role) for role in roles}))
+        bits = int(use)
+        entries.append((path, name, {role for role, bit in ((FONT_MENU, 1), (FONT_DIALOGUE, 2), (FONT_BATTLE, 4)) if bits & bit}))
     return entries
 
 

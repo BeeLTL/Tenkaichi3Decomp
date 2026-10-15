@@ -37,8 +37,8 @@ Texture packs (PCSX2 naming, .dds or .png) go into textures/, stages and music f
 stages/ and songs/: see the note in each folder.
 F1 > UI has three font settings, all starting on "Original": "Menu font" draws menu labels, "Battle font" draws
 announcements and HUD text, and "Dialogue / UI font" draws the game's ordinary text. Their fonts and licences are
-in fonts/. To add a .ttf, put it there and list it in fonts.tsv. The third column lists where it can be used:
-1 = Menu, 2 = Dialogue / UI, 3 = Battle; combine numbers with commas, such as 1,2,3.
+in fonts/. To add a .ttf, put it there and list it in fonts.tsv. The third column says where it can be used:
+1 = Menu, 2 = Dialogue / UI, 4 = Battle, added up for several (3 = Menu and Dialogue / UI, 7 = all three).
 The game makes the menu and battle label list from your disc data on its first start (gamedata/game-text/, in the
 background). Menu and Battle font choices appear when the list is ready.
 

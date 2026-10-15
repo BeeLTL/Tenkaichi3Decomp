@@ -62,7 +62,7 @@ static void setup(void) {
     for (i = 0; i < sizeof(sTex); i++) { hash = (hash ^ sTex[i]) * UINT64_C(1099511628211); }
     snprintf(path, sizeof(path), "%s/fonts.tsv", sDir);
     fp = fopen(path, "wb");
-    fprintf(fp, "f.ttf\tFuzzed\t1,2,3\n");
+    fprintf(fp, "f.ttf\tFuzzed\t7\n");
     fclose(fp);
     snprintf(path, sizeof(path), "%s/labels.tsv", sDir);
     fp = fopen(path, "wb");
