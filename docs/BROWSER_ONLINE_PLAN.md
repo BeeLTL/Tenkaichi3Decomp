@@ -61,6 +61,32 @@ timing and its waits.
   behaviour change, checked with `port/tests/native/compare.sh` and upstream's own net tests (`BT3_NET_SCRIPT`,
   `BT3_NET_LOSS`, `BT3_NET_LAG`).
 
+**As built (P1).** `port/src/gs/net_io.h` / `net_io.c`, six calls:
+
+| Call | Native (`net_io.c`) | Was in `net.c` |
+|---|---|---|
+| `NetIo_Open()` | `WSAStartup` (Windows, every time, never cleaned up, as before) + `socket(AF_INET, SOCK_DGRAM)` + non-blocking (`ioctlsocket` / `fcntl`); the result is not checked, as before | `net_start`, `Port_LobbyStart` |
+| `NetIo_Bind(h, local)` | `bind` | `net_start` (host; the joiner's room-code port), `Port_LobbyStart` (host) |
+| `NetIo_LocalAddr(h, out)` | `getsockname` | `Port_LobbyStartCode` (the port the system chose) |
+| `NetIo_SendTo(h, buf, n, to)` | `sendto` | `net_send` (direct packets; the relay path is unchanged) |
+| `NetIo_RecvFrom(h, buf, size, from)` | `recvfrom` on the non-blocking socket | `net_recv` (the relay's unwrapping is unchanged) |
+| `NetIo_Close(h)` | `closesocket` / `close` | six places (session begin / end, lobby start / cancel / launch) |
+
+Everything else in `net.c` is as it was: packet formats, `NET_VERSION`, the 16-fold input redundancy, the input delay,
+the sync check, rollback, the relay calls, the statistics, the waits, the address parsing (`inet_pton`,
+`gethostbyname`). `net_io.c` is not in the browser build (`WASM_SKIP`); the browser's own comes with P2.
+
+What the contract does not cover, on purpose (native only, to be met differently in the browser):
+- **The socket is shared.** The handle is the socket: `net_match.c` uses it for STUN (its public address) and, on its
+  own thread, to ask the TURN server for a relay address (`Match_SocketBusy`), and `net_relay.c` sends TURN messages on
+  it. They must speak from the same local port as the match, or NAT traversal fails, so they keep the raw socket. In
+  the browser, WebRTC's ICE does STUN and TURN itself: `net_match.c` and `net_relay.c` are not built; `net.c`'s calls
+  to them need browser counterparts (the relay ones: "no relay", the matchmaking ones: P4).
+- **Addresses.** `net.c` names peers by `sockaddr_in` and compares them. The browser has one peer per session; a
+  fixed placeholder address will stand for it (P2).
+- **Receive.** Natively "nothing there" is `recvfrom` returning -1 (would block); `net.c` treats any `n <= 0` as
+  nothing, so a browser that returns 0 is the same to it.
+
 ### 4.2 Signalling and NAT: the Worker, extended
 
 WebRTC needs the two pages to swap an offer and an answer (SDP, with ICE candidates) before packets flow. The
@@ -140,6 +166,53 @@ Conclusions:
   channel's `onmessage` resolves (with the timeout as a fallback), not with timers, so the game resumes when the
   packet arrives. To be built and measured in P2.
 - Not measured yet: two separate pages, real networks, loss. Those are P2 (O2) and P4 (O4).
+
+### P1 (2026-10-15): `net_io`, the transport seam
+
+Commit `657dcec` (and the test harness fixes after it), on top of `ab1e6e7`. Diff: `net.c` 15 lines in, 36 out, all
+of them the socket calls listed in 4.1 and the `#ifdef`s around them; no game code (`src/`) changed.
+
+**Upstream's scripted online scenarios, natively, before (`ab1e6e7`) against after (`657dcec`):**
+`port/tests/native/net_compare.sh` (new; `net_in_container.sh`, `net_script.py`): the Linux x86-64 program built in
+the release container, two copies over UDP on 127.0.0.1, 120 s per scenario, a state checksum every blank. Upstream's
+own input recording ("session6") is not in the repository; `net_script.py` makes a fixed made-up table instead.
+
+| Scenario | Blanks (before / after) | Host = joiner, whole state | Before = after, fight values |
+|---|---|---|---|
+| lockstep, delay 2 | 77,312 / 81,204 | every blank, both builds | no fight reached (menus) |
+| 20% loss, delay 2 | 76,609 / 79,800 | every blank, both builds | no fight reached |
+| 30% loss, 4 ms lag, delay 3 | 20,604 / 20,809 | every blank, both builds | no fight reached |
+| rollback 6, 50 ms latency, 15% loss | 19,404 / 19,404 | every blank, both builds | no fight reached |
+| attract demo, lockstep | 4,428 / 4,428 | every blank, both builds | **identical, 4,242 blanks of fighting** |
+| attract demo, rollback 6, 50 ms, 15% loss | 4,423 / 4,426 | every blank, both builds | **identical, 4,237 / 4,240 blanks of fighting** |
+| attract demo, offline (control) | 4,428 / 4,428 | (one copy) | identical, 4,242 |
+
+`RESULT: PASS` (75 checks); no copy reported a desync. Also: the networked demo fight's values equal the offline
+fight's at every blank, lockstep and rollback, in both builds.
+
+The whole-state checksum differs between the two builds at every blank, **also in the offline control**, where
+`net.c` never runs: the state holds addresses of functions and variables, which move when any code changes size
+(state.c says so). That is why builds are compared on the fight's own values, as upstream's tests do, and copies of
+one build on everything.
+
+The first run of the comparison reported 4 failures, each at the last blank of a run: the time-out had cut the
+program off in the middle of writing that line. The harness now ignores a last line without its newline.
+
+**Native, offline (`port/tests/native/compare.sh ab1e6e7 657dcec`, `RUN_WINDOWS=1`):** headless trace 70 lines
+identical; OpenGL (llvmpipe) trace 12 lines and 4 screenshots identical (frame 450 reached); Vulkan (lavapipe) trace
+67 lines and 15 screenshots identical (frame 2100 reached); the Windows build run on this machine: trace 70 lines
+identical.
+
+**Other builds:** the 32-bit Linux variant (`gcc -m32`) is not in the release container (no 32-bit headers); in a
+throwaway container with `gcc-multilib`, `net.c` compiles before and after with the same 8 warnings and `net_io.c`
+with none. Compiled, not run. The macOS variant (`mac64`) was **not built or tested** (no Mac here).
+
+**P0 timing test again (after P1):** 30.00 ticks/s, no waits, round trip median 0.50 to 0.52 ms, sleeps 4.7 to 4.8 ms:
+as in P0 (the probe does not use `net_io`; this only shows the machine and the toolchain still behave the same).
+
+**Browser:** the build is byte-identical to before (`bt3.wasm` and `bt3.js` checksums unchanged: `net.c` and
+`net_io.c` are not in it); demo fight trace `8ad198bf58dbed33` on WebGL 2 and WebGPU, 48 of 48 screenshots (demo and
+boot, both renderers) identical to the 0.1.35 results.
 
 ## 7. Later, and why
 
