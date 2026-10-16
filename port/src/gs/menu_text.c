@@ -31,6 +31,11 @@
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <windows.h> /* GetModuleFileNameA */
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h> /* _NSGetExecutablePath */
+#endif
 #define STBTT_assert(x) ((void)0) /* never stops the game over a font; face_open has checked what it relies on */
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -386,6 +391,40 @@ static int file_there(const char *path) {
     return fp != NULL;
 }
 
+/* The fonts' folder when the program is started from another folder than its own (seen by the user: a fresh
+   checkout, the game run from elsewhere, "only Original and no fonts"): fonts/ next to the program (a release),
+   or the checkout's port/third_party/fonts from the program in port/build. 0: neither is there. */
+static int font_dir_by_program(char *out, size_t size) {
+    static const char *const kTry[] = {"fonts", "../third_party/fonts"};
+    char exe[1024], path[1200];
+    size_t i;
+    char *slash;
+#ifdef _WIN32
+    long n = (long)GetModuleFileNameA(NULL, exe, sizeof(exe) - 1);
+#elif defined(__APPLE__)
+    uint32_t cap = sizeof(exe) - 1;
+    long n = _NSGetExecutablePath(exe, &cap) == 0 ? (long)strlen(exe) : -1;
+#else
+    long n = (long)readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+#endif
+    if (n <= 0 || n >= (long)sizeof(exe) - 1) { return 0; }
+    exe[n] = '\0';
+    slash = strrchr(exe, '/');
+#ifdef _WIN32
+    if (strrchr(exe, '\\') > slash) { slash = strrchr(exe, '\\'); }
+#endif
+    if (slash == NULL) { return 0; }
+    slash[1] = '\0';
+    for (i = 0; i < sizeof(kTry) / sizeof(kTry[0]); i++) {
+        snprintf(path, sizeof(path), "%s%s/fonts.tsv", exe, kTry[i]);
+        if (file_there(path)) {
+            snprintf(out, size, "%s%s", exe, kTry[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* What labels.tsv the folder has: 0 none, 1 the current layout, 2 an older layout. */
 static int labels_state(void) {
     char path[1200], line[256];
@@ -408,6 +447,9 @@ static void menu_text_dirs(void) {
         snprintf(sFontDir, sizeof(sFontDir), "%s", fonts);
     } else {
         snprintf(sFontDir, sizeof(sFontDir), "%s", file_there("fonts/fonts.tsv") ? "fonts" : "port/third_party/fonts");
+        if (!file_there("fonts/fonts.tsv") && !file_there("port/third_party/fonts/fonts.tsv")) {
+            font_dir_by_program(sFontDir, sizeof(sFontDir));
+        }
     }
     if (labels != NULL) {
         snprintf(sLabelDir, sizeof(sLabelDir), "%s", labels);
