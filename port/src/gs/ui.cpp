@@ -14,6 +14,7 @@
 #include "namefont.h"
 #include "../port_release.h"
 #include "menu_text.h"
+#include "menu_translation.h"
 #include "../quit_dialog.h"
 #include "net_chat.h"
 
@@ -86,6 +87,9 @@ void Port_LobbyCancel(void);
 void Port_LobbyLaunch(void);
 }
 static bool sReady, sOpen;
+static MenuTranslationOption sLanguages[256];
+static int sLanguageCount, sLanguageChoice;
+static bool sLanguageRestartPending;
 static bool sNet;                              // the open window is the online screen (Dragon Net Battle), not the settings
 static int sForceTab = -1;                     // BT3_UI_OPEN=<tab>: open at start on that tab (testing)
 static int sCapKind, sCapPlayer, sCapAction;   // waiting for a key (1) or a controller button (2) to bind
@@ -446,6 +450,34 @@ static void style() {
     c[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 1.0f, 1.0f, 0.03f);
 }
 
+static void language_init() {
+    const char *override = getenv("BT3_MENU_LANG");
+    char saved[16];
+    Port_SettingText("menu_lang", "", saved, sizeof(saved));
+    sLanguageCount = MenuTranslation_Available(sLanguages, (int)(sizeof(sLanguages) / sizeof(sLanguages[0])));
+    sLanguageChoice = 0;
+    const char *preferred = override != NULL && override[0] != '\0' ? override : saved[0] != '\0' ? saved : "en";
+    for (int i = 0; i < sLanguageCount; i++) if (strcmp(sLanguages[i].locale, preferred) == 0) sLanguageChoice = i;
+}
+
+extern "C" void Ui_LanguageChosen(const char *locale) {
+    if (locale == NULL) return;
+    for (int i = 0; i < sLanguageCount; i++) {
+        if (strcmp(sLanguages[i].locale, locale) == 0) {
+            sLanguageChoice = i;
+            sLanguageRestartPending = false;
+            break;
+        }
+    }
+}
+
+static void language_choose(int choice) {
+    if (choice < 0 || choice >= sLanguageCount) return;
+    MenuTranslation_SaveChoice(sLanguages[choice].locale);
+    sLanguageChoice = choice;
+    sLanguageRestartPending = true;
+}
+
 int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const char *gpu_name) {
     static const char *fonts[] = { // a proportional system font if there is one; else the library's built-in font
         "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -499,8 +531,9 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const c
     ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll, NULL, 0); // any connected controller works the window
     sDevice = device;
     sReady = true;
+    language_init();
     load_strips(); /* the stage- and song-name overlays; the ready flags stay 0 if there is no strip */
-    if (getenv("BT3_UI_OPEN") != NULL) {
+    if (getenv("BT3_UI_OPEN") != NULL && !MenuTranslation_BootPending()) {
         sForceTab = atoi(getenv("BT3_UI_OPEN"));
         if (sForceTab == 9) { // testing: the online screen
             sForceTab = -1;
@@ -1411,6 +1444,25 @@ static void misc_tab(void) {
 }
 
 static void ui_tab(PortVideo &v) {
+    if (sLanguageCount > 0) {
+        bool overridden = getenv("BT3_MENU_LANG") != NULL && getenv("BT3_MENU_LANG")[0] != '\0';
+        ImGui::BeginDisabled(overridden || Port_NetActive());
+        if (ImGui::BeginCombo("Language", sLanguages[sLanguageChoice].name)) {
+            for (int i = 0; i < sLanguageCount; i++) {
+                if (ImGui::Selectable(sLanguages[i].name, i == sLanguageChoice) && i != sLanguageChoice) language_choose(i);
+                if (i == sLanguageChoice) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Menu and battle labels from the selected translation JSON. A restart applies a new choice.\n"
+                              "A Menu and Battle font are selected if their current setting is Original.\n"
+                              "An explicit BT3_MENU_LANG launch setting takes precedence.");
+        if (sLanguageRestartPending) {
+            ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.35f, 1.0f), "Language saved. It will apply on the next launch.");
+        }
+        ImGui::Separator();
+    }
     if (ImGui::BeginCombo("Menu font", MenuText_FontName(v.menuFont))) {
         for (int i = 0; i < MenuText_FontCount(); i++) {
             if (!MenuText_FontAvailable(i, MENU_TEXT_MENU)) { continue; }
