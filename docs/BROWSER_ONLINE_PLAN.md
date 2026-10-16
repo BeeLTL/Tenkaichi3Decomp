@@ -503,6 +503,26 @@ raises the list's size.
 
 Files shared with upstream: none changed in P5 (`port/web`, `port/src/web`, the build and package tools, tests).
 
+**The chat box and the connection meter (2026-10-16, closing P5).** Natively the settings window draws both
+(`ui.cpp` chat_draw / meter_draw). The browser build has no ImGui, so the page draws them (`port/web/net_overlay.js`)
+from the engine's values (`web_ui.c`: `Bt3Ui_ChatLines`, `Bt3Ui_ChatSay`, `Bt3Ui_ChatClose`, `Bt3Ui_ChatMuted*`,
+`Bt3Ui_NetStats`). `net_chat.c` and the chat packets are upstream's, unchanged. The rules are the native ones:
+- **Meter** (setting `meter`, off by default, as natively): during a match, the ping (and "relay"), rollbacks, the
+  time waited for the other player, the input delay.
+- **Chat** (setting `chat`, on by default): the last lines in the lower left, each shown 8 s and faded over the last
+  2; the box size from the setting `chat_size` (Compact / Normal / Large).
+- **Typing:** the chat key (Tab, the engine's `key_chat`) opens a line during a match (`web_ui.c` Ui_Event; the
+  keyboard is not the game's meanwhile, `gPortChatTyping`). Enter sends it (one line a second), Esc or Tab puts it
+  away; the other player can be muted, and a click on a line copies it.
+
+The three settings are in the Online tab, under the signalling server. O5 now also checks, in every session: the
+meter shows the ping; Tab opens the line on the host; a line sent with Enter shows on the other page; the line
+closes and the keyboard is the game's again. **O5 passes** (2 cycles: meter "ping 2 ms … delay 2", the line heard on
+the other page).
+
+**P5 is done on one machine.** Online play runs from the game's own menu, with the code typed or pasted, Copy Code,
+the meter and the chat.
+
 Not covered: two machines and real networks, NAT, the TURN relay (a deployed Worker and two people: O4 proper, P6);
 a controller (the keyboard plays the pad); Quick Match.
 

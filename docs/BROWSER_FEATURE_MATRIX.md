@@ -30,7 +30,7 @@ Environment:
 | Added stages and songs | **Found** in the data folder's `stages` / `songs` over HTTP (M3a); unavailable and said when the server does not list folders. **A battle on an added stage and playing an added song: not seen** (audit §6a) | Yes | `web/extras.js` |
 | Texture packs | **Yes**: the data folder's `textures`, found and used (M3b; a replacement seen on WebGL 2 and WebGPU) | Yes | `web/extras.js`, bench screenshots |
 | `mods/` file overrides | **Probably yes, untested** | Yes | code reading |
-| Online play | **In progress** (docs/BROWSER_ONLINE_PLAN.md): upstream's `net.c` over a WebRTC data channel (`net_web.c`, `net_web.js`); two pages play in lockstep (`port/tests/web/net_o2.js`). No rollback, no matchmaking or lobby window yet; the menu item stays hidden | Yes | `web/net_o2.js` |
+| Online play | **Yes, tested on one machine** (docs/BROWSER_ONLINE_PLAN.md, P0–P5): upstream's `net.c` over a WebRTC data channel; the game's own Tenkaichi Budokai Online menu (Create Room / Join Room, Copy Code, paste); room codes through our signalling Worker (`port/web/signal`, not deployed); the session by a page reload; chat and connection meter. Input delay only (no rollback), no Quick Match; two machines and the relay not tested yet | Yes (with rollback) | `web/net_o2.js` … `net_o5.js`, `signal/test.mjs` |
 | Vulkan, installer, release packaging | No | Yes | by design |
 
 ## 2. Baseline test results

@@ -300,7 +300,7 @@ def link():
             break
         need |= more
         write_stubs()
-    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
+    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "net_overlay.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
         (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
     # Tenkaichi Budokai Online's pictures (port/tbo/ui, with their credits): the page puts them at /tbo/ui in the game's
     # file system (the program's folder is "/"), where gs_draw.c tbo_texture looks; files.txt lists them for it

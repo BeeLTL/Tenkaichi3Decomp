@@ -8,7 +8,9 @@
 //   3. the other page joins on the keypad: cycle 1 types the code (the keyboard's letters, web_ui.c's text input),
 //      cycle 2 pastes it (Ctrl+V: the page takes the browser's paste, Bt3Ui_TboPaste); then Enter;
 //   4. both pages load again for the session, connect again through the room, reach the character select, agree;
-//   5. backing out on the host ends the session on both.
+//   5. in the session: the connection meter (setting "meter") shows the ping; Tab opens the chat's line on the host,
+//      a line typed there and sent with Enter shows on the other page; the box closes and the keyboard is the game's;
+//   6. backing out on the host ends the session on both.
 // The gameplay fingerprint (online play's "two unmodded games") comes from the data server (devserver.py).
 // What this does not show: two machines, NAT, the relay; a controller (the keyboard plays the pad here).
 //   node port/tests/web/net_o5.js
@@ -166,7 +168,26 @@ async function toHub(p) {
     }
     check(arrived && /started again for a session/.test(lh) && /started again for a session/.test(lj), `cycle ${c}: both in the session at the character select`);
     check(!/no longer agree/.test(lh + lj), `cycle ${c}: no desync`);
-    // 5. back out on the host
+    // 5. the meter and the chat (net_overlay.js)
+    if (arrived) {
+      await host.ev(`bt3Module.ccall('Bt3Ui_Set','number',['string','number'],['meter',1])`);
+      const meter = await until('the meter', async () => /ping (\d+|\.\.\.)/.test(await host.ev(`document.getElementById('net-meter').hidden ? '' : document.getElementById('net-meter').textContent`)), 5000);
+      check(meter, `cycle ${c}: the connection meter: ${JSON.stringify(await host.ev(`document.getElementById('net-meter').textContent`))}`);
+      await host.ev(`document.getElementById('canvas').focus(), 0`);
+      await host.b.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', code: 'Tab', key: 'Tab', windowsVirtualKeyCode: 9 });
+      await host.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Tab', key: 'Tab', windowsVirtualKeyCode: 9 });
+      const opened = await until('the chat line', async () => host.ev(`document.activeElement === document.querySelector('#net-chat input[type=text]') && !document.getElementById('net-chat').hidden`), 5000);
+      check(opened, `cycle ${c}: Tab opens the chat's line (focused)`);
+      const said = `hello from cycle ${c}`;
+      await host.b.send('Input.insertText', { text: said });
+      await host.b.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, text: String.fromCharCode(13) });
+      await host.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13 });
+      const heard = await until('the line on the other page', async () => (await join.ev(`document.getElementById('net-chat').hidden ? '' : document.getElementById('net-chat').textContent`)).includes(said), 8000);
+      check(heard, `cycle ${c}: the line reaches the other page: ${JSON.stringify(await join.ev(`document.getElementById('net-chat').textContent`))}`);
+      check(await host.ev(`document.querySelector('#net-chat input[type=text]').hidden && document.activeElement === document.getElementById('canvas')`),
+            `cycle ${c}: Enter sent it and closed the line; the keyboard is the game's again`);
+    }
+    // 6. back out on the host
     if (arrived) {
       await host.ev(`globalThis.__o5mark = 1`); await join.ev(`globalThis.__o5mark = 1`);
       await host.ev(`document.getElementById('canvas').focus(), 0`);

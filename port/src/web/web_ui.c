@@ -149,6 +149,14 @@ extern int Port_Menus43(void);
 extern void Port_Menus43Set(int on);
 static int get_skip_logos(void) { return Port_Setting("skip_logos", 0) != 0; }
 static void set_skip_logos(int x) { Port_SettingSave("skip_logos", x != 0); Port_SettingsWrite(); }
+/* online play's chat (net_chat.c: on by default) and the size of its box, the meter over the game (ui.cpp's names) */
+#include "gs/net_chat.h"
+static int get_chat(void) { return PortChat_Enabled(); }
+static void set_chat(int x) { PortChat_EnabledSet(x != 0); }
+static int get_chat_size(void) { int v = Port_Setting("chat_size", 1); return v < 0 || v > 2 ? 1 : v; }
+static void set_chat_size(int x) { Port_SettingSave("chat_size", x < 0 || x > 2 ? 1 : x); Port_SettingsWrite(); }
+static int get_meter(void) { return Port_Setting("meter", 0) != 0; }
+static void set_meter(int x) { Port_SettingSave("meter", x != 0); Port_SettingsWrite(); }
 static int get_skip_intro(void) { return Port_Setting("skip_intro", 0) != 0; }
 static void set_skip_intro(int x) { Port_SettingSave("skip_intro", x != 0); Port_SettingsWrite(); }
 static int get_skip_copyright(void) { return Port_Setting("skip_copyright", 0) != 0; }
@@ -224,6 +232,9 @@ static const struct {
     {"unlock_done", get_unlock_done, NULL},
     {"save_loaded", get_save_loaded, NULL},
     {"frame", get_frame, NULL},
+    {"chat", get_chat, set_chat},
+    {"chat_size", get_chat_size, set_chat_size},
+    {"meter", get_meter, set_meter},
     {"net_active", get_net_active, NULL},
     {"net_session", get_net_session, NULL},
     {"net_arrived", get_net_arrived, NULL},
@@ -461,6 +472,76 @@ EMSCRIPTEN_KEEPALIVE void Bt3Ui_Clipboard(const char *text) {
     SDL_SetClipboardText(text != NULL ? text : "");
 }
 
+/* ---- online play's chat and connection meter (natively ui.cpp's chat_draw / meter_draw; the page draws them,
+   port/web/net_overlay.js). The chat key (Tab by default, PortInput_ChatKey) opens the line during a match: the page
+   is told (chatOpen), takes the keyboard (gPortChatTyping: not the game's meanwhile) and gives it back (Bt3Ui_ChatClose). */
+extern int gPortChatTyping;
+extern int *PortInput_ChatKey(void);
+extern void PortInput_SwallowKeys(void);
+extern int Port_NetStats(int *out), Port_NetMe(void), Port_LobbyRelayed(void);
+extern const char *Port_NetName(int player);
+
+static int chat_online(void) {
+    return gPortVBlanks > 0 && Port_NetActive() && PortChat_Enabled(); /* (not before the first blank: get_net_active) */
+}
+
+/* The chat's lines for the page, oldest first: "mine<TAB>age ms<TAB>sender<TAB>text" each, a line feed between; the
+   last `rows` only. "" outside a match. */
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_ChatLines(int rows) {
+    static char out[16 * (CHAT_TEXT + 64)];
+    unsigned n, i, first;
+    size_t used = 0;
+    uint64_t now = SDL_GetTicks();
+
+    out[0] = '\0';
+    if (!chat_online()) {
+        return out;
+    }
+    n = PortChat_Count();
+    rows = rows < 1 ? 1 : rows > 16 ? 16 : rows;
+    first = n > (unsigned)rows ? n - (unsigned)rows : 0;
+    for (i = first; i < n && used < sizeof(out) - 1; i++) {
+        PortChatLine l;
+        const char *sender;
+        if (!PortChat_Line(i, &l)) {
+            continue;
+        }
+        sender = l.sender[0] != '\0' ? l.sender : Port_NetName(l.mine ? Port_NetMe() : !Port_NetMe());
+        if (sender == NULL || sender[0] == '\0') {
+            sender = l.mine ? "You" : "Rival";
+        }
+        used += (size_t)snprintf(out + used, sizeof(out) - used, "%s%d\t%llu\t%s\t%s", used ? "\n" : "", l.mine ? 1 : 0,
+                                 (unsigned long long)(now - l.atMs), sender, l.text);
+    }
+    return out;
+}
+
+/* Sends a line. 1 = sent; 0 = nothing to send, or within a second of the last (kept by the page, sent again). */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_ChatSay(const char *text) {
+    return chat_online() && text != NULL && PortChat_Say(text);
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_ChatClose(void) {
+    if (gPortChatTyping) {
+        gPortChatTyping = 0;
+        PortInput_SwallowKeys(); /* (Enter, which sent the line, is START: not the game's until it is let go) */
+    }
+}
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_ChatMuted(void) { return PortChat_Muted(); }
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_ChatMutedSet(int on) { PortChat_MutedSet(on != 0); }
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_ChatOnline(void) { return chat_online(); }
+
+/* The connection meter (net.c Port_NetStats, as ui.cpp shows it): "ping,rollbacks/s,rollback frames x10,waits/s,
+   ms waited/s,rollback limit,delay,auto delay,relayed"; "" when no match is on. */
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetStats(void) {
+    static char out[96];
+    int n[8];
+    out[0] = '\0';
+    if (gPortVBlanks > 0 && Port_NetActive() && Port_NetStats(n)) {
+        snprintf(out, sizeof(out), "%d,%d,%d,%d,%d,%d,%d,%d,%d", n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], Port_LobbyRelayed());
+    }
+    return out;
+}
+
 EMSCRIPTEN_KEEPALIVE int Bt3Ui_TboTyping(void) {
     return gPortTboTyping && !gPortOverlayOpen;
 }
@@ -484,6 +565,12 @@ int Ui_Event(const SDL_Event *ev) {
     }
     if (!gPortOverlayOpen && sCapKind == CAPTURE_NONE && PortInput_TboEvent(ev)) {
         return 1; /* typed on a keypad (as ui.cpp) */
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat && !gPortOverlayOpen && !gPortChatTyping && sCapKind == CAPTURE_NONE &&
+        *PortInput_ChatKey() > 0 && (int)ev->key.scancode == *PortInput_ChatKey() && chat_online()) {
+        gPortChatTyping = 1; /* the chat's line: the page's (net_overlay.js) until Bt3Ui_ChatClose */
+        page_call("chatOpen", 0);
+        return 1;
     }
     return sCapKind != CAPTURE_NONE && capture_event(ev);
 }

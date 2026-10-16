@@ -89,7 +89,15 @@ const PANEL = [
   ] },
   { tab: 'Saves', items: [{ saves: true }] },
   { tab: 'Touch', items: [{ touch: true }] },
-  { tab: 'Online', items: [{ online: true }] },
+  { tab: 'Online', items: [
+    { online: true },
+    { key: 'chat', label: 'Chat', type: 'checkbox',
+      help: 'During an online match, Tab opens a line to the other player (Enter sends, Esc closes). The last lines show in the lower left.' },
+    { key: 'chat_size', label: 'Chat box size', type: 'select', when: (s) => s.get('chat') === 1,
+      options: [[0, 'Compact'], [1, 'Normal'], [2, 'Large']] },
+    { key: 'meter', label: 'Connection meter', type: 'checkbox',
+      help: 'During an online match: the ping, the time spent waiting for the other player, the input delay.' },
+  ] },
   { tab: 'Extras', items: [
     { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
       help: "How fast the game runs (the sound keeps its pitch). 100% is the game's own; 114% is what competitive play uses." },
@@ -124,6 +132,7 @@ class Bt3Settings {
     this.captureListener = null;  // the guided set-up's, while it runs: the engine's captureDone goes there
     this.controllers = new Bt3Controllers(this);  // the Controls tab's controller part (controllers.js)
     this.touch = new Bt3Touch({ stage, settings: this, log });  // the on-screen touch controls and the Touch tab (touch.js)
+    this.netOverlay = new Bt3NetOverlay({ stage, settings: this });  // online play's chat box and connection meter (net_overlay.js)
     // the Developer section's live numbers and the diagnostics export (dashboard.js)
     this.dashboard = new Bt3Dashboard({ root: document.getElementById('dev-dashboard'), renderer, data, log, getLog,
                                         getSettings: () => this.snapshot() });
@@ -187,6 +196,7 @@ class Bt3Settings {
       screenshot: (rgba, w, h) => this.saveScreenshot(rgba, w, h),
       cardWritten: () => this.saves.cardWritten(),
       copy: (text) => this.copyText(text),
+      chatOpen: () => this.netOverlay.open(),
     };
   }
 
