@@ -432,6 +432,80 @@ scenarios, at 58.8 / 24.7 / 58.8 blanks a second, and the demo fight equals the 
 **O4 proper is not done:** two machines on different networks, NAT, and the TURN relay need a deployed Worker and
 two people. Only then is P4 cleared. Until then: same machine, local Worker, no NAT, no relay.
 
+### P5 (2026-10-16): online play from the game's own menu
+
+**Decision: no window of the page's own.** Upstream's Tenkaichi Budokai Online screens (the main menu's fifth item,
+`src/menu/port_tbo.c`, since 0.1.35) already drive `net.c`'s room-code lobby: Create Room, Join Room with a keypad,
+Copy Code, the search, the session. Since P4 those lobby calls reach our signalling Worker in the browser, so the
+game's menu is the online window. P5 made that menu work in the page. It found four browser gaps, each fixed
+where it lies:
+
+1. **The fonts.** The TBO screens write every word with the TrueType fonts of `port/third_party/fonts`
+   (`menu_text.c`, `gs/tbo_text.c`). The browser build never shipped them, so its bars were blank.
+   `wasm_build.py` now copies them (with their licences) to `web/fonts` with a `files.txt`, `index.html` puts them
+   at `/fonts`, and `browser_package.py` packages them.
+2. **The gameplay fingerprint.** Upstream's rule for online play is two unmodded games: `Tb_Vanilla` asks
+   `Port_DataFingerprint`, a hash of about 1.2 GB of gameplay data (1,780 files) worked out on the native data
+   check's thread. The browser has no thread for it and would fetch it all at every start, so the menu said
+   "Cannot Go Online". Now the data server works it out with `port/tools/make_fingerprint.py` (upstream's second
+   implementation of the same definition), once per folder, about 3 s (`devserver.py`:
+   `/<data folder>/.bt3-fingerprint`, hashes only). The page hands the hashes to the game (`BT3_WEB_FPRINT`), and
+   `web/web_verify.c` (linked wraps of `Port_DataFingerprint*`) decides "original" itself against the native
+   table (`plat_fprint_tab.h`). The rule is unchanged; a data server without the endpoint leaves the menu at
+   "Cannot Go Online", saying why in the log. The trust is the same as natively: the player's own machine works it
+   out, and nothing is enforced remotely.
+3. **The keypads.** Natively the settings window (`gs/ui.cpp`) turns on SDL's text input while a TBO keypad takes
+   text, hands it the typed characters (`PortInput_TboEvent`) and puts Copy Code on the clipboard
+   (`PortInput_TboClipboard`). The browser build has no `ui.cpp`. `web_ui.c` now does the same. SDL's clipboard in
+   the browser is SDL's own, not the system's: Copy Code reaches the page (`copy`), which puts it on the system
+   clipboard and shows a notice with the code. SDL keeps Ctrl+V from the browser, so while a keypad takes text the
+   page lets the browser paste and hands the text over (`Bt3Ui_TboPaste`). The keypad's PASTE button takes the last
+   text the page saw pasted or copied, or the system's if the browser lets the page read it unasked.
+4. **A session started half connected (found by test O5).** The first call of `Port_NetActive` starts the match:
+   `net_start`, the greeting, with waits. The page's settings panel reads `net_active` / `net_session` when the
+   engine says it is ready, during the game's start-up. On a session page that read could come first: the greeting
+   then ran inside a call from the page, where a wait cannot suspend, and broke off. The session went on marked
+   active but never greeted: only input packets, then "the connection to the other player was lost" at blank 1,
+   about one session in two through the menu. `web_ui.c`'s getters for those values now answer 0 until the game's
+   first blank, so the match is always started on the game's own thread.
+
+Also:
+- Settings has an Online tab with the signalling server's address (instead of `?signal=`), and says that Quick
+  Match is not in the browser yet.
+- `net_web.js` writes its steps to the page's log (reconnecting through the room, connection states, the room
+  given up). A room the two pages connected through is kept for 60 s after the game is done with it, instead of
+  1.5 s, until the session's pages reconnect: the menu takes longer than the lobby to reload the page. This was
+  not the cause of item 4, but it is the safer timing.
+- `port/tests/lib/cdp.js`: an event hook (`onEvent`), so a test keeps a page's log across its reloads.
+
+**Test O5** (`port/tests/web/net_o5.js`): two headless pages, keyboard only, through the real menu. Each starts
+the game, passes the title and New Game, and opens Tenkaichi Budokai Online. The host does Create Room and Open
+Room; its code comes from the Worker, and Copy Code reaches the clipboard. The other page does Join Room: in cycle
+1 the code is typed (with a mistake deleted on the keypad), in cycle 2 it is pasted with Ctrl+V; then Enter. Both
+pages reload for the session, reconnect through the room, reach the character select with no desync, and backing
+out ends the session.
+
+**Results (2026-10-16):**
+
+| Test | Result |
+|---|---|
+| O5 through the menu | 4 runs after the fix, 8 sessions of 8: code typed and pasted, Copy Code on the clipboard, character select, no desync, ended by backing out. Before the item 4 fix: about 1 in 2 failed |
+| O4, O3, O2 | pass (O2: whole state equal at every blank, clean / 10% loss + 100 ms / demo fight; the demo fight equals the offline one) |
+| page tests (dashboard, controllers, touch, start options, saves, audio, controller picture, connection notifications, extras) | pass |
+| `signal_setting.js` (new: the Online tab's field) | pass |
+| the Worker's own test (`port/web/signal/test.mjs`) | pass, 28 checks |
+| demo fight, WebGL 2 and WebGPU | trace `8ad198bf58dbed33`; 12 of 12 screenshots identical to 0.1.35.2 on each |
+| boot, WebGL 2 and WebGPU | 12 of 12 screenshots identical to 0.1.35.2 on each (the fonts change nothing outside the TBO screens) |
+
+`extras.js` needed one change of its own: its "fetched over HTTP" checks read the page's resource timing list, 250
+entries by default, which the fonts and the fingerprint now fill before the texture pack's PNG is fetched; the test
+raises the list's size.
+
+Files shared with upstream: none changed in P5 (`port/web`, `port/src/web`, the build and package tools, tests).
+
+Not covered: two machines and real networks, NAT, the TURN relay (a deployed Worker and two people: O4 proper, P6);
+a controller (the keyboard plays the pad); Quick Match.
+
 ## 7. Later, and why
 
 - **Rollback in the browser.** `state.c` restores the game thread's stack and registers (`ucontext` / `setjmp` and a

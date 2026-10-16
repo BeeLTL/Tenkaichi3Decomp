@@ -12,7 +12,7 @@
   - GET <folder>/?list: the folder's entries as JSON (the browser build looks through the data folder with it).
 
 Usage: python port/web/devserver.py [--port 8080] [--root DIR] [--mount /prefix=DIR]... [--no-isolation]"""
-import argparse, http.server, json, os, pathlib, re, shutil, sys, urllib.parse
+import argparse, http.server, json, os, pathlib, re, shutil, sys, threading, urllib.parse
 
 TYPES = {".wasm": "application/wasm", ".js": "text/javascript", ".mjs": "text/javascript", ".html": "text/html",
          ".json": "application/json", ".txt": "text/plain; charset=utf-8", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml",
@@ -88,6 +88,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if urllib.parse.urlparse(self.path).query == "list":
             return self.send_listing()
+        if urllib.parse.urlparse(self.path).path.endswith("/.bt3-fingerprint"):
+            return self.send_fingerprint()
         f = self.resolve(self.path)
         if f is None or not f.is_file():
             return self.send_error_text(404, "not found\n")
@@ -130,6 +132,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 left -= len(chunk)
+
+    # The gameplay fingerprint of a data folder (<folder>/.bt3-fingerprint): what the native game works out on its data
+    # check's thread (port/src/plat_fprint.c), which the browser build cannot (no threads; about 1.2 GB of files over
+    # HTTP). Worked out here by port/tools/make_fingerprint.py, upstream's second implementation of the same
+    # definition, once per folder while the server runs. Only the hashes go to the page; the game compares them with
+    # the original disc's itself (port/src/web/web_verify.c).
+    fingerprints, fingerprint_lock = {}, threading.Lock()
+
+    def send_fingerprint(self):
+        folder = self.resolve(urllib.parse.urlparse(self.path).path[:-len("/.bt3-fingerprint")] + "/", folder_as_is=True)
+        if folder is None or not folder.is_dir():
+            return self.send_error_text(404, "not found\n")
+        key = str(folder.resolve())
+        with self.fingerprint_lock:  # (two pages asking at once: worked out once)
+            return self.fingerprint_reply(folder, key)
+
+    def fingerprint_reply(self, folder, key):
+        if key not in self.fingerprints:
+            try:
+                here = pathlib.Path(__file__).resolve().parent
+                for tools in (here, here.parents[0] / "tools"):  # (a release package: beside this file; the repository: port/tools)
+                    if (tools / "make_fingerprint.py").is_file() and str(tools) not in sys.path:
+                        sys.path.insert(0, str(tools))
+                import make_fingerprint as mf
+                per = [[] for _ in mf.COMPONENTS]
+                for comp, fid, kind in mf.file_list():
+                    per[comp].append((fid, mf.file_items(str(folder), fid, kind)))
+                comps = [mf.component_digest(f) for f in per]
+                self.fingerprints[key] = {"version": mf.FP_VERSION, "main": "%016x" % mf.main_digest(comps),
+                                          "parts": ["%016x" % c for c in comps]}
+            except Exception as e:  # (said to the page, which says the data could not be checked)
+                return self.send_error_text(500, f"the gameplay fingerprint could not be worked out: {e}\n")
+        body = json.dumps(self.fingerprints[key]).encode()
+        self.send_response(200)
+        self.common_headers()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)

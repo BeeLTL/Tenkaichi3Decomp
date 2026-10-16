@@ -89,6 +89,7 @@ const PANEL = [
   ] },
   { tab: 'Saves', items: [{ saves: true }] },
   { tab: 'Touch', items: [{ touch: true }] },
+  { tab: 'Online', items: [{ online: true }] },
   { tab: 'Extras', items: [
     { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
       help: "How fast the game runs (the sound keeps its pitch). 100% is the game's own; 114% is what competitive play uses." },
@@ -143,6 +144,36 @@ class Bt3Settings {
       if (document.fullscreenElement) document.exitFullscreen();
     }, true);
     document.addEventListener('fullscreenchange', () => this.fitStage());
+    // Tenkaichi Budokai Online's keypads (web_ui.c): SDL keeps Ctrl+V from the browser, so while a keypad takes text
+    // it is kept from SDL here and the browser pastes; the pasted text goes to the keypad (Bt3Ui_TboPaste).
+    stage.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && this.engineReady && this.call('Bt3Ui_TboTyping', 'number', []) === 1) {
+        e.stopPropagation();
+      }
+    }, true);
+    document.addEventListener('paste', (e) => {
+      if (!this.engineReady || (e.target.closest && e.target.closest('input, textarea, [contenteditable]'))) return;
+      const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+      if (text === '') return;
+      e.preventDefault();
+      this.call('Bt3Ui_TboPaste', 'number', [text]);
+    });
+    // the keypad's PASTE takes SDL's clipboard: the system's text, when the browser lets the page read it unasked
+    const fromClipboard = () => {
+      if (!this.engineReady || !navigator.permissions || !navigator.clipboard) return;
+      navigator.permissions.query({ name: 'clipboard-read' }).then((p) => {
+        if (p.state === 'granted') navigator.clipboard.readText().then((t) => { if (t) this.call('Bt3Ui_Clipboard', null, [t]); }, () => {});
+      }, () => {});
+    };
+    window.addEventListener('focus', fromClipboard);
+  }
+
+  // "Copy Code" in Tenkaichi Budokai Online (web_ui.c): onto the system clipboard, and said in any case
+  copyText(text) {
+    const done = () => this.notice(`Copied: ${text}`);
+    const failed = () => this.notice(`Could not use the clipboard. The code is: ${text}`);
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, failed);
+    else failed();
   }
 
   // The handlers the engine calls (web_ui.c page_call / page_notice / page_screenshot): Module.bt3Ui.
@@ -155,6 +186,7 @@ class Bt3Settings {
       notice: (text) => this.notice(text),
       screenshot: (rgba, w, h) => this.saveScreenshot(rgba, w, h),
       cardWritten: () => this.saves.cardWritten(),
+      copy: (text) => this.copyText(text),
     };
   }
 
@@ -211,6 +243,7 @@ class Bt3Settings {
       for (const item of t.items) {
         page.appendChild(item.heading ? el('h3', {}, item.heading) : item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root : item.saves ? this.saves.buildUi()
                          : item.unlock ? this.buildUnlock() : item.added ? this.buildAdded() : item.touch ? this.touch.buildSettings()
+                         : item.online ? this.buildOnline()
                          : this.buildControl(item));
       }
       if (t.tab === 'Video') page.appendChild(this.buildRenderer());
@@ -529,6 +562,34 @@ class Bt3Settings {
           : `none (the data folder has no ${k.folder} folder with any).`);
       });
     });
+    return box;
+  }
+
+  // Online play's signalling service (port/web/signal, net_web.js): where room codes are made and joined
+  buildOnline() {
+    const box = el('div', { class: 'row' });
+    const input = el('input', { type: 'url', id: 'signal-url', placeholder: 'https://bt3-signal.example.workers.dev', spellcheck: 'false',
+                                'aria-describedby': 'signal-help' });
+    const save = el('button', { type: 'button', class: 'secondary' }, 'Save');
+    const state = el('p', { class: 'help', role: 'status' });
+    const show = () => {
+      const url = globalThis.bt3Net ? bt3Net.signalUrl : '';
+      input.value = url;
+      state.textContent = url ? `Room codes go through ${url}.` : 'Not set: Host Room and Join Room cannot make or find a room.';
+    };
+    save.addEventListener('click', () => {
+      const url = input.value.trim().replace(/\/+$/, '');
+      if (url !== '' && !/^https?:\/\/\S+$/.test(url)) { state.textContent = 'That is not a web address (http:// or https://).'; return; }
+      try { localStorage.setItem('bt3.signal', url); } catch (e) { /* (kept for this page only) */ }
+      if (globalThis.bt3Net) bt3Net.signalUrl = url;
+      show();
+    });
+    box.append(el('h3', {}, 'Online play'),
+      el('label', { for: 'signal-url' }, 'Signalling server'), input, save, state,
+      el('p', { class: 'help', id: 'signal-help' }, 'Tenkaichi Budokai Online (in the main menu) hosts and joins rooms by code through this server; ' +
+        'the two games then connect directly, or through its relay. Both players need the same server. To run your own: ' +
+        'port/web/signal/README.md. Quick Match is not available in the browser version yet.'));
+    show();
     return box;
   }
 

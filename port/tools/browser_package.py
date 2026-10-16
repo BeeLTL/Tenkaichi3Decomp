@@ -49,9 +49,11 @@ def main():
     for f in PAGE:
         shutil.copy2(WEB / f, folder / "web" / f)
     shutil.copytree(WEB / "tbo", folder / "web" / "tbo")  # (Tenkaichi Budokai Online's pictures and their credits)
+    shutil.copytree(WEB / "fonts", folder / "web" / "fonts")  # (the TrueType fonts, with their licences: its words)
     shutil.copy2(ROOT / "port/web/devserver.py", folder / "devserver.py")
     shutil.copy2(ROOT / "port/web/play.py", folder / "play.py")
     shutil.copy2(ROOT / "port/tools/extract_disc.py", folder / "extract_disc.py")
+    shutil.copy2(ROOT / "port/tools/make_fingerprint.py", folder / "make_fingerprint.py")  # (devserver.py: the gameplay fingerprint)
     shutil.copy2(ROOT / "docs/BROWSER_RELEASE.md", folder / "README.md")
     for dst, src in LICENSES.items():
         shutil.copy2(src, folder / "licenses" / dst)

@@ -402,6 +402,11 @@ async function start() {
   // The two programs plat_mem.c reads in a constructor, before main (where a read cannot wait): fetched first.
   const early = ['disc/SLUS_216.78', 'disc/BIN/DBZP.BIN'];
   const pre = {};
+  // The gameplay fingerprint of the data folder (online play's "two unmodded games" rule, plat_fprint.c), which the
+  // browser cannot work out itself: the data server does (port/web/devserver.py, /<data folder>/.bt3-fingerprint).
+  // The game compares it with the original disc's (web_verify.c). Asked now, used when the game starts.
+  const fingerprint = fetch(dataBase.replace(/\/?$/, '/') + '.bt3-fingerprint', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : r.text().then((t) => ({ why: `HTTP ${r.status}${t ? ': ' + t.trim() : ''}` }))), (e) => ({ why: e.message }));
   s = step('fetching the game\'s programs from the data folder');
   for (const rel of early) pre[rel] = await data.whole(rel);
   // where the game's own variables lie in bt3.wasm (port/tools/wasm_state.py): what state.c's checksum covers
@@ -412,7 +417,23 @@ async function start() {
   const tboFiles = await Promise.all(tboNames.split('\n').filter(Boolean).map((n) =>
     fetch('tbo/ui/' + n).then((r) => (r.ok ? r.arrayBuffer() : null), () => null).then((b) => [n, b])));
   if (tboNames && tboFiles.some(([, b]) => !b)) log(`tbo: ${tboFiles.filter(([, b]) => !b).length} of its pictures could not be fetched`);
+  // the TrueType fonts (port/third_party/fonts): put at /fonts, where the game looks for them (menu_text.c); Tenkaichi
+  // Budokai Online writes its words with them
+  const fontNames = await fetch('fonts/files.txt').then((r) => (r.ok ? r.text() : ''), () => '');
+  const fontFiles = await Promise.all(fontNames.split('\n').filter(Boolean).map((n) =>
+    fetch('fonts/' + n).then((r) => (r.ok ? r.arrayBuffer() : null), () => null).then((b) => [n, b])));
+  if (!fontNames || fontFiles.some(([, b]) => !b)) log(`fonts: ${fontNames ? `${fontFiles.filter(([, b]) => !b).length} could not be fetched` : 'none found (fonts/files.txt)'}: Tenkaichi Budokai Online's screens have no words without them`);
   s(`fetched ${early.map((r) => `${r} (${pre[r].length} bytes)`).join(', ')}`, 'ok');
+  {
+    const fp = await fingerprint;
+    if (fp && fp.version === 1 && /^[0-9a-f]{16}$/.test(fp.main) && Array.isArray(fp.parts) && fp.parts.length === 7 &&
+        fp.parts.every((p) => /^[0-9a-f]{16}$/.test(p))) {
+      env.BT3_WEB_FPRINT = [fp.main, ...fp.parts].join(',');
+    } else {
+      log(`gameplay fingerprint: not given by the data server (${(fp && fp.why) || 'an answer of another form'}): ` +
+          'online play needs it (its rule: two unmodded games); port/web/devserver.py and play.py give it');
+    }
+  }
   s = step('compiling and instantiating bt3.wasm');
   const t0 = performance.now();
   try {
@@ -431,6 +452,11 @@ async function start() {
         if (stateList) m.FS.writeFile('/bt3.mem', new Uint8Array(stateList));
         if (tboFiles.length) m.FS.mkdirTree('/tbo/ui');
         for (const [n, b] of tboFiles) if (b) m.FS.writeFile('/tbo/ui/' + n, new Uint8Array(b));
+        for (const [n, b] of fontFiles) {
+          if (!b) continue;
+          m.FS.mkdirTree(('/fonts/' + n).slice(0, ('/fonts/' + n).lastIndexOf('/')));
+          m.FS.writeFile('/fonts/' + n, new Uint8Array(b));
+        }
         Object.assign(m.ENV, env);
         Bt3Settings.restore(m.FS);  // the settings saved by an earlier visit
         settings.attach(m);

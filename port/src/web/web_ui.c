@@ -169,7 +169,14 @@ static int get_frame(void) { return (int)gGsFrame; }
 /* online play (net.c): a match is on; it is a session (started from a lobby); the session's start-up is over (the
    character select is reached: headless.c Port_NetArrived) */
 extern int Port_NetActive(void), Port_NetSession(void), Port_NetWarp(void);
-static int get_net_arrived(void) { return Port_NetSession() && !Port_NetWarp(); }
+/* Not asked before the game's first blank: the first call of Port_NetActive starts the match (net.c net_start: the
+   greeting, with waits), and it has to come from the game's own thread. Asked from the page (the panel reads every
+   value when the engine is ready, during the game's start-up), its waits cannot suspend: the greeting broke off and
+   the session went on half connected ("the connection to the other player was lost", blank 1). */
+extern unsigned gPortVBlanks;
+static int get_net_active(void) { return gPortVBlanks > 0 && Port_NetActive(); }
+static int get_net_session(void) { return gPortVBlanks > 0 && Port_NetSession(); }
+static int get_net_arrived(void) { return gPortVBlanks > 0 && Port_NetSession() && !Port_NetWarp(); }
 static int get_vblanks(void) { return (int)gPortLiveBlanks; }
 static int get_interp_shown(void) { return (int)gInterpShown; }
 static int get_webgpu_errors(void) { return (int)GsWgpu_DeviceErrors(); }
@@ -217,8 +224,8 @@ static const struct {
     {"unlock_done", get_unlock_done, NULL},
     {"save_loaded", get_save_loaded, NULL},
     {"frame", get_frame, NULL},
-    {"net_active", Port_NetActive, NULL},
-    {"net_session", Port_NetSession, NULL},
+    {"net_active", get_net_active, NULL},
+    {"net_session", get_net_session, NULL},
     {"net_arrived", get_net_arrived, NULL},
     {"vblanks", get_vblanks, NULL},
     {"interp_shown", get_interp_shown, NULL},
@@ -385,10 +392,98 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const c
     return 1;
 }
 
+/* ---- Tenkaichi Budokai Online's keypads (src/menu/port_tbo.c: a name, a room code) -------------------------------
+   Natively the settings window (gs/ui.cpp) does this; the browser build has the page instead:
+     - while a keypad takes text (gPortTboTyping) and the page's panel is closed, SDL's text input is on and what is
+       typed goes to the keypad (PortInput_TboEvent, as ui.cpp does);
+     - "Copy Code" puts the code on SDL's clipboard (PortInput_TboClipboard), which in the browser is SDL's own, not
+       the system's: the page is told (copy) and puts it on the system clipboard;
+     - Ctrl+V and the keypad's PASTE: SDL keeps Ctrl+V from the browser, so the page takes the browser's paste itself
+       and hands it over (Bt3Ui_TboPaste); PASTE takes the last text the page saw pasted or copied. */
+extern int gPortTboTyping;
+extern int PortInput_TboEvent(const SDL_Event *ev);
+extern void PortInput_TboClipboard(void);
+static int sClipFromPage; /* the clipboard's last change was the page's own (not to be handed back) */
+
+EM_JS(void, page_copy, (const char *text), {
+    if (Module.bt3Ui && typeof Module.bt3Ui.copy === 'function') Module.bt3Ui.copy(UTF8ToString(text));
+});
+
+static void tbo_sync(void) {
+    static int on;
+    int want = gPortTboTyping && !gPortOverlayOpen;
+    SDL_Window *w = SDL_GetKeyboardFocus();
+    if (w == NULL) {
+        int n = 0;
+        SDL_Window **all = SDL_GetWindows(&n);
+        w = all != NULL && n > 0 ? all[0] : NULL;
+        SDL_free(all);
+    }
+    if (want != on && w != NULL) {
+        if (want) {
+            SDL_StartTextInput(w);
+        } else {
+            SDL_StopTextInput(w);
+        }
+        on = want;
+    }
+    PortInput_TboClipboard();
+}
+
+/* The page: text the browser pasted (Ctrl+V on the game). Kept as the clipboard's (the keypad's PASTE) and, while
+   a keypad takes text, typed into it as natively (printable characters, at most 48). 1 = typed. */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_TboPaste(const char *text) {
+    char line[49];
+    int n = 0;
+    const unsigned char *p = (const unsigned char *)text;
+    SDL_Event ev;
+
+    sClipFromPage = 1;
+    SDL_SetClipboardText(text != NULL ? text : "");
+    if (!gPortTboTyping || gPortOverlayOpen) {
+        return 0;
+    }
+    for (; p != NULL && *p && n < 48; p++) {
+        if (*p >= 32 && *p < 127) {
+            line[n++] = (char)*p;
+        }
+    }
+    line[n] = '\0';
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_TEXT_INPUT;
+    ev.text.text = line;
+    return PortInput_TboEvent(&ev);
+}
+
+/* The page: the system clipboard's text, when it could read it (the keypad's PASTE takes it). */
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_Clipboard(const char *text) {
+    sClipFromPage = 1;
+    SDL_SetClipboardText(text != NULL ? text : "");
+}
+
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_TboTyping(void) {
+    return gPortTboTyping && !gPortOverlayOpen;
+}
+
 int Ui_Event(const SDL_Event *ev) {
+    tbo_sync();
     if (sEventType != 0 && ev->type == sEventType) {
         queue_apply();
         return 1;
+    }
+    if (ev->type == SDL_EVENT_CLIPBOARD_UPDATE) { /* "Copy Code" (or the page's own paste, which is not handed back) */
+        if (!sClipFromPage) {
+            char *text = SDL_GetClipboardText();
+            if (text != NULL && text[0] != '\0') {
+                page_copy(text);
+            }
+            SDL_free(text);
+        }
+        sClipFromPage = 0;
+        return 1;
+    }
+    if (!gPortOverlayOpen && sCapKind == CAPTURE_NONE && PortInput_TboEvent(ev)) {
+        return 1; /* typed on a keypad (as ui.cpp) */
     }
     return sCapKind != CAPTURE_NONE && capture_event(ev);
 }

@@ -23,12 +23,17 @@ const NET_ROOM_KEY = 'bt3.room';          // (the same: the room, so that the ne
 const NET_SIGNAL_KEY = 'bt3.signal';      // (local storage: the signalling Worker's address)
 const NET_POLL_MS = 1000;                 // how often the Worker is asked while waiting for the other page
 const NET_LEAVE_MS = 1500;                // a room the game is done with is given up after this long, unless the page reloads for the session
+const NET_LEAVE_LAUNCH_MS = 60000;        // ... the same once the two were connected (a session is starting: the game may take a
+                                          // while before the page reloads, e.g. Tenkaichi Budokai Online's screens)
 const NET_ERRORS = {  // the Worker's errors, as the game's window shows them
   'no room': 'No room with that code (it may have expired).',
   full: 'That room already has two players.',
   version: 'The other player has a different release of the game.',
   busy: 'Too many tries from here: wait a little and try again.',
 };
+
+// a line in the page's log (index.html's log, once it is there)
+const netSay = (text) => { if (typeof log === 'function') log(`net: ${text}`); else console.log(`net: ${text}`); };
 
 class Bt3Net {
   constructor() {
@@ -136,14 +141,17 @@ class Bt3Net {
   // net_web.c Match_Cancel: the game is done with the room (cancelled, or the session starts: net.c Port_LobbyLaunch).
   // Given up a moment later, unless the page reloads for the session meanwhile (relaunch keeps it for the next page).
   matchCancel() {
+    const connected = this.match.state === 3;
+    if (this.room) netSay(`the game is done with room ${this.room.code} (${connected ? 'connected' : 'not connected'})`);
     this.matchRun++;
     this.match = { state: 0, code: '', error: '', peerName: '' };
     const room = this.room;
     clearTimeout(this.leaveTimer);
-    if (room && room.key) this.leaveTimer = setTimeout(() => this.leave(room), NET_LEAVE_MS);
+    if (room && room.key) this.leaveTimer = setTimeout(() => this.leave(room), connected ? NET_LEAVE_LAUNCH_MS : NET_LEAVE_MS);
   }
 
   leave(room) {
+    netSay(`room ${room.code} given up`);
     if (this.room === room) this.room = null;
     this.post('leave', { code: room.code, key: room.key }, room.url).catch(() => {});
   }
@@ -157,8 +165,11 @@ class Bt3Net {
     if (room.role === 1) room.round++;
     this.room = room;
     const run = ++this.matchRun;
-    this.connectRound(run).then(() => { if (this.room === room && room.role === 1) this.leave(room); })  // (both are in: the room has done its work)
-      .catch((e) => console.warn(`bt3: net: could not connect again for the session: ${e.message || e}`));
+    setTimeout(() => netSay(`connecting again for the session through room ${room.code} (round ${room.role === 1 ? room.round : 'next'})`), 0);
+    this.connectRound(run).then(() => {
+      netSay(run === this.matchRun ? 'connected again for the session' : 'the reconnection was stopped (the game began or cancelled a room meanwhile)');
+      if (this.room === room && room.role === 1) this.leave(room);  // (both are in: the room has done its work)
+    }).catch((e) => netSay(`could not connect again for the session: ${e.message || e}`));
   }
 
   get open() { return !!this.channel && this.channel.readyState === 'open'; }
@@ -172,13 +183,16 @@ class Bt3Net {
 
   connection() {
     this.close();
-    this.pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    return this.pc;
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
+    pc.addEventListener('iceconnectionstatechange', () => { if (this.pc === pc) netSay(`connection: ${pc.iceConnectionState}`); });
+    this.pc = pc;
+    return pc;
   }
 
   use(channel) {
     channel.binaryType = 'arraybuffer';
-    channel.onopen = () => { this.stats.opened = performance.now(); };
+    channel.onopen = () => { this.stats.opened = performance.now(); netSay('channel open'); };
+    channel.onclose = () => { if (this.channel === channel) netSay('channel closed'); };
     channel.onmessage = (e) => {
       this.stats.received++;
       if (this.queue.length >= NET_QUEUE_MAX) { this.queue.shift(); this.stats.dropped++; }
