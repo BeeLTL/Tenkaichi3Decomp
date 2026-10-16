@@ -5,11 +5,13 @@
 
 #ifdef PORT
 #include "../../port/src/gs/menu_translation.h"
+#include <string.h>
 
 extern int gPortOverlayOpen;
 extern void PortA11y_Say(const char *text, int flags);
 extern void MenuText_BootLanguageChosen(void);
 extern void Ui_LanguageChosen(const char *locale);
+extern void Port_SettingText(const char *name, const char *def, char *out, int size);
 
 #define LANGUAGE_MAX 256
 static MenuTranslationOption sLanguage[LANGUAGE_MAX];
@@ -148,8 +150,13 @@ void PortLanguage_Run(void) {
     s32 count = MenuTranslation_Available(sLanguage, LANGUAGE_MAX);
     s32 choice = 0, selected = 0, selectionFrames = 0;
     s32 i;
+    char saved[16];
 
     if (!MenuTranslation_ShouldPrompt(sLanguage, count)) return;
+    Port_SettingText("menu_lang", "", saved, sizeof(saved));
+    for (i = 0; i < count; i++) {
+        if (strcmp(sLanguage[i].locale, saved) == 0) { choice = i; break; }
+    }
     {
         char path[1200];
         sLanguageArt[0] = MenuTranslation_ArtPath(TBO_LANG_BG, path, sizeof(path));

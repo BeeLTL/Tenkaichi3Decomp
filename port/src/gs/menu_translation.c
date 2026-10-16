@@ -33,6 +33,7 @@ static TrGroup sGroups[TR_MAX_GROUPS];
 static const char *sStage[36], *sSong[24], *sItem, *sItemOriginal;
 static char sMain[1024], sMainOriginal[1024], sLocale[16];
 static int sNRows, sNGroups, sReady;
+static int sBootChoiceMade;
 static pthread_mutex_t sLock = PTHREAD_MUTEX_INITIALIZER;
 extern void Port_SettingText(const char *name, const char *def, char *out, int size);
 extern int Port_Setting(const char *name, int def);
@@ -660,6 +661,8 @@ int MenuTranslation_ShouldPrompt(const MenuTranslationOption *options, int count
     if (count <= 0 || options == NULL || (override != NULL && override[0] != '\0') ||
         getenv("BT3_NET_SESSION") != NULL || getenv("BT3_PAD_PLAY") != NULL ||
         getenv("BT3_PAD_TABLE") != NULL || getenv("BT3_SYNCTEST") != NULL) return 0;
+    if (__atomic_load_n(&sBootChoiceMade, __ATOMIC_ACQUIRE)) return 0;
+    if (Port_Setting("language_prompt_always", 0) != 0) return 1;
     Port_SettingText("menu_lang", "", saved, sizeof(saved));
     for (i = 0; i < count; i++) if (strcmp(options[i].locale, saved) == 0) return 0;
     return 1;
@@ -672,6 +675,7 @@ int MenuTranslation_BootPending(void) {
 void MenuTranslation_SaveChoice(const char *locale) {
     if (locale == NULL || locale[0] == '\0') return;
     Port_SettingTextSave("menu_lang", locale);
+    __atomic_store_n(&sBootChoiceMade, 1, __ATOMIC_RELEASE);
     if (strcmp(locale, "en") != 0) {
         if (Port_Setting("menu_font_id", 0) == 0) Port_SettingSave("menu_font_id", MenuText_FirstFontId(MENU_TEXT_MENU));
         if (Port_Setting("battle_font_id", 0) == 0) Port_SettingSave("battle_font_id", MenuText_FirstFontId(MENU_TEXT_BATTLE));

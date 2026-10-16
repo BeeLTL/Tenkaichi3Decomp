@@ -1455,9 +1455,13 @@ static void ui_tab(PortVideo &v) {
             ImGui::EndCombo();
         }
         ImGui::EndDisabled();
-        ImGui::SetItemTooltip("Menu and battle labels from the selected translation JSON. A restart applies a new choice.\n"
-                              "A Menu and Battle font are selected if their current setting is Original.\n"
-                              "An explicit BT3_MENU_LANG launch setting takes precedence.");
+        ImGui::SetItemTooltip("Game language based on available translations.");
+        bool alwaysPrompt = Port_Setting("language_prompt_always", 0) != 0;
+        if (ImGui::Checkbox("Show language selector at startup", &alwaysPrompt)) {
+            Port_SettingSave("language_prompt_always", alwaysPrompt);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("Show the language list at every normal startup.");
         if (sLanguageRestartPending) {
             ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.35f, 1.0f), "Language saved. It will apply on the next launch.");
         }
