@@ -7,8 +7,9 @@
  * and, for the fonts that were accepted, every glyph the font has. Built with the address and undefined-behaviour
  * sanitizers, which stop the program at the first read or write outside a buffer.
  *
- *   gcc -g -O1 -fsanitize=address,undefined -fno-sanitize=shift -fno-sanitize-recover=all -Iport/src/gs \
+ *   gcc -g -O1 -DUI_TEXT_HOST_ALLOC -fsanitize=address,undefined -fno-sanitize=shift -fno-sanitize-recover=all -Iport/src/gs \
  *       port/tests/menu_font/fuzz.c port/src/gs/menu_labels.c port/src/gs/menu_translation.c \
+ *       port/src/gs/ui_text_extract.c port/src/gs/ui_text_translate.c \
  *       port/src/plat_settings.c -lm -lpthread -o /tmp/menu_font_fuzz
  *   (menu_labels.c: menu_text.c names it for the list of labels; this test brings its own list, so it never runs
  *   here. It has its own test, labels.c in this folder.)

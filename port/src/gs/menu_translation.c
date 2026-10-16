@@ -1,6 +1,8 @@
 /* Runtime catalogs for the menu and battle texture labels. */
 #include "menu_translation.h"
 #include "menu_text.h"
+#include "ui_text_extract.h"
+#include "ui_text_translate.h"
 #include "../../../include/menu/tbo_art.h"
 #ifndef _WIN32
 #include <dirent.h>
@@ -444,8 +446,7 @@ static void tr_migrate(const char *outDir, const char *dir) {
 }
 static void tr_migrate_all(const char *outDir, const char *labelsDir) {
     char oldDir[1200];
-    if (snprintf(oldDir, sizeof(oldDir), "%s/translations/ui", outDir) < (int)sizeof(oldDir))
-        tr_migrate(oldDir, labelsDir);
+    /* translations/ui now holds disc UI/dialog text, not legacy label catalogs. */
     if (snprintf(oldDir, sizeof(oldDir), "%s/translations", outDir) < (int)sizeof(oldDir))
         tr_migrate(oldDir, labelsDir);
     tr_migrate(outDir, labelsDir);
@@ -512,10 +513,52 @@ static int tr_option(const char *dir, const char *name, MenuTranslationOption *o
     snprintf(out->locale, sizeof(out->locale), "%s", locale);
     return 1;
 }
+/* The UI catalog is much larger than a label catalog. Its locale metadata is before "labels",
+   so the language list can read just the header rather than every translated line. */
+static int tr_ui_option(const char *dir, const char *name, MenuTranslationOption *out) {
+    char path[1200], locale[16], buf[4096], *key, *value;
+    TrParser p;
+    FILE *fp;
+    size_t n;
+    int schema = 0, matching = 0, named = 0, labels = 0;
+    if (!tr_locale_name(name, locale, sizeof(locale)) || snprintf(path, sizeof(path), "%s/%s", dir, name) >= (int)sizeof(path)) return 0;
+    fp = fopen(path, "rb");
+    if (!fp) return 0;
+    n = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    p.p = buf; p.end = buf + n;
+    memset(out, 0, sizeof(*out)); out->order = INT_MAX;
+    if (!tr_take(&p, '{')) return 0;
+    do {
+        key = tr_string(&p);
+        if (!key || !tr_take(&p, ':')) { free(key); return 0; }
+        if (!strcmp(key, "labels")) { labels = tr_take(&p, '{'); free(key); break; }
+        if (!strcmp(key, "name") || !strcmp(key, "locale")) {
+            value = tr_string(&p);
+            if (!value) { free(key); return 0; }
+            if (!strcmp(key, "name") && value[0] && strlen(value) < sizeof(out->name)) {
+                snprintf(out->name, sizeof(out->name), "%s", value); named = 1;
+            }
+            if (!strcmp(key, "locale")) matching = !strcmp(value, locale);
+            free(value);
+        } else if (!strcmp(key, "order")) {
+            if (!tr_order(&p, &out->order)) { free(key); return 0; }
+        } else if (!strcmp(key, "schema_version")) {
+            tr_space(&p); schema = p.p < p.end && *p.p == '1';
+            if (schema) p.p++; else { free(key); return 0; }
+        } else if (!tr_skip(&p, 0)) { free(key); return 0; }
+        free(key);
+        if (tr_take(&p, '}')) break;
+    } while (tr_take(&p, ','));
+    if (!schema || !matching || !named || !labels) return 0;
+    snprintf(out->locale, sizeof(out->locale), "%s", locale);
+    return 1;
+}
 int MenuTranslation_List(const char *outDir, MenuTranslationOption *out, int capacity) {
-    char dirPath[1200];
+    char dirPath[1200], uiDir[1200];
     int count = 0, i, j;
     if (outDir == NULL || out == NULL || capacity <= 0) return 0;
+    UiText_ExtractOnStartup(outDir);
     if (!tr_translation_dir(outDir, dirPath, sizeof(dirPath))) return 0;
     tr_migrate_all(outDir, dirPath);
     tr_copy_all(outDir, dirPath);
@@ -542,6 +585,37 @@ int MenuTranslation_List(const char *outDir, MenuTranslationOption *out, int cap
         }
     }
 #endif
+    if (snprintf(uiDir, sizeof(uiDir), "%s/translations/ui", outDir) < (int)sizeof(uiDir)) {
+#ifdef _WIN32
+        struct _finddata_t entry;
+        intptr_t handle;
+        char pattern[1200];
+        if (snprintf(pattern, sizeof(pattern), "%s/*.json", uiDir) < (int)sizeof(pattern) &&
+            (handle = _findfirst(pattern, &entry)) != -1) {
+            do {
+                MenuTranslationOption option;
+                int k;
+                if (!tr_ui_option(uiDir, entry.name, &option)) continue;
+                for (k = 0; k < count && strcmp(out[k].locale, option.locale) != 0; k++) {}
+                if (k == count && count < capacity) out[count++] = option;
+            } while (_findnext(handle, &entry) == 0);
+            _findclose(handle);
+        }
+#else
+        DIR *ui = opendir(uiDir);
+        struct dirent *entry;
+        if (ui) {
+            while ((entry = readdir(ui)) != NULL) {
+                MenuTranslationOption option;
+                int k;
+                if (!tr_ui_option(uiDir, entry->d_name, &option)) continue;
+                for (k = 0; k < count && strcmp(out[k].locale, option.locale) != 0; k++) {}
+                if (k == count && count < capacity) out[count++] = option;
+            }
+            closedir(ui);
+        }
+#endif
+    }
     /* Explicit order first, then name and locale for missing or duplicate order values. */
     for (i = 0; i < count; i++) for (j = i + 1; j < count; j++) {
         int byName = strcmp(out[j].name, out[i].name);
@@ -607,7 +681,7 @@ void MenuTranslation_SaveChoice(const char *locale) {
 int MenuTranslation_Load(const char *outDir, char *why, size_t whyLen) {
     const char *wanted = getenv("BT3_MENU_LANG");
     char saved[16];
-    char path[1200], dirPath[1200], filename[32], locale[16];
+    char path[1200], dirPath[1200], filename[32], locale[16], uiPath[1200];
     int ok = 0;
     if (wanted == NULL || wanted[0] == 0) {
         Port_SettingText("menu_lang", "en", saved, sizeof(saved));
@@ -627,10 +701,18 @@ int MenuTranslation_Load(const char *outDir, char *why, size_t whyLen) {
     tr_migrate_all(outDir, dirPath);
     tr_copy_all(outDir, dirPath);
     if (!tr_read(path, locale)) {
-        if (why != NULL) snprintf(why, whyLen, "%s is missing or is not a valid %s label catalog", path, locale);
+        /* A language can supply UI/dialog text alone; its menu labels use English. */
         tr_clear();
-        goto done;
+        if (!strcmp(locale, "en") ||
+            snprintf(uiPath, sizeof(uiPath), "%s/translations/ui/%s.json", outDir, locale) >= (int)sizeof(uiPath) ||
+            access(uiPath, 0) != 0 ||
+            snprintf(path, sizeof(path), "%s/en.json", dirPath) >= (int)sizeof(path) || !tr_read(path, "en")) {
+            if (why != NULL) snprintf(why, whyLen, "%s is missing or is not a valid label catalog", path);
+            tr_clear();
+            goto done;
+        }
     }
+    UiText_Load(outDir, locale);
     snprintf(sLocale, sizeof(sLocale), "%s", locale);
     __atomic_store_n(&sReady, 1, __ATOMIC_RELEASE);
     ok = 1;

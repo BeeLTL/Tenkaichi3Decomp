@@ -394,8 +394,10 @@ def compare_styles(data_root, labels_dir, fonts_dir, font_arg=None, output=None)
         ]
     with tempfile.TemporaryDirectory() as temporary:
         library = pathlib.Path(temporary)/'menu_text.so'
-        subprocess.run(['cc', '-shared', '-fPIC', '-O2', str(ROOT/'port/src/gs/menu_text.c'),
-                        str(ROOT/'port/src/gs/menu_labels.c'), str(ROOT/'port/src/gs/menu_translation.c'), str(ROOT/'port/src/plat_settings.c'),
+        subprocess.run(['cc', '-shared', '-fPIC', '-O2', '-DUI_TEXT_HOST_ALLOC', str(ROOT/'port/src/gs/menu_text.c'),
+                        str(ROOT/'port/src/gs/menu_labels.c'), str(ROOT/'port/src/gs/menu_translation.c'),
+                        str(ROOT/'port/src/gs/ui_text_extract.c'), str(ROOT/'port/src/plat_settings.c'),
+                        str(ROOT/'port/src/gs/ui_text_translate.c'),
                         '-o', str(library), '-lm', '-lpthread'], check=True)
         prior = {key: os.environ.get(key) for key in ('BT3_MENU_FONT', 'BT3_FONTS', 'BT3_DATA', 'BT3_MENU_LANG')}
         os.environ['BT3_MENU_FONT'] = str(labels_dir.resolve())
