@@ -56,8 +56,12 @@ const PANEL = [
       help: 'In a picture wider than 4:3, the menus are shown at their own shape with black at the sides instead of stretched. Fights are not changed.' },
     { key: 'frame_skip', label: 'Skip pictures instead of slowing down', type: 'checkbox',
       help: 'When this machine cannot show a picture in time, the game stays at full speed and leaves pictures out instead (choppier, not slower).' },
+    { key: 'late_input', label: 'Low input lag (experimental)', type: 'checkbox',
+      help: 'The game reads the controller, computes, and then waits before the picture is shown: about 33 ms in a fight. With this on the wait comes first, so the picture follows your press sooner. The game itself is unchanged. Not during online play.' },
     { key: 'texture_pack', label: 'Texture pack', type: 'checkbox', when: (s) => s.get('texture_pack_count') > 0,
       help: 'Replacement textures found next to the game.' },
+    { heading: 'Text' },
+    { fonts: true },
   ] },
   { tab: 'Effects', items: [
     ...[['Outline', 'The black line around the fighters.'], ['See-through tint', 'The tint that shows a fighter behind scenery.'],
@@ -81,6 +85,7 @@ const PANEL = [
   { tab: 'Controls', items: [
     { bindings: true },
     { controllers: true },
+    { sticks: true },
     { heading: 'Gameplay' },
     { key: 'clash_square', label: 'Clashes: Square counts as a direction', type: 'checkbox',
       help: 'In a beam or rush clash, each press of Square counts like a d-pad tap. Works online.' },
@@ -253,7 +258,7 @@ class Bt3Settings {
       for (const item of t.items) {
         page.appendChild(item.heading ? el('h3', {}, item.heading) : item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root : item.saves ? this.saves.buildUi()
                          : item.unlock ? this.buildUnlock() : item.added ? this.buildAdded() : item.touch ? this.touch.buildSettings()
-                         : item.online ? this.buildOnline()
+                         : item.online ? this.buildOnline() : item.fonts ? this.buildFonts() : item.sticks ? this.buildSticks()
                          : this.buildControl(item));
       }
       if (t.tab === 'Video') page.appendChild(this.buildRenderer());
@@ -571,6 +576,78 @@ class Bt3Settings {
           : !listable ? noListing
           : `none (the data folder has no ${k.folder} folder with any).`);
       });
+    });
+    return box;
+  }
+
+  // The fonts (the native window's UI tab): fonts.tsv's, as the engine lists them (web_ui.c Bt3Ui_FontList); 0 is
+  // "Original", the game's own lettering. Menu font: matching menu labels; Dialogue / UI font: dialogue, subtitles,
+  // ordinary text.
+  buildFonts() {
+    const box = el('div');
+    const rows = [['menu_font_id', 'Menu font', 0, 'Original uses the game\'s own lettering. Another font replaces matching menu labels at once; decorative lettering keeps its artwork.'],
+      ['text_font_id', 'Dialogue / UI font', 1, 'The font of dialogue, subtitles and ordinary text. Original keeps the game\'s glyphs; placement, colours, shadows and icons are kept.']];
+    for (const [key, label, shared, help] of rows) {
+      const id = `set-${key}`, row = el('div', { class: 'row' });
+      const select = el('select', { id, 'aria-describedby': `${id}-help` });
+      select.addEventListener('change', () => this.set(key, Number(select.value)));
+      row.append(el('label', { for: id }, label), select, el('p', { class: 'help', id: `${id}-help` }, help));
+      box.appendChild(row);
+      this.refreshers.push(() => {
+        if (select.options.length === 0) {  // (the list is the engine's: filled once it is running)
+          for (const line of this.call('Bt3Ui_FontList', 'string', [shared]).split('\n').filter(Boolean)) {
+            const [n, name] = line.split('\t');
+            select.appendChild(el('option', { value: n }, name));
+          }
+        }
+        select.value = String(this.get(key));
+        select.disabled = select.options.length < 2;
+      });
+    }
+    return box;
+  }
+
+  // Each stick's deadzone and the vibration, for the player chosen above (the native window's controller section;
+  // saved in the settings file as natively: deadzone_p1_ls, vibration_p1, ...).
+  buildSticks() {
+    const box = el('div');
+    const sticks = ['Left stick', 'Right stick'].map((name, s) => {
+      const id = `set-deadzone-${s}`, row = el('div', { class: 'row' });
+      const input = el('input', { id, type: 'range', min: '-1', max: '90', step: '1', 'aria-describedby': `${id}-help` });
+      const out = el('output', { for: id });
+      const show = () => { out.textContent = Number(input.value) < 0 ? 'Original' : `${input.value}%`; };
+      input.addEventListener('input', show);
+      input.addEventListener('change', () => { this.call('Bt3Ui_DeadzoneSet', null, [this.player, s, Number(input.value)]); this.persist(); });
+      row.append(el('label', { for: id }, `${name} deadzone`), input, out);
+      if (s === 1) {
+        row.appendChild(el('p', { class: 'help', id: `${id}-help` }, 'How far a stick has to move before the game is told anything. ' +
+          'Original: the game\'s own, 39% for left / right and for up / down separately (a square). 0% to 90%: a round one of that size; ' +
+          'from its edge the value grows evenly to full tilt. Choose a size that covers where your stick rests when let go.'));
+      }
+      box.appendChild(row);
+      return { input, show };
+    });
+    const vibRow = el('div', { class: 'row check' });
+    const vib = el('input', { id: 'set-vibration', type: 'checkbox' });
+    vibRow.append(vib, el('label', { for: 'set-vibration' }, 'Vibration'));
+    const strRow = el('div', { class: 'row' });
+    const strength = el('input', { id: 'set-vibration-strength', type: 'range', min: '0', max: '100', step: '1' });
+    const strOut = el('output', { for: 'set-vibration-strength' });
+    const test = el('button', { type: 'button', class: 'secondary', id: 'set-vibration-test' }, 'Test');
+    strRow.append(el('label', { for: 'set-vibration-strength' }, 'Strength'), strength, strOut, test,
+      el('p', { class: 'help' }, 'The game\'s own vibration (hits, clashes, charging) on this player\'s controller, where the browser supports it. ' +
+        'The game\'s Options > Controller > Vibration has to be on as well. Test: half a second of both motors.'));
+    vib.addEventListener('change', () => { this.call('Bt3Ui_VibrationSet', null, [this.player, 0, vib.checked ? 1 : 0]); this.persist(); this.refresh(); });
+    strength.addEventListener('input', () => { strOut.textContent = `${strength.value}%`; });
+    strength.addEventListener('change', () => { this.call('Bt3Ui_VibrationSet', null, [this.player, 1, Number(strength.value)]); this.persist(); });
+    test.addEventListener('click', () => this.call('Bt3Ui_VibrationTest', null, [this.player]));
+    box.append(vibRow, strRow);
+    this.refreshers.push(() => {
+      sticks.forEach(({ input, show }, s) => { input.value = String(this.call('Bt3Ui_Deadzone', 'number', [this.player, s])); show(); });
+      vib.checked = this.call('Bt3Ui_Vibration', 'number', [this.player, 0]) === 1;
+      strength.value = String(this.call('Bt3Ui_Vibration', 'number', [this.player, 1]));
+      strOut.textContent = `${strength.value}%`;
+      strength.disabled = test.disabled = !vib.checked;
     });
     return box;
   }

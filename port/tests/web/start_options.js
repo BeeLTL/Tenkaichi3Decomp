@@ -90,9 +90,17 @@ function sides({ w, h, ch, px }) {
     const i = document.getElementById('set-' + k); return [k, !!i, i ? i.closest('[role=tabpanel]').id : null]; }))`).then(JSON.parse);
   check(controls.every(([, there]) => there) && controls[0][2] === 'tab-video-page' && controls.slice(1).every(([, , tab]) => tab === 'tab-extras-page'),
         `panel: Menus in 4:3 (Video), Skip logos / intro / copyright page (Extras): ${controls.map(([k, t, tab]) => `${k}:${t ? tab : 'missing'}`).join(' ')}`);
+  // (as a player can: the panel opens once the engine is ready; a change asked for before is refused by the engine)
+  for (let i = 0; i < 120 && !(await ev(`!!(window.settings && settings.engineReady)`)); i++) await sleep(250);
+  const atClick = await ev(`JSON.stringify({ ready: !!(window.settings && settings.engineReady), button: !document.getElementById('settings-open').disabled, frame: bt3Module.ccall('Bt3Ui_Get','number',['string'],['frame']) })`);
   await ev(`document.getElementById('settings-open').click(); document.getElementById('tab-extras').click(); document.getElementById('set-skip_logos').click(); 0`);
   await sleep(1500);
-  check(/skip_logos=1/.test(await ev(`localStorage.getItem('bt3.settings') || ''`)), 'ticking "Skip logos" keeps it in the settings file');
+  const kept = /skip_logos=1/.test(await ev(`localStorage.getItem('bt3.settings') || ''`));
+  if (!kept) {  // (why: the engine's state when the box was ticked, and what the page said about settings)
+    console.log(`     at the click: ${atClick}; engine skip_logos ${await ev(`bt3Module.ccall('Bt3Ui_Get','number',['string'],['skip_logos'])`)}`);
+    console.log((await ev(`window.bt3Out.map((x) => x[1]).filter((l) => /setting/i.test(l)).slice(-8).join(String.fromCharCode(10))`)).replace(/^/gm, '     '));
+  }
+  check(kept, 'ticking "Skip logos" keeps it in the settings file');
   await start(null);  // the next start, with the settings as the page kept them
   check(await ev(`window.bt3Module.ccall('Bt3Ui_Get','number',['string'],['skip_logos'])`) === 1 &&
         await ev(`document.getElementById('set-skip_logos').checked`), 'after a reload: Skip logos is on (engine and panel)');

@@ -97,6 +97,11 @@ VIDEO_FIELD(stage)
 VIDEO_FIELD(hudLayout)
 VIDEO_FIELD(frameSkip)
 VIDEO_FIELD(texPack)
+VIDEO_FIELD(menuFont)
+VIDEO_FIELD(textFont)
+int Port_LateInput(void);           /* plat_stub.c: "Low input lag", the blanks are waited for before the pad read */
+void Port_LateInputSet(int on);
+static void set_late_input(int x) { Port_LateInputSet(x); Port_SettingsWrite(); } /* (the native window writes the file on closing) */
 static int get_texPackCount(void) { PortVideo v; GsGpu_GetSettings(&v); return v.texPackCount; }
 /* Content added from outside the disc: what was found, and whether it has been looked for yet (web_extras.c) */
 extern int PortStages_Count(void), PortSongs_Count(void), WebExtras_Checked(void);
@@ -204,6 +209,9 @@ static const struct {
     {"scale", get_scale, set_scale},
     {"aspect_milli", get_aspectMilli, set_aspectMilli},
     {"smooth_2d", get_smooth2d, set_smooth2d},
+    {"menu_font_id", get_menuFont, set_menuFont},
+    {"text_font_id", get_textFont, set_textFont},
+    {"late_input", Port_LateInput, set_late_input},
     {"fx_off", get_fxOff, set_fxOff},
     {"glow", get_glow, set_glow},
     {"music", get_music, set_music},
@@ -261,7 +269,7 @@ static int setting_index(const char *name) {
 
 /* ---- the queue of changes ------------------------------------------------------------------------------------- */
 
-typedef enum { REQ_SETTING, REQ_UNLOCK_ALL, REQ_RESET_CONTROLS, REQ_RESET_KEYS, REQ_RESET_PADS, REQ_SCREENSHOT, REQ_NET_LAUNCH } RequestKind;
+typedef enum { REQ_SETTING, REQ_UNLOCK_ALL, REQ_RESET_CONTROLS, REQ_RESET_KEYS, REQ_RESET_PADS, REQ_SCREENSHOT, REQ_NET_LAUNCH, REQ_FONT_LIST } RequestKind;
 static struct {
     RequestKind kind;
     int index, value;
@@ -311,6 +319,7 @@ static void reset_half(int keys, int player) {
     PortInput_Save();
 }
 
+static void font_lists_make(void);
 static void queue_apply(void) {
     int i;
     for (i = 0; i < sQueued; i++) {
@@ -322,6 +331,7 @@ static void queue_apply(void) {
         case REQ_RESET_PADS: reset_half(sQueue[i].kind == REQ_RESET_KEYS, sQueue[i].value); break;
         case REQ_SCREENSHOT: screenshot(); break;
         case REQ_NET_LAUNCH: { extern void Port_LobbyLaunch(void); Port_LobbyLaunch(); } break; /* (does not return) */
+        case REQ_FONT_LIST: font_lists_make(); break; /* (the page's copy: Bt3Ui_FontList) */
         }
     }
     sQueued = 0;
@@ -540,6 +550,71 @@ EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetStats(void) {
         snprintf(out, sizeof(out), "%d,%d,%d,%d,%d,%d,%d,%d,%d", n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], Port_LobbyRelayed());
     }
     return out;
+}
+
+/* ---- what the native window's UI tab and controller section offer besides the table above (ui.cpp ui_tab, the
+   sticks' part): the fonts to choose from, and per player each stick's deadzone and the vibration ---- */
+#include "gs/menu_text.h"
+/* The fonts of fonts.tsv that can be chosen for the menus (shared 0) or for dialogue and other text (shared 1):
+   "number<TAB>name" each, a line feed between (0 is "Original", the game's own). */
+/* The page gets a copy made on the game's thread (REQ_FONT_LIST, between two frames): reading the list can wait for
+   a file of the data folder over HTTP (the labels made from the disc, menu_text.c), and a call from the page cannot
+   wait ("trying to suspend JS frames": the list stayed at Original and the panel's start-up refresh broke off).
+   Asked for again at most every two seconds while it holds no more than Original (the menu fonts are offered once
+   the labels are made). "" until the first copy is there; then "changed" tells the page. */
+static char sFontLists[2][4096];
+static int sFontListsMade;
+static uint64_t sFontListsAsked;
+
+static void font_lists_make(void) {
+    int shared, i;
+    for (shared = 0; shared < 2; shared++) {
+        size_t used = 0;
+        sFontLists[shared][0] = '\0';
+        for (i = 0; i < MenuText_FontCount() && used < sizeof(sFontLists[shared]) - 1; i++) {
+            if (MenuText_FontAvailable(i, shared)) {
+                used += (size_t)snprintf(sFontLists[shared] + used, sizeof(sFontLists[shared]) - used, "%s%d\t%s", used ? "\n" : "", i,
+                                         MenuText_FontName(i));
+            }
+        }
+    }
+    sFontListsMade = 1;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_FontList(int shared) {
+    uint64_t now = SDL_GetTicks();
+    shared = shared != 0;
+    if ((!sFontListsMade || strchr(sFontLists[shared], '\n') == NULL) && (sFontListsAsked == 0 || now - sFontListsAsked > 2000) &&
+        gPortVBlanks > 0) {
+        sFontListsAsked = now;
+        queue_push(REQ_FONT_LIST, 0, 0);
+    }
+    return sFontListsMade ? sFontLists[shared] : "";
+}
+/* stick 0 left, 1 right: -1 the game's own, 0..PORT_DEADZONE_MAX a round one (percent); saved as natively */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_Deadzone(int player, int stick) {
+    return player >= 0 && player < 2 && stick >= 0 && stick < 2 ? PortInput_Deadzone(player)[stick] : -1;
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_DeadzoneSet(int player, int stick, int value) {
+    if (player >= 0 && player < 2 && stick >= 0 && stick < 2) {
+        PortInput_Deadzone(player)[stick] = value < -1 ? -1 : value > PORT_DEADZONE_MAX ? PORT_DEADZONE_MAX : value;
+        PortInput_Save();
+    }
+}
+/* which 0: on (0 / 1), 1: strength (0..100 percent) */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_Vibration(int player, int which) {
+    return player >= 0 && player < 2 && which >= 0 && which < 2 ? PortInput_Vibration(player)[which] : 0;
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_VibrationSet(int player, int which, int value) {
+    if (player >= 0 && player < 2 && which >= 0 && which < 2) {
+        PortInput_Vibration(player)[which] = which == 0 ? value != 0 : value < 0 ? 0 : value > 100 ? 100 : value;
+        PortInput_Save();
+    }
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_VibrationTest(int player) {
+    if (player >= 0 && player < 2) {
+        PortInput_VibrationTest(player); /* half a second of both motors at the strength set */
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE int Bt3Ui_TboTyping(void) {

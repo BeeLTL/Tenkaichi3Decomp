@@ -684,9 +684,13 @@ SELECT, or the bound one) calls the page's `toggle`.
 | Meter (frame rate, game speed) | Developer section (with renderer, GPU, resolution, frame, WebGPU errors, screenshot, restart with start-up switches) |
 | Display (monitor choice) | not offered: the browser decides |
 | Smooth motion (60 / 120 / 240) | **not offered**: measured in the browser, it slows the game (speed 90 % at "60", 74 % at "120") and the in-between pictures do not reach the screen (a page shows one picture per animation frame). The engine's F9 still switches it, with that effect |
-| Online play window, players' names, connection meter | online play is not in the browser build: the main menu's Dragon Net Battle entry is hidden (`BT3_MENU_ITEM4=0`) |
+| Online play window, players' names, connection meter | the game's own Tenkaichi Budokai Online menu (P5); the Dragon Net Battle entry stays hidden (`BT3_MENU_ITEM4=0`) |
 | Names of stages / songs added from outside the disc | the game prints them with its own font (its fallback without the overlay); the browser data has none |
 | Notices (`Port_UiNotice`) | a line under the game |
+| Menu font, Dialogue / UI font (UI tab) | Video tab, under Text (2026-10-16): the engine's own list of `fonts.tsv` (made on the game's thread: reading it can wait for a file over HTTP, which a call from the page cannot); a choice is applied and kept as natively, the menu font once the labels made from the disc are there |
+| Low input lag (experimental) | Video tab (2026-10-16), the same engine setting `late_input` |
+| Deadzone per stick, vibration on / strength / Test (controller section, per player) | Controls tab, for the player chosen there (2026-10-16); the live stick picture is the controller test's (`controllers.js`). Checked with SDL's virtual controller (`BT3_STICK_TEST`, `BT3_RUMBLE_LOG`): `port/tests/web/settings_more.js`; a real controller's motors not felt |
+| Online chat and connection meter | `net_overlay.js` over the game (P5, docs/BROWSER_ONLINE_PLAN.md); chat, chat size and meter in the Online tab |
 
 **Keyboard and focus**: SDL hears the keyboard on the canvas only (`SDL_EMSCRIPTEN_KEYBOARD_ELEMENT=#canvas`; SDL's
 default, the whole window, swallowed Tab and the arrows and passed the page's typing to the game). Panel: tabs with
