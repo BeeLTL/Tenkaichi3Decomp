@@ -254,6 +254,7 @@ static int ui_parse_row(UiParser *p, char *id) {
     if (!closed || !original || !text || !(a = ui_utf16(original, 0))) goto fail;
     if (*text && strcmp(text, original) != 0 && !(b = ui_utf16(text, 1))) goto fail;
     free(original); free(text);
+    original = text = NULL; /* (a row that cannot be added, a duplicate ID: freed once, below) */
     if (ui_add_row(id, a, b)) return 1;
 fail:
     free(id); free(original); free(text); free(a); ui_translated_free(b);
