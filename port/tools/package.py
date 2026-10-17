@@ -33,10 +33,13 @@ README = """Dragon Ball Z: Budokai Tenkaichi 3 - PC port (Linux, 64-bit)
 1. Start  Tenkaichi3Decomp-setup
 2. Choose your own disc image of the USA release (SLUS-21678), an .iso file.
    The setup checks it and unpacks the game's data next to this file. About 4 GB are needed.
+   Optional: a disc image of the European release (SLES-54945) as well, for Spanish, German, French and
+   Italian (menus, battle screen and text as that release has them). It can also be added later: start the
+   setup again and press "Add languages...".
 3. Press Play. Later, start  Tenkaichi3Decomp  itself (or the setup again, and press Play).
 
 In the game, F1 opens the settings: resolution, widescreen, controls and sound.
-The first launch shows a language list in the game window before loading game or memory card data. Change it later with F1 > UI > Language.
+With the European languages added, the first launch shows a language list in the game window before loading game or memory card data. Change it later with F1 > UI > Language.
 Saves are kept in saves/. A file placed in gamedata/mods/<same path as the original> replaces the original.
 Texture packs (PCSX2 naming, .dds or .png) go into textures/, stages and music from outside the disc into
 stages/ and songs/: see the note in each folder.

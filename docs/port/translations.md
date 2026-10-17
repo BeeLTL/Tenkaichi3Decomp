@@ -112,45 +112,40 @@ Each catalog handles missing entries differently:
 
 ## The European disc's languages
 
-`port/tools/extract_eu_text.py` reads a European disc image (SLES-54945) and
-gives Spanish, German, French and Italian from the game's own translation:
+The European release (SLES-54945) has the menus, the battle HUD and their text five times, once per language
+(English, Spanish, German, French, Italian). Its 60 archive entries with them are what the port needs:
 
-```
-python3 port/tools/extract_eu_text.py SLES-54945.iso --output gamedata/game-text/translations/ui
-```
+- the setup window takes them from a second, optional disc image (in a release folder: native.cpp `step_eu`;
+  the "Ready to play" page has "Add languages..." for a game set up before; without a window
+  `Tenkaichi3Decomp-setup --install "" <European image>`);
+- in a source checkout `python3 install.py --iso <USA image> --eu-iso <European image>`, or on its own
+  `python3 port/tools/extract_eu.py <European image>`.
 
-It writes two things for each language, both the player's own disc data that
-stay in `gamedata` (never commit them):
+They go as they are into `gamedata/pzs3eu1/<entry>.bin` (the battle HUD is entries 5 to 9, one per language; the
+USA menu archive 448 + k is entry 451 + k + 31 per language). They are the player's own disc data: never commit
+them. The game does the rest itself:
 
-- `ui/<locale>.json`: the menu, dialog and pause menu text, keyed by the USA
-  IDs (the battle HUD's file 5 is the European entries 5 to 9, one per
-  language). A line is taken where the European English is the USA English, or
-  where its table has as many lines on both discs: the European English is then
-  the same line reworded (bullets added, a typo fixed, "Fight Again?"). About
-  15,000 of 20,604 lines change; the rest are names and numbers.
-- `art/<locale>.bin`: the painted lettering of the menus and the battle HUD
-  (headings, menu items, buttons such as Yes and No, the title's Press START,
-  Ready and Fight, Hits, the pause menu's title). It holds the texture files of
-  the menu archives (448 to 472) and the HUD (5) that the language paints
-  otherwise, about 125 per language, each with where it is in the USA archive.
+- `ui/es.json`, `de.json`, `fr.json`, `it.json`: at the first start after the entries arrive, before the language
+  list (`UiText_EuropeanOnStartup`, ui_text_extract.c; under a second). The menu, dialog and pause menu text,
+  keyed by the USA IDs: the walk that makes `ui/en.json`, over both discs. A line is taken where the European
+  English is the USA English, or where its table has as many lines on both discs: the European English is then
+  the same line reworded (bullets added, a typo fixed, "Fight Again?"). About 15,000 of 20,604 lines change; the
+  rest are names and numbers. A catalog is made again when it was made by another version of this; one with
+  another source (written by a person) is left alone.
+- The painted lettering of the menus and the battle HUD (headings, menu items, buttons such as Yes and No, the
+  title's Press START, Ready and Fight, Hits, the pause menu's title): when a language is chosen, every texture
+  file of its archives that differs from the USA one is paired with it (`MenuLabels_Art`, menu_labels.c, in a
+  thread of its own at start, under two seconds), by the hash of the decoded USA pixels, the same hash the label
+  list uses. The renderer then puts the European picture in place of the USA one when it decodes it
+  (`MenuLabels_ArtSwap`, `gs_draw.c`). The game itself is untouched, and so is online play: it is only what a
+  texture shows. The two main menu sheets that the PC's own item is written into are paired by their first 96
+  rows; the item's row is kept.
 
-When a language with an `art/<locale>.bin` is chosen, the game pairs each of
-those textures with the USA one (`MenuLabels_Art` in `menu_labels.c`, in a
-thread of its own at start, under two seconds): by the hash of the decoded USA
-pixels, the same hash the label list uses. The renderer then puts the European
-picture in place of the USA one when it decodes it (`MenuLabels_ArtSwap`,
-`gs_draw.c`). The game itself is untouched, and so is online play: it is only
-what a texture shows. The two main menu sheets that the PC's own item is
-written into are paired by their first 96 rows; the item's row is kept.
+A redrawn label (Menu font other than Original) is drawn from `labels/`; on a texture that shows the European
+picture there is no USA label to redraw, so the European art is what shows.
 
-A redrawn label (Menu font other than Original) is drawn from `labels/`; on a
-texture that shows the European picture there is no USA label to redraw, so
-the European art is what shows.
-
-The English catalog the game extracts (`ui/en.json`, source "extracted USA
-game text, version 2") also has the lines that sit among other sections, as
-the pause menu's do in file 5. One extracted by an earlier version is made
-again at start; one a person wrote names another source and is kept. Run the
-tool again after that (with `--overwrite`) so the languages have those lines.
+The English catalog the game extracts (`ui/en.json`, source "extracted USA game text, version 2") also has the
+lines that sit among other sections, as the pause menu's do in file 5. One extracted by an earlier version is made
+again at start; one a person wrote names another source and is kept.
 
 `BT3_ART_LOG=1` lists every pair at start and every swap.

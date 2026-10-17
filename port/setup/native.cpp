@@ -8,6 +8,9 @@
 //                config/DBZP.yaml and config/SLUS_216.78.yaml)
 //   game data    gamedata/disc/<loose files>, and every DATA/*.AFS archive split into gamedata/<name>/00000.bin ...
 //                (the layout of port/tools/extract_disc.py)
+//   European     optional, a second image (SLES-54945): the 60 entries of its DATA/PZS3EU1.AFS the game makes Spanish,
+//                German, French and Italian from, into gamedata/pzs3eu1/ (as port/tools/extract_eu.py); the game makes
+//                the catalogs and the menu art at its next start (ui_text_extract.c, menu_labels.c)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -220,8 +223,16 @@ void copy_out(Iso &iso, Uint64 offset, Uint64 size, const std::string &path, std
     }
 }
 
+// "@step k n Title": the steps of this run are numbered as the window lists them (setup.cpp, reset_rows).
+int sStep, sSteps;
+void step(const char *title) {
+    char line[96];
+    snprintf(line, sizeof(line), "@step %d %d %s", ++sStep, sSteps, title);
+    say(line);
+}
+
 void step_disc(Iso &iso, const std::string &path) {
-    say("@step 1 3 Disc image");
+    step("Disc image");
     iso.open(path);
     const IsoFile *slus = iso.find("SLUS_216.78"), *dbzp = iso.find("BIN/DBZP.BIN");
     if (slus == NULL || dbzp == NULL) {
@@ -259,7 +270,7 @@ void step_disc(Iso &iso, const std::string &path) {
 void step_data(Iso &iso, const std::string &root) {
     std::string data = root + "gamedata/", marker = data + ".installed";
     SDL_PathInfo info;
-    say("@step 2 3 Game data");
+    step("Game data");
     if (SDL_GetPathInfo(marker.c_str(), &info)) {
         say("@skip already unpacked");
         return;
@@ -335,7 +346,7 @@ void step_data(Iso &iso, const std::string &root) {
 void step_test(const std::string &root) {
     std::string exe = root + kGame, saves = root + "gamedata/.selftest";
     const char *args[2] = {exe.c_str(), NULL};
-    say("@step 3 3 Self-test");
+    step("Self-test");
     say("@note the game's demo fight, no window");
     SDL_Environment *env = SDL_CreateEnvironment(true);
     SDL_SetEnvironmentVariable(env, "BT3_DEMO", "1", true);
@@ -400,14 +411,78 @@ void step_test(const std::string &root) {
     say("@ok the demo fight ran to its end");
 }
 
-void work(std::string root, std::string path) {
+// The European release's archive entries: the battle HUD (5 to 9, one per language: English, Spanish, German,
+// French, Italian) and the menu archives (USA 448 + k is 451 + k + 31 per language).
+std::vector<Uint32> eu_entries() {
+    static const Uint32 kUsa[] = {448, 449, 450, 451, 452, 453, 459, 460, 461, 463, 472};
+    std::vector<Uint32> out;
+    for (Uint32 bank = 0; bank < 5; bank++) {
+        out.push_back(5 + bank);
+        for (Uint32 usa : kUsa) {
+            out.push_back(451 + (usa - 448) + bank * 31);
+        }
+    }
+    return out;
+}
+
+void step_eu(const std::string &root, const std::string &path) {
+    Iso iso;
+    std::string dir = root + "gamedata/pzs3eu1/";
+    step("European languages");
+    iso.open(path);
+    const IsoFile *sles = iso.find("SLES_549.45"), *afs = iso.find("DATA/PZS3EU1.AFS");
+    if (sles == NULL || afs == NULL) {
+        throw Stop{"This is not a disc image of the European release of Budokai Tenkaichi 3 (no SLES_549.45 on it).\n"
+                   "The languages come from the European release (SLES-54945); the game itself is set up from the USA one."};
+    }
+    Uint8 head[8];
+    Uint32 count;
+    iso.read(afs->offset, head, 8);
+    memcpy(&count, head + 4, 4);
+    if (memcmp(head, "AFS\0", 4) != 0 || count == 0 || (Uint64)count * 8 + 8 > afs->size) {
+        throw Stop{"An archive on the European disc image (DATA/PZS3EU1.AFS) is damaged."};
+    }
+    std::vector<Uint32> table((size_t)count * 2);
+    iso.read(afs->offset + 8, table.data(), table.size() * 4);
+    std::vector<Uint8> buf(1 << 20);
+    std::vector<Uint32> want = eu_entries();
+    SDL_CreateDirectory(dir.c_str());
+    int done = 0;
+    for (Uint32 e : want) {
+        char name[32], line[64];
+        if (e >= count || (Uint64)table[e * 2] + table[e * 2 + 1] > afs->size) {
+            throw Stop{"An archive on the European disc image (DATA/PZS3EU1.AFS) is damaged or not the European release's."};
+        }
+        snprintf(name, sizeof(name), "%05u", e);
+        copy_out(iso, afs->offset + table[e * 2], table[e * 2 + 1], dir + name + ".part", buf);
+        if (!SDL_RenamePath((dir + name + ".part").c_str(), (dir + name + ".bin").c_str())) {
+            throw Stop{"Could not write " + dir + name + ".bin."};
+        }
+        snprintf(line, sizeof(line), "@note %d of %d", ++done, (int)want.size());
+        say(line);
+        check_cancel();
+    }
+    say("@ok Spanish, German, French and Italian: the game makes them at its next start");
+}
+
+void work(std::string root, std::string path, std::string eu) {
     try {
-        Iso iso;
-        step_disc(iso, path);
-        check_cancel();
-        step_data(iso, root);
-        check_cancel();
-        step_test(root);
+        sStep = 0;
+        sSteps = (path.empty() ? 0 : 3) + (eu.empty() ? 0 : 1);
+        if (!path.empty()) {
+            Iso iso;
+            step_disc(iso, path);
+            check_cancel();
+            step_data(iso, root);
+            check_cancel();
+        }
+        if (!eu.empty()) {
+            step_eu(root, eu);
+            check_cancel();
+        }
+        if (!path.empty()) {
+            step_test(root);
+        }
         say("@done " + root + kGame);
     } catch (const Stop &s) {
         std::string why = s.why;
@@ -422,13 +497,13 @@ void work(std::string root, std::string path) {
 
 } // namespace
 
-void Native_Start(const std::string &root, const std::string &iso) {
+void Native_Start(const std::string &root, const std::string &iso, const std::string &eu) {
     if (sThread.joinable()) {
         sThread.join();
     }
     sCancel = false;
     sRunning = true;
-    sThread = std::thread(work, root, iso);
+    sThread = std::thread(work, root, iso, eu);
 }
 
 bool Native_Poll(std::string &line) {
@@ -455,4 +530,16 @@ void Native_Join() {
 bool Native_Installed(const std::string &root) {
     SDL_PathInfo info;
     return SDL_GetPathInfo((root + "gamedata/.installed").c_str(), &info);
+}
+
+bool Native_EuInstalled(const std::string &root) {
+    SDL_PathInfo info;
+    for (Uint32 e : eu_entries()) {
+        char name[48];
+        snprintf(name, sizeof(name), "gamedata/pzs3eu1/%05u.bin", e);
+        if (!SDL_GetPathInfo((root + name).c_str(), &info)) {
+            return false;
+        }
+    }
+    return true;
 }

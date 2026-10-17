@@ -17,7 +17,11 @@
 
 typedef struct UtBuf { const uint8_t *p; size_t n; } UtBuf;
 typedef struct UtJob { char data[1200], output[1200]; } UtJob;
-typedef struct UtWriter { FILE *fp; unsigned count; int file; } UtWriter;
+/* A line as the walk found it (collected, not written): its ID, its UTF-16 bytes with the byte-order mark and the
+   closing zero, and how many lines its table has (for matching the two discs' tables, UiText_EuropeanOnStartup). */
+typedef struct UtLine { char *id; uint8_t *text; size_t n; unsigned tableLines; } UtLine;
+/* Where the walk's lines go: written as the catalog's JSON (fp), or collected (fp NULL). */
+typedef struct UtWriter { FILE *fp; unsigned count; int file; UtLine *lines; unsigned nLines, capLines; int failed; } UtWriter;
 static pthread_mutex_t sUtLock = PTHREAD_MUTEX_INITIALIZER;
 static int sUtStarted;
 static const int kUtMenuFiles[] = {5, 448, 449, 450, 451, 452, 453, 459, 460, 461, 463, 472};
@@ -126,8 +130,39 @@ static void ut_json_string(FILE *fp, UtBuf b) {
     }
     fputc('"', fp);
 }
+/* A line found: into the catalog, or kept (a copy: the walk frees what it unpacked). */
+static void ut_emit(UtWriter *w, const char *id, UtBuf line, unsigned tableLines) {
+    UtLine *l;
+    size_t n;
+    if (w->fp != NULL) {
+        fprintf(w->fp, "%s    \"%s\": {\"original\": ", w->count++ ? ",\n" : "", id);
+        ut_json_string(w->fp, line);
+        fputs(", \"text\": ", w->fp);
+        ut_json_string(w->fp, line);
+        fputc('}', w->fp);
+        return;
+    }
+    if (w->failed) return;
+    for (n = 2; n + 1 < line.n && ut_u16(line.p + n) != 0; n += 2) {}
+    n += 2; /* (the closing zero: ut_line has seen it) */
+    if (w->nLines == w->capLines) {
+        unsigned cap = w->capLines ? w->capLines * 2 : 4096;
+        UtLine *more = realloc(w->lines, cap * sizeof(*more));
+        if (more == NULL) { w->failed = 1; return; }
+        w->lines = more;
+        w->capLines = cap;
+    }
+    l = &w->lines[w->nLines];
+    l->id = strdup(id);
+    l->text = malloc(n);
+    if (l->id == NULL || l->text == NULL) { free(l->id); free(l->text); w->failed = 1; return; }
+    memcpy(l->text, line.p, n);
+    l->n = n;
+    l->tableLines = tableLines;
+    w->nLines++;
+}
 static void ut_walk(UtWriter *w, UtBuf b, const char *path, int depth) {
-    uint32_t n, i;
+    uint32_t n, i, lines = 0;
     UtBuf line;
     if (depth > 4 || !ut_archive(b, &n)) return;
     for (i = 1; i <= n; i++) if (!ut_section(b, i, &line) || !ut_line(line)) break;
@@ -136,14 +171,11 @@ static void ut_walk(UtWriter *w, UtBuf b, const char *path, int depth) {
             char id[128];
             ut_section(b, i, &line);
             if (snprintf(id, sizeof(id), "%s/%u", path, i - 1) >= (int)sizeof(id)) return;
-            fprintf(w->fp, "%s    \"%s\": {\"original\": ", w->count++ ? ",\n" : "", id);
-            ut_json_string(w->fp, line);
-            fputs(", \"text\": ", w->fp);
-            ut_json_string(w->fp, line);
-            fputc('}', w->fp);
+            ut_emit(w, id, line, n);
         }
         return;
     }
+    for (i = 1; i <= n; i++) lines += ut_section(b, i, &line) && ut_line(line);
     for (i = 1; i <= n; i++) {
         UtBuf part, unpacked;
         uint32_t childCount;
@@ -151,11 +183,7 @@ static void ut_walk(UtWriter *w, UtBuf b, const char *path, int depth) {
         if (ut_section(b, i, &part) && ut_line(part)) { /* a line among other sections (the HUD's file 5: the pause menu) */
             char id[128];
             if (snprintf(id, sizeof(id), "%s/%u", path, i - 1) >= (int)sizeof(id)) continue;
-            fprintf(w->fp, "%s    \"%s\": {\"original\": ", w->count++ ? ",\n" : "", id);
-            ut_json_string(w->fp, part);
-            fputs(", \"text\": ", w->fp);
-            ut_json_string(w->fp, part);
-            fputc('}', w->fp);
+            ut_emit(w, id, part, lines);
             continue;
         }
         if (!ut_section(b, i, &part) || part.n < 12 ||
@@ -247,4 +275,160 @@ void UiText_ExtractOnStartup(const char *gameTextDir) {
     if (ut_stale(job->output)) remove(job->output); /* (made by an older release: made again, with what it lacked) */
     if (access(job->output, 0) == 0 || pthread_create(&thread, NULL, ut_worker, job) != 0) { free(job); return; }
     pthread_detach(thread);
+}
+
+/* ---- the European disc's languages ------------------------------------------------------------------------------
+   The European release (SLES-54945) has the menus, the battle HUD and their text once per language: English,
+   Spanish, German, French, Italian. The setup (or port/tools/extract_eu.py) copies those archive entries into
+   gamedata/pzs3eu1 as they are; from them the catalogs ui/es.json, de.json, fr.json and it.json are made here, keyed
+   by the USA disc's IDs. A line is the same line on both discs where the European English is the USA English, or
+   where its table has as many lines on both (the European English is then the USA line reworded: bullets added, a
+   typo fixed, "Fight Again?"). Lines without their like stay English. */
+#define UT_EU_SOURCE "European disc, version 1"
+#define UT_EU_STRIDE 31  /* the menu archives: USA 448 + k is European 451 + k + 31 * language */
+#define UT_EU_FIRST 451
+#define UT_EU_HUD 5      /* the HUD: USA 5 is European 5 + language */
+static const struct { const char *locale, *name; } kUtEuLanguages[4] = {
+    {"es", "Espa\xc3\xb1ol"}, {"de", "Deutsch"}, {"fr", "Fran\xc3\xa7" "ais"}, {"it", "Italiano"}};
+
+static void ut_lines_free(UtWriter *w) {
+    unsigned i;
+    for (i = 0; i < w->nLines; i++) { free(w->lines[i].id); free(w->lines[i].text); }
+    free(w->lines);
+    memset(w, 0, sizeof(*w));
+}
+static int ut_line_order(const void *a, const void *b) {
+    return strcmp(((const UtLine *)a)->id, ((const UtLine *)b)->id);
+}
+static const UtLine *ut_line_find(const UtWriter *w, const char *id) {
+    UtLine key;
+    key.id = (char *)id;
+    return bsearch(&key, w->lines, w->nLines, sizeof(*w->lines), ut_line_order);
+}
+static int ut_line_same(const UtLine *a, const UtLine *b) {
+    return a->n == b->n && memcmp(a->text, b->text, a->n) == 0;
+}
+/* The lines of one disc: the USA one's (bank -1, gamedata/pzs3us1) or a European language bank's (0 English ...). */
+static int ut_collect(const char *data, int bank, UtWriter *w) {
+    int i;
+    for (i = 0; i < (int)(sizeof(kUtMenuFiles) / sizeof(kUtMenuFiles[0])); i++) {
+        char path[1300], id[32];
+        size_t size;
+        uint8_t *bytes;
+        UtBuf b;
+        int usa = kUtMenuFiles[i];
+        int entry = bank < 0 ? usa : usa == UT_EU_HUD ? UT_EU_HUD + bank : UT_EU_FIRST + (usa - 448) + bank * UT_EU_STRIDE;
+        if (snprintf(path, sizeof(path), "%s/%s/%05d.bin", data, bank < 0 ? "pzs3us1" : "pzs3eu1", entry) >= (int)sizeof(path)) return 0;
+        if ((bytes = ut_read(path, &size)) == NULL) return 0;
+        b.p = bytes; b.n = size;
+        snprintf(id, sizeof(id), "pzs3us1/%05d", usa);
+        ut_walk(w, b, id, 0);
+        free(bytes);
+    }
+    return !w->failed && w->nLines > 0;
+}
+/* A catalog of ours that is current (made by this version from the disc), or one that is someone else's (written by
+   a person, or by an older tool): left as it is. Missing, or ours from another version: made. */
+static int ut_eu_wanted(const char *path) {
+    char head[512];
+    size_t n;
+    FILE *fp = fopen(path, "rb");
+    if (fp == NULL) return 1;
+    n = fread(head, 1, sizeof(head) - 1, fp);
+    fclose(fp);
+    head[n] = 0;
+    return strstr(head, "\"source\": \"European disc, version ") != NULL && strstr(head, "\"source\": \"" UT_EU_SOURCE "\"") == NULL;
+}
+int UiText_EuropeanOnStartup(const char *gameTextDir, char *why, size_t whyLen) {
+    const char *env = getenv("BT3_DATA");
+    char data[1100], dir[1300], path[1400], temp[1420];
+    UtWriter usa, eu[5];
+    unsigned i, matched = 0;
+    int k, want = 0, made = 0, result = -1;
+
+    snprintf(why, whyLen, "%s", "");
+    snprintf(data, sizeof(data), "%s", env != NULL && env[0] ? env : "gamedata");
+    if (gameTextDir == NULL || snprintf(path, sizeof(path), "%s/pzs3eu1/%05d.bin", data, UT_EU_HUD) >= (int)sizeof(path) || access(path, 0) != 0 ||
+        snprintf(dir, sizeof(dir), "%s/translations/ui", gameTextDir) >= (int)sizeof(dir)) {
+        return 0; /* (no European disc taken) */
+    }
+    for (k = 0; k < 4; k++) {
+        snprintf(path, sizeof(path), "%s/%s.json", dir, kUtEuLanguages[k].locale);
+        want |= ut_eu_wanted(path) << k;
+    }
+    if (want == 0) return 0;
+    memset(&usa, 0, sizeof(usa));
+    memset(eu, 0, sizeof(eu));
+    if (!ut_collect(data, -1, &usa)) {
+        snprintf(why, whyLen, "the USA disc's menu archives cannot be read from %s/pzs3us1", data);
+        goto done;
+    }
+    for (k = 0; k < 5; k++) {
+        if (!ut_collect(data, k, &eu[k])) {
+            snprintf(why, whyLen, "the European disc's archives in %s/pzs3eu1 are incomplete or damaged", data);
+            goto done;
+        }
+        qsort(eu[k].lines, eu[k].nLines, sizeof(*eu[k].lines), ut_line_order);
+    }
+    for (i = 0; i < usa.nLines; i++) {
+        const UtLine *e = ut_line_find(&eu[0], usa.lines[i].id);
+        matched += e != NULL && ut_line_same(e, &usa.lines[i]);
+    }
+    if (matched * 10 < usa.nLines * 7) { /* (another disc's archives, numbered otherwise) */
+        snprintf(why, whyLen, "the archives in %s/pzs3eu1 do not match the USA disc's (%u of %u lines)", data, matched, usa.nLines);
+        goto done;
+    }
+#ifdef _WIN32
+    { char parent[1300]; snprintf(parent, sizeof(parent), "%s/translations", gameTextDir); _mkdir(gameTextDir); _mkdir(parent); _mkdir(dir); }
+#else
+    { char parent[1300]; snprintf(parent, sizeof(parent), "%s/translations", gameTextDir); mkdir(gameTextDir, 0755); mkdir(parent, 0755); mkdir(dir, 0755); }
+#endif
+    for (k = 0; k < 4; k++) {
+        FILE *fp;
+        unsigned written = 0, translated = 0;
+        if (!(want >> k & 1)) continue;
+        snprintf(path, sizeof(path), "%s/%s.json", dir, kUtEuLanguages[k].locale);
+        snprintf(temp, sizeof(temp), "%s.part", path);
+        if ((fp = fopen(temp, "wb")) == NULL) {
+            snprintf(why, whyLen, "%s cannot be written", temp);
+            goto done;
+        }
+        fprintf(fp, "{\n  \"schema_version\": 1,\n  \"labels_version\": 1,\n  \"translation_version\": 1,\n  \"locale\": \"%s\",\n"
+                    "  \"name\": \"%s\",\n  \"source\": \"" UT_EU_SOURCE "\",\n  \"labels\": {\n",
+                kUtEuLanguages[k].locale, kUtEuLanguages[k].name);
+        for (i = 0; i < usa.nLines; i++) {
+            const UtLine *u = &usa.lines[i], *e0 = ut_line_find(&eu[0], u->id), *e = ut_line_find(&eu[k + 1], u->id);
+            UtBuf original = {u->text, u->n}, text = original;
+            if (e != NULL && e0 != NULL && (ut_line_same(e0, u) || e0->tableLines == u->tableLines)) {
+                text.p = e->text;
+                text.n = e->n;
+                translated += !ut_line_same(e, u);
+            }
+            fprintf(fp, "%s    \"%s\": {\"original\": ", written++ ? ",\n" : "", u->id);
+            ut_json_string(fp, original);
+            fputs(", \"text\": ", fp);
+            ut_json_string(fp, text);
+            fputc('}', fp);
+        }
+        fprintf(fp, "\n  },\n  \"labels_count\": %u\n}\n", written);
+        if (fclose(fp) != 0) {
+            remove(temp);
+            snprintf(why, whyLen, "%s cannot be written", temp);
+            goto done;
+        }
+        remove(path); /* (Windows' rename does not replace) */
+        if (rename(temp, path) != 0) {
+            remove(temp);
+            snprintf(why, whyLen, "%s cannot be written", path);
+            goto done;
+        }
+        made++;
+        fprintf(stderr, "bt3: European disc: %s, %u of %u lines translated\n", path, translated, written);
+    }
+    result = made;
+    snprintf(why, whyLen, "%d languages made", made);
+done:
+    ut_lines_free(&usa);
+    for (k = 0; k < 5; k++) ut_lines_free(&eu[k]);
+    return result;
 }

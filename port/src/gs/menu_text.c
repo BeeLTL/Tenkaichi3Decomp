@@ -23,6 +23,7 @@
  * replacements take precedence. */
 #include "menu_text.h"
 #include "menu_labels.h"
+#include "ui_text_extract.h" /* UiText_EuropeanOnStartup */
 #include "menu_translation.h"
 #include "../port_addr.h"
 #include <stdio.h>
@@ -460,6 +461,22 @@ static void menu_text_dirs(void) {
         snprintf(sLabelDir, sizeof(sLabelDir), "%s/game-text", data != NULL ? data : "gamedata");
     }
     snprintf(sDataDir, sizeof(sDataDir), "%s", data != NULL ? data : "gamedata");
+    {   /* the European disc's languages, from the archives the setup took (once: the first start after it) */
+        static int done;
+        if (!done && sLabelDir[0] != '\0') {
+            char why[300];
+            struct timespec a, b;
+            int made;
+            done = 1;
+            clock_gettime(CLOCK_MONOTONIC, &a);
+            made = UiText_EuropeanOnStartup(sLabelDir, why, sizeof(why));
+            clock_gettime(CLOCK_MONOTONIC, &b);
+            if (made != 0) {
+                fprintf(stderr, made > 0 ? "bt3: European disc: %s (%ld ms)\n" : "bt3: European disc: no languages: %s (%ld ms)\n", why,
+                        (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000));
+            }
+        }
+    }
     if (MenuTranslation_BootPending()) {
         __atomic_store_n(&sBootAwaitLanguage, 1, __ATOMIC_RELEASE);
         sLabelsThere = sLabelsOld = 0;
@@ -1078,39 +1095,42 @@ int Port_MainItemLabel(int entry, int lit, int out) {
     return 1;
 }
 
-/* The European disc's menu art for the chosen language, if port/tools/extract_eu_text.py has made it
-   (game-text/translations/art/<locale>.bin): paired with the USA textures in a thread of its own, once. */
-static char sArtPath[1100];
+/* The European disc's menu art for the chosen language, if the setup took the European disc's archives
+   (gamedata/pzs3eu1): paired with the USA textures in a thread of its own, once. */
+static int sArtBank;
 static void *art_thread(void *arg) {
     char why[240];
     struct timespec a, b;
     int n;
     (void)arg;
     clock_gettime(CLOCK_MONOTONIC, &a);
-    n = MenuLabels_Art(sDataDir, sArtPath, why, sizeof(why));
+    n = MenuLabels_Art(sDataDir, sArtBank, why, sizeof(why));
     clock_gettime(CLOCK_MONOTONIC, &b);
-    fprintf(stderr, n >= 0 ? "bt3: menu art: %s, %ld ms (%s)\n" : "bt3: menu art: not used: %s, %ld ms (%s)\n", why,
-            (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000), sArtPath);
+    fprintf(stderr, n >= 0 ? "bt3: menu art: %s, %ld ms\n" : "bt3: menu art: not used: %s, %ld ms\n", why,
+            (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000));
     return NULL;
 }
 
 static void art_start(void) {
+    static const char *const kBanks[4] = {"es", "de", "fr", "it"}; /* (the European disc's order, after English) */
     static int started;
     const char *locale;
+    char path[1100];
     pthread_t th;
     pthread_attr_t attr;
+    int k;
 
-    if (started || sLabelDir[0] == '\0' || (locale = MenuTranslation_Locale()) == NULL) {
+    if (started || (locale = MenuTranslation_Locale()) == NULL) {
         return;
     }
     started = 1;
-    if (strcmp(locale, "en") == 0 || strchr(locale, '/') != NULL || strchr(locale, '\\') != NULL || strstr(locale, "..") != NULL) {
+    for (k = 0; k < 4 && strcmp(locale, kBanks[k]) != 0; k++) {
+    }
+    snprintf(path, sizeof(path), "%s/pzs3eu1/00005.bin", sDataDir);
+    if (k == 4 || !file_there(path)) {
         return;
     }
-    snprintf(sArtPath, sizeof(sArtPath), "%s/translations/art/%s.bin", sLabelDir, locale);
-    if (!file_there(sArtPath)) {
-        return;
-    }
+    sArtBank = k + 1;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     if (pthread_create(&th, &attr, art_thread, NULL) != 0) {

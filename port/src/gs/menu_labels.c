@@ -2023,7 +2023,6 @@ typedef struct MlArt {
 
 #define ML_ART_TOP 96
 
-static uint8_t *sArtData;                        /* the art file, as read */
 static struct { const uint8_t *p; size_t n; } *sArtFile;
 static MlArt *sArt;
 static int sArtCount, sArtReady;
@@ -2111,124 +2110,215 @@ static int ml_art_pair(MlBuf usa, MlBuf eu, uint32_t file, int itemSheets, MlArt
     return n;
 }
 
-int MenuLabels_Art(const char *dataDir, const char *artPath, char *why, size_t whyLen) {
-    MlCtx *c = calloc(1, sizeof(*c));
-    FILE *fp = NULL;
-    long size = 0;
-    uint8_t *data = NULL, *member = NULL;
-    uint32_t count = 0, k, lastFile = 0, lastOuter = 0;
-    size_t at, memberLen = 0;
-    MlArt *art = NULL;
-    int n = 0, room = 0, result = -1;
+/* What the pairing builds: the pairs, and the European texture files they are decoded from (kept: sArtFile). */
+typedef struct MlArtBuild {
+    MlArt *art;
+    int n, cap;
+    uint32_t files, capFiles;
+} MlArtBuild;
 
-    snprintf(why, whyLen, "the art file cannot be read");
-    if (c == NULL || (fp = fopen(artPath, "rb")) == NULL || fseek(fp, 0, SEEK_END) != 0 || (size = ftell(fp)) < 12 ||
-        size > 256L * 1024 * 1024 || fseek(fp, 0, SEEK_SET) != 0 || (data = malloc((size_t)size)) == NULL ||
-        fread(data, 1, (size_t)size, fp) != (size_t)size) {
-        goto done;
+/* A table of sections as the archives have them (a count, then count + 1 offsets in order): its count, or 0. */
+static uint32_t ml_table_count(MlBuf d) {
+    uint32_t count, prev, off, i;
+    if (d.n < 12 || !ml_get32(d, 0, &count) || count == 0 || count > 16384 || (uint64_t)(count + 2) * 4 > d.n || !ml_get32(d, 4, &prev)) {
+        return 0;
     }
-    if (memcmp(data, "BT3ART1\n", 8) != 0 || !ml_get32((MlBuf){data, (size_t)size}, 8, &count) || count > 4096) {
-        snprintf(why, whyLen, "%s is not an art file of port/tools/extract_eu_text.py", artPath);
+    prev &= ~3u;
+    if (prev < (count + 2) * 4) {
+        return 0;
+    }
+    for (i = 2; i <= count + 1; i++) {
+        if (!ml_get32(d, (uint64_t)i * 4, &off) || (off &= ~3u) < prev || off > d.n) {
+            return 0;
+        }
+        prev = off;
+    }
+    return count;
+}
+
+/* Section `index` (1 ..) of such a table, from its offset to the next one's. */
+static MlBuf ml_part(MlBuf d, uint32_t index) {
+    uint32_t first = 0, last = 0;
+    MlBuf out = {d.p, 0};
+    ml_get32(d, (uint64_t)index * 4, &first);
+    ml_get32(d, (uint64_t)index * 4 + 4, &last);
+    first &= ~3u;
+    last &= ~3u;
+    if (first <= last && last <= d.n) {
+        out.p = d.p + first;
+        out.n = last - first;
+    }
+    return out;
+}
+
+/* A texture file of a menu archive: its texture table's first entry an 8- or 4-bit texture of at most 512. */
+static int ml_is_texture_file(MlBuf d) {
+    uint32_t table;
+    uint64_t tex0;
+    if (d.n < 16 || !ml_get32(d, 4, &table) || !ml_get64(d, (uint64_t)table * 4 + 48, &tex0)) {
+        return 0;
+    }
+    return (((tex0 >> 20) & 63) == 19 || ((tex0 >> 20) & 63) == 20) && ((tex0 >> 26) & 15) <= 9 && ((tex0 >> 30) & 15) <= 9;
+}
+
+/* A member, unpacked (the HUD's are not packed: copied). NULL: not one. */
+static uint8_t *ml_member(MlBuf packed, int raw, size_t *n) {
+    uint32_t full = 0, pk = 0;
+    uint8_t *out;
+    if (raw) {
+        if ((out = malloc(packed.n ? packed.n : 1)) != NULL) {
+            memcpy(out, packed.p, packed.n);
+            *n = packed.n;
+        }
+        return out;
+    }
+    if (!ml_get32(packed, 0, &full) || !ml_get32(packed, 4, &pk) || full == 0 || full > ML_UNPACKED_MAX || pk > packed.n - 8 ||
+        (out = malloc(full)) == NULL) {
+        return NULL;
+    }
+    if (ml_unpack_bytes(packed.p, packed.n, out, full) != (long)full) {
+        free(out);
+        return NULL;
+    }
+    *n = full;
+    return out;
+}
+
+/* The two discs' sections side by side (path: the member, then the section numbers below it): every texture file
+   that differs is paired (ml_art_pair), its European copy kept. */
+static int ml_art_walk(MlBuf usa, MlBuf eu, int file, uint32_t *path, int depth, MlArtBuild *b) {
+    uint32_t count, i;
+    if (usa.n == eu.n && memcmp(usa.p, eu.p, usa.n) == 0) {
+        return 1;
+    }
+    if (ml_is_texture_file(usa) && ml_is_texture_file(eu)) {
+        uint8_t *copy;
+        int had = b->n, m;
+        /* the main menu's sheets (449, member 2, parts 5 and 6: ml_item_into) */
+        int items = file == 449 && depth == 1 && path[0] == 2 && (path[1] == 5 || path[1] == 6);
+        if (b->cap - b->n < 64 * 64 * 2 + 2) { /* (the most one texture file can give: every texture with every table) */
+            int cap = b->cap * 2 + 64 * 64 * 2 + 2;
+            MlArt *more = realloc(b->art, (size_t)cap * sizeof(*more));
+            if (more == NULL) {
+                return 0;
+            }
+            b->art = more;
+            b->cap = cap;
+        }
+        if (b->files == b->capFiles) {
+            uint32_t cap = b->capFiles ? b->capFiles * 2 : 256;
+            void *more = realloc(sArtFile, cap * sizeof(*sArtFile));
+            if (more == NULL) {
+                return 0;
+            }
+            sArtFile = more;
+            b->capFiles = cap;
+        }
+        if ((copy = malloc(eu.n)) == NULL) {
+            return 0;
+        }
+        memcpy(copy, eu.p, eu.n);
+        sArtFile[b->files].p = copy;
+        sArtFile[b->files].n = eu.n;
+        b->n += ml_art_pair(usa, (MlBuf){copy, eu.n}, b->files, items, b->art + b->n, b->cap - b->n);
+        for (m = had; m < b->n && getenv("BT3_ART_LOG") != NULL; m++) { /* BT3_ART_LOG=1: every pair, and every swap */
+            fprintf(stderr, "bt3: menu art: %05d/%u", file, path[0]);
+            for (i = 1; i <= (uint32_t)depth; i++) {
+                fprintf(stderr, "/%u", path[i]);
+            }
+            fprintf(stderr, " texture %u colours %u: %dx%d %016llx\n", b->art[m].index, b->art[m].palette, b->art[m].w, b->art[m].h,
+                    (unsigned long long)b->art[m].hash);
+        }
+        b->files++;
+        return 1;
+    }
+    if (depth >= 4 || (count = ml_table_count(usa)) == 0 || ml_table_count(eu) != count) {
+        return 1;
+    }
+    for (i = 1; i <= count; i++) {
+        path[depth + 1] = i;
+        if (!ml_art_walk(ml_part(usa, i), ml_part(eu, i), file, path, depth + 1, b)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int MenuLabels_Art(const char *dataDir, int bank, char *why, size_t whyLen) {
+    MlCtx *c = calloc(1, sizeof(*c));
+    MlArtBuild b;
+    uint32_t k;
+    int f, result = -1;
+
+    memset(&b, 0, sizeof(b));
+    snprintf(why, whyLen, "out of memory");
+    if (c == NULL || bank < 1 || bank > 4) {
         goto done;
     }
     if (ml_read_disc(c, dataDir, 0) != MENU_LABELS_MADE) {
         snprintf(why, whyLen, "%s", c->why);
         goto done;
     }
-    sArtFile = calloc(count ? count : 1, sizeof(*sArtFile));
-    room = (int)count * 16 + 16;
-    art = calloc((size_t)room, sizeof(*art));
-    if (sArtFile == NULL || art == NULL) {
-        snprintf(why, whyLen, "out of memory");
-        goto done;
-    }
-    at = 12;
-    for (k = 0; k < count; k++) {
-        MlBuf all = {data, (size_t)size}, d;
-        uint32_t len, file, depth, path[4], f, i;
-        if (at > (size_t)size || (size_t)size - at < 16) {
-            snprintf(why, whyLen, "%s is cut short", artPath);
-            goto done;
-        }
-        file = (uint32_t)data[at] | (uint32_t)data[at + 1] << 8;
-        depth = (uint32_t)data[at + 2] | (uint32_t)data[at + 3] << 8;
-        for (i = 0; i < 4; i++) {
-            path[i] = (uint32_t)data[at + 4 + i * 2] | (uint32_t)data[at + 5 + i * 2] << 8;
-        }
-        ml_get32(all, at + 12, &len);
-        at += 16;
-        if (len > (size_t)size - at || depth < 1 || depth > 4 || (f = (uint32_t)ml_file((int)file)) == ML_FILES) {
-            snprintf(why, whyLen, "%s names a texture file that is not there", artPath);
-            goto done;
-        }
-        sArtFile[k].p = data + at;
-        sArtFile[k].n = len;
-        at += len + ((4 - len % 4) % 4);
-        if (member == NULL || lastFile != file || lastOuter != path[0]) { /* the USA archive's member, unpacked */
-            MlBuf packed;
-            uint32_t full = 0, pk = 0;
-            free(member);
-            member = NULL;
-            if (!ml_section(c, c->file[f], path[0], &packed)) {
-                continue;
+    for (f = 0; f < ML_FILES; f++) { /* each USA archive beside the same archive of the language's bank */
+        int number = kMlFiles[f].number, entry = number == 5 ? 5 + bank : 451 + (number - 448) + bank * 31;
+        char path[1300];
+        FILE *fp;
+        long size;
+        uint8_t *eu = NULL;
+        MlBuf usa = c->file[f], euBuf;
+        uint32_t count, m, at[6];
+        snprintf(path, sizeof(path), "%s/pzs3eu1/%05d.bin", dataDir, entry);
+        if ((fp = fopen(path, "rb")) == NULL || fseek(fp, 0, SEEK_END) != 0 || (size = ftell(fp)) < 12 || size > 64L * 1024 * 1024 ||
+            fseek(fp, 0, SEEK_SET) != 0 || (eu = malloc((size_t)size)) == NULL || fread(eu, 1, (size_t)size, fp) != (size_t)size) {
+            if (fp != NULL) {
+                fclose(fp);
             }
-            if (file == 5) { /* the HUD's members are not packed (ml_screen) */
-                full = (uint32_t)packed.n;
-                if ((member = malloc(full ? full : 1)) == NULL) {
-                    continue;
+            free(eu);
+            snprintf(why, whyLen, "%s is missing or cannot be read", path);
+            goto done;
+        }
+        fclose(fp);
+        euBuf.p = eu;
+        euBuf.n = (size_t)size;
+        count = ml_table_count(usa);
+        if (count != 0 && ml_table_count(euBuf) == count) {
+            for (m = 1; m <= count; m++) {
+                size_t nu = 0, ne = 0;
+                uint8_t *mu = ml_member(ml_part(usa, m), number == 5, &nu), *me = ml_member(ml_part(euBuf, m), number == 5, &ne);
+                int ok = 1;
+                if (mu != NULL && me != NULL) {
+                    at[0] = m;
+                    ok = ml_art_walk((MlBuf){mu, nu}, (MlBuf){me, ne}, number, at, 0, &b);
                 }
-                memcpy(member, packed.p, full);
-            } else if (!ml_get32(packed, 0, &full) || !ml_get32(packed, 4, &pk) || full > ML_UNPACKED_MAX || pk > packed.n - 8 ||
-                       (member = malloc(full ? full : 1)) == NULL || ml_unpack_bytes(packed.p, packed.n, member, full) != (long)full) {
-                free(member);
-                member = NULL;
-                continue; /* (not a texture of this disc's: left as it is) */
-            }
-            memberLen = full;
-            lastFile = file;
-            lastOuter = path[0];
-        }
-        d.p = member;
-        d.n = memberLen;
-        for (i = 1; i < depth; i++) {
-            if (!ml_section(c, d, path[i], &d)) {
-                break;
+                free(mu);
+                free(me);
+                if (!ok) {
+                    free(eu);
+                    goto done;
+                }
             }
         }
-        if (i == depth) {
-            int had = n, m;
-            /* the main menu's sheets (449, member 2, parts 5 and 6: ml_item_into) */
-            int items = file == 449 && depth == 2 && path[0] == 2 && (path[1] == 5 || path[1] == 6);
-            n += ml_art_pair(d, (MlBuf){sArtFile[k].p, sArtFile[k].n}, k, items, art + n, room - n);
-            for (m = had; m < n && getenv("BT3_ART_LOG") != NULL; m++) { /* BT3_ART_LOG=1: every pair, and every swap */
-                fprintf(stderr, "bt3: menu art: %05u/%u/%u/%u/%u texture %u colours %u: %dx%d %016llx\n", file, path[0], path[1], path[2],
-                        path[3], art[m].index, art[m].palette, art[m].w, art[m].h, (unsigned long long)art[m].hash);
-            }
-        }
+        free(eu);
     }
-    qsort(art, (size_t)n, sizeof(*art), ml_art_order);
-    for (k = 0; k < (uint32_t)n; k++) {
-        sArtSize[ml_log2(art[k].w)][ml_log2(art[k].h)] = 1;
+    qsort(b.art, (size_t)b.n, sizeof(*b.art), ml_art_order);
+    for (k = 0; k < (uint32_t)b.n; k++) {
+        sArtSize[ml_log2(b.art[k].w)][ml_log2(b.art[k].h)] = 1;
     }
-    sArtData = data;
-    data = NULL;
-    sArt = art;
-    art = NULL;
-    sArtCount = n;
+    sArt = b.art;
+    b.art = NULL;
+    sArtCount = b.n;
     __atomic_store_n(&sArtReady, 1, __ATOMIC_RELEASE);
-    snprintf(why, whyLen, "%d textures in %u texture files", n, count);
-    result = n;
+    snprintf(why, whyLen, "%d textures in %u texture files", sArtCount, b.files);
+    result = sArtCount;
 done:
     if (result < 0) {
+        for (k = 0; k < b.files; k++) {
+            free((void *)sArtFile[k].p);
+        }
         free(sArtFile);
         sArtFile = NULL;
     }
-    if (fp != NULL) {
-        fclose(fp);
-    }
-    free(member);
-    free(data);
-    free(art);
+    free(b.art);
     if (c != NULL) {
         ml_free(c);
         free(c);

@@ -30,13 +30,14 @@ int MenuLabels_MainItem(const char *dataDir, unsigned char *out[2]);
    labels (which finds the sheet by its pixels) both use this, so the two agree. */
 void MenuLabels_ItemPixels(const unsigned char *pic, const unsigned char *table, unsigned char *out);
 
-/* The European disc's menu art in another language: `artPath` is game-text/translations/art/<locale>.bin
-   (port/tools/extract_eu_text.py: the texture files of the menu archives that the language paints otherwise). Each
-   of its textures is paired with the USA one in `dataDir` by the hash of the decoded USA pixels, the one the
-   renderer sees. Returns how many textures, or -1 (`why` says why); once, in a thread of its own (a second or
-   two). Then MenuLabels_ArtSwap puts the European picture into a decoded texture that is one of them (1), and
-   MenuLabels_ArtKey is no longer 0 (the renderer's cache key: textures decoded before are decoded again). */
-int MenuLabels_Art(const char *dataDir, const char *artPath, char *why, size_t whyLen);
+/* The European disc's menu art in another language: `bank` 1 Spanish, 2 German, 3 French, 4 Italian. The setup
+   (or port/tools/extract_eu.py) has put the European disc's menu and HUD archives into `dataDir`/pzs3eu1; every
+   texture file of them that the language paints otherwise is paired with the USA one in `dataDir`/pzs3us1 by the
+   hash of the decoded USA pixels, the one the renderer sees. Returns how many textures, or -1 (`why` says why);
+   once, in a thread of its own (a second or two). Then MenuLabels_ArtSwap puts the European picture into a decoded
+   texture that is one of them (1), and MenuLabels_ArtKey is no longer 0 (the renderer's cache key: textures decoded
+   before are decoded again). */
+int MenuLabels_Art(const char *dataDir, int bank, char *why, size_t whyLen);
 int MenuLabels_ArtSwap(unsigned char *rgba, int w, int h);
 unsigned MenuLabels_ArtKey(void);
 
