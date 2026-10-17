@@ -1,25 +1,16 @@
 /* Table context keeps repeated English wording independent between UI screens.
-   cc -std=gnu99 -Wall -Wextra -fsanitize=address,undefined -Iport/src/gs \
+   cc -std=gnu99 -Wall -Wextra -fsanitize=address,undefined -no-pie -Iport/src/gs \
       port/tests/menu_font/ui_translation.c port/src/gs/ui_text_translate.c -o ui_translation_test
-   ./ui_translation_test */
+   ./ui_translation_test
+   (-no-pie: the translated lines are in a region of ui_text_translate.c, which lies below 4 GB because the program
+   does, as the game, linked at 0x20000000, does; the test checks that they can be handed to 32-bit fields.) */
 #include "ui_text_translate.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
 #include <unistd.h>
-
-/* Match the game's low-address contract without linking the full memory mapper. */
-void *Port_LowAlloc(size_t size) {
-    void *p = mmap(NULL, size, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
-    return p == MAP_FAILED ? NULL : p;
-}
-void Port_LowFree(void *p) {
-    if (p) munmap(p, 4096);
-}
 
 static void table(uint8_t *buf, const char *second) {
     uint32_t *words = (uint32_t *)buf;

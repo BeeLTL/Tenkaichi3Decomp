@@ -6,12 +6,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Font routines in the 64-bit port still store text pointers in 32-bit fields. */
+/* Font routines in the 64-bit port still store text pointers in 32-bit fields: a translated line must lie below
+   4 GB. It must also stay out of the game's state. Port_LowAlloc's region is part of every saved state, and an
+   online session puts the game back to its first blank, from before this catalog was loaded: its lines were
+   overwritten and the pause menu read "!! !" and "dd". This file's variables are not part of the state
+   (port/tools/make_state.py leaves the gs_ files out) and the program lies below 4 GB, so the lines go into a
+   region of this file's own: handed out in order, given back as a whole (ui_clear). About 1.6 MB a language. */
 #ifndef UI_TEXT_HOST_ALLOC
-extern void *Port_LowAlloc(size_t size);
-extern void Port_LowFree(void *addr);
-#define ui_translated_alloc Port_LowAlloc
-#define ui_translated_free Port_LowFree
+#define UI_ARENA (16u * 1024 * 1024)
+static uint8_t sArena[UI_ARENA] __attribute__((aligned(16)));
+static size_t sArenaUsed;
+static void *ui_translated_alloc(size_t size) {
+    void *p;
+    size = (size + 15) & ~(size_t)15;
+    if (size > UI_ARENA - sArenaUsed) return NULL;
+    p = sArena + sArenaUsed;
+    sArenaUsed += size;
+    return p;
+}
+static void ui_translated_free(void *p) { (void)p; } /* (all of it at once: ui_clear) */
 #else
 #define ui_translated_alloc malloc
 #define ui_translated_free free
@@ -280,6 +293,9 @@ static void ui_clear(void) {
     free(sRows); free(sGroups); free(sWords); free(sOwn);
     sRows = NULL; sGroups = NULL; sWords = NULL; sOwn = NULL;
     sRowCount = sGroupCount = sOwnCount = 0;
+#ifndef UI_TEXT_HOST_ALLOC
+    sArenaUsed = 0;
+#endif
     __atomic_store_n(&sReady, 0, __ATOMIC_RELEASE);
 }
 static int ui_ptr_compare(const void *a, const void *b) {
