@@ -1833,17 +1833,17 @@ static void build(void) {
                                       "counts as one of them while the clash lasts, as a tap of the d-pad does.\n"
                                       "It only changes your own pad, so it can be used in online play.");
                 if (cs) {
-                    static const int kQuarters[] = {4, 6, 7, 8};
-                    static const char *const kWorth[] = {"1", "1.5", "1.75", "2"};
-                    int at = 2;
-                    for (int i = 0; i < 4; i++) {
+                    static const int kQuarters[] = {4, 6, 7, 8, 9};
+                    static const char *const kWorth[] = {"1", "1.5", "1.75", "2", "2.25"};
+                    int at = 4;
+                    for (int i = 0; i < 5; i++) {
                         if (kQuarters[i] == Port_ClashSquareX()) {
                             at = i;
                         }
                     }
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(80.0f);
-                    if (ImGui::Combo("per press", &at, kWorth, 4)) {
+                    if (ImGui::Combo("per press", &at, kWorth, 5)) {
                         Port_ClashSquareXSet(kQuarters[at]);
                     }
                     ImGui::SetItemTooltip("What one press of Square is worth. The d-pad has four buttons to tap in turn and the\n"
