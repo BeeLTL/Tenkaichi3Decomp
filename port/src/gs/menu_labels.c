@@ -2157,7 +2157,7 @@ int MenuLabels_Art(const char *dataDir, const char *artPath, char *why, size_t w
         }
         ml_get32(all, at + 12, &len);
         at += 16;
-        if (len > (size_t)size - at || depth < 1 || depth > 4 || (f = (uint32_t)ml_file((int)file)) == ML_FILES || file == 5) {
+        if (len > (size_t)size - at || depth < 1 || depth > 4 || (f = (uint32_t)ml_file((int)file)) == ML_FILES) {
             snprintf(why, whyLen, "%s names a texture file that is not there", artPath);
             goto done;
         }
@@ -2169,9 +2169,17 @@ int MenuLabels_Art(const char *dataDir, const char *artPath, char *why, size_t w
             uint32_t full = 0, pk = 0;
             free(member);
             member = NULL;
-            if (!ml_section(c, c->file[f], path[0], &packed) || !ml_get32(packed, 0, &full) || !ml_get32(packed, 4, &pk) ||
-                full > ML_UNPACKED_MAX || pk > packed.n - 8 || (member = malloc(full ? full : 1)) == NULL ||
-                ml_unpack_bytes(packed.p, packed.n, member, full) != (long)full) {
+            if (!ml_section(c, c->file[f], path[0], &packed)) {
+                continue;
+            }
+            if (file == 5) { /* the HUD's members are not packed (ml_screen) */
+                full = (uint32_t)packed.n;
+                if ((member = malloc(full ? full : 1)) == NULL) {
+                    continue;
+                }
+                memcpy(member, packed.p, full);
+            } else if (!ml_get32(packed, 0, &full) || !ml_get32(packed, 4, &pk) || full > ML_UNPACKED_MAX || pk > packed.n - 8 ||
+                       (member = malloc(full ? full : 1)) == NULL || ml_unpack_bytes(packed.p, packed.n, member, full) != (long)full) {
                 free(member);
                 member = NULL;
                 continue; /* (not a texture of this disc's: left as it is) */

@@ -148,6 +148,16 @@ static void ut_walk(UtWriter *w, UtBuf b, const char *path, int depth) {
         UtBuf part, unpacked;
         uint32_t childCount;
         char child[128];
+        if (ut_section(b, i, &part) && ut_line(part)) { /* a line among other sections (the HUD's file 5: the pause menu) */
+            char id[128];
+            if (snprintf(id, sizeof(id), "%s/%u", path, i - 1) >= (int)sizeof(id)) continue;
+            fprintf(w->fp, "%s    \"%s\": {\"original\": ", w->count++ ? ",\n" : "", id);
+            ut_json_string(w->fp, part);
+            fputs(", \"text\": ", w->fp);
+            ut_json_string(w->fp, part);
+            fputc('}', w->fp);
+            continue;
+        }
         if (!ut_section(b, i, &part) || part.n < 12 ||
             snprintf(child, sizeof(child), "%s/%u", path, i) >= (int)sizeof(child)) continue;
         if (ut_archive(part, &childCount)) { ut_walk(w, part, child, depth + 1); }
@@ -165,16 +175,30 @@ static uint8_t *ut_read(const char *path, size_t *size) {
     if (fread(data, 1, (size_t)n, fp) != (size_t)n) { free(data); fclose(fp); return NULL; }
     fclose(fp); *size = (size_t)n; return data;
 }
+/* What an extracted catalog says it is. Version 2 has the lines among other sections too (the pause menu). */
+#define UT_SOURCE "extracted USA game text, version 2"
+/* An English catalog this program extracted in an earlier version (never one a person wrote or edited: those name
+   another source). */
+static int ut_stale(const char *path) {
+    char head[512];
+    size_t n;
+    FILE *fp = fopen(path, "rb");
+    if (fp == NULL) return 0;
+    n = fread(head, 1, sizeof(head) - 1, fp);
+    fclose(fp);
+    head[n] = 0;
+    return strstr(head, "\"source\": \"extracted USA game text\"") != NULL;
+}
 static void *ut_worker(void *arg) {
     UtJob *job = arg;
     char temp[1280], path[1280];
     UtWriter w = {0};
     size_t size;
     int i;
-    if (access(job->output, 0) == 0 || snprintf(temp, sizeof(temp), "%s.part", job->output) >= (int)sizeof(temp)) goto done;
+    if (snprintf(temp, sizeof(temp), "%s.part", job->output) >= (int)sizeof(temp)) goto done;
     w.fp = fopen(temp, "wb");
     if (w.fp == NULL) goto done;
-    fputs("{\n  \"schema_version\": 1,\n  \"labels_version\": 1,\n  \"translation_version\": 1,\n  \"locale\": \"en\",\n  \"name\": \"English\",\n  \"source\": \"extracted USA game text\",\n  \"labels\": {\n", w.fp);
+    fputs("{\n  \"schema_version\": 1,\n  \"labels_version\": 1,\n  \"translation_version\": 1,\n  \"locale\": \"en\",\n  \"name\": \"English\",\n  \"source\": \"" UT_SOURCE "\",\n  \"labels\": {\n", w.fp);
     for (i = 0; i < (int)(sizeof(kUtMenuFiles) / sizeof(kUtMenuFiles[0])); i++) {
         uint8_t *data;
         UtBuf b;
@@ -220,6 +244,7 @@ void UiText_ExtractOnStartup(const char *gameTextDir) {
 #else
     mkdir(gameTextDir, 0755); mkdir(parent, 0755); mkdir(dir, 0755);
 #endif
+    if (ut_stale(job->output)) remove(job->output); /* (made by an older release: made again, with what it lacked) */
     if (access(job->output, 0) == 0 || pthread_create(&thread, NULL, ut_worker, job) != 0) { free(job); return; }
     pthread_detach(thread);
 }

@@ -122,13 +122,17 @@ python3 port/tools/extract_eu_text.py SLES-54945.iso --output gamedata/game-text
 It writes two things for each language, both the player's own disc data that
 stay in `gamedata` (never commit them):
 
-- `ui/<locale>.json`: the menu and dialog text, keyed by the USA IDs. A line
-  whose European English differs from the USA English cannot be matched and
-  stays English (about 2,300 of 20,385).
-- `art/<locale>.bin`: the menus' painted lettering (headings, menu items,
-  buttons such as Yes and No, the title's Press START). It holds the texture
-  files of the menu archives (448 to 472) that the language paints otherwise,
-  about 120 per language, each with where it is in the USA archive.
+- `ui/<locale>.json`: the menu, dialog and pause menu text, keyed by the USA
+  IDs (the battle HUD's file 5 is the European entries 5 to 9, one per
+  language). A line is taken where the European English is the USA English, or
+  where its table has as many lines on both discs: the European English is then
+  the same line reworded (bullets added, a typo fixed, "Fight Again?"). About
+  15,000 of 20,604 lines change; the rest are names and numbers.
+- `art/<locale>.bin`: the painted lettering of the menus and the battle HUD
+  (headings, menu items, buttons such as Yes and No, the title's Press START,
+  Ready and Fight, Hits, the pause menu's title). It holds the texture files of
+  the menu archives (448 to 472) and the HUD (5) that the language paints
+  otherwise, about 125 per language, each with where it is in the USA archive.
 
 When a language with an `art/<locale>.bin` is chosen, the game pairs each of
 those textures with the USA one (`MenuLabels_Art` in `menu_labels.c`, in a
@@ -141,7 +145,12 @@ written into are paired by their first 96 rows; the item's row is kept.
 
 A redrawn label (Menu font other than Original) is drawn from `labels/`; on a
 texture that shows the European picture there is no USA label to redraw, so
-the European art is what shows. The battle HUD (file 5: Ready, Fight, K.O.) is
-not covered (not looked for on the European disc yet) and stays as it is.
+the European art is what shows.
+
+The English catalog the game extracts (`ui/en.json`, source "extracted USA
+game text, version 2") also has the lines that sit among other sections, as
+the pause menu's do in file 5. One extracted by an earlier version is made
+again at start; one a person wrote names another source and is kept. Run the
+tool again after that (with `--overwrite`) so the languages have those lines.
 
 `BT3_ART_LOG=1` lists every pair at start and every swap.

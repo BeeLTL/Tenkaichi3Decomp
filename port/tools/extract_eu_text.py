@@ -14,6 +14,7 @@ The game pairs them with the USA textures and shows the European pictures in the
 MenuLabels_Art). Like the catalogs, they are the player's own disc data: they stay in gamedata.
 """
 import argparse
+import collections
 import json
 from pathlib import Path
 import struct
@@ -196,6 +197,10 @@ def walk(data, path, output, depth=0):
             output[f"{path}/{index}"] = line
         return
     for index, part in enumerate(parts, 1):
+        line = text_line(part)
+        if line is not None:  # a line among other sections (the HUD's file 5: the pause menu), as ui_text_extract.c
+            output[f"{path}/{index - 1}"] = line
+            continue
         if len(part) < 12:
             continue
         child = part if sections(part) is not None else unpack(part)
@@ -203,7 +208,9 @@ def walk(data, path, output, depth=0):
             walk(child, f"{path}/{index}", output, depth + 1)
 
 
-# The menu archives with painted lettering (menu_labels.c, kMlFiles; the HUD's file 5 has no European banks).
+# The battle HUD (USA file 5: Ready, Fight, the pause menu ...) is entries 5 to 9 on the European disc, one per
+# language in the order of LANGUAGES; its members are not packed.
+HUD_FILE = 5
 ART_MAGIC = b"BT3ART1\n"
 
 
@@ -235,14 +242,18 @@ def art_walk(usa, eu, path, out, depth=0):
 def extract_art(afs, usa_dir, bank):
     """The differing texture files of language bank `bank`, as (USA file, path, European bytes)."""
     out = []
-    for usa_index in USA_FILES:
+    for usa_index in (HUD_FILE,) + USA_FILES:
         usa = (usa_dir / f"{usa_index:05d}.bin").read_bytes()
-        eu = afs.read(EU_FIRST + (usa_index - USA_FILES[0]) + bank * EU_STRIDE)
+        if usa_index == HUD_FILE:
+            eu = afs.read(HUD_FILE + bank)
+        else:
+            eu = afs.read(EU_FIRST + (usa_index - USA_FILES[0]) + bank * EU_STRIDE)
         a, b = sections(usa), sections(eu)
         if a is None or b is None or len(a) != len(b):
             continue
         for index, (x, y) in enumerate(zip(a, b), 1):
-            x, y = unpack(x), unpack(y)
+            if usa_index != HUD_FILE:
+                x, y = unpack(x), unpack(y)
             if x is None or y is None:
                 continue
             found = []
@@ -262,6 +273,7 @@ def write_art(path, records):
 
 def extract_bank(afs, bank):
     output = {}
+    walk(afs.read(HUD_FILE + bank), f"pzs3us1/{HUD_FILE:05d}", output)
     for usa_index in USA_FILES:
         eu_index = EU_FIRST + (usa_index - USA_FILES[0]) + bank * EU_STRIDE
         walk(afs.read(eu_index), f"pzs3us1/{usa_index:05d}", output)
@@ -320,11 +332,17 @@ def main():
     if matched < len(originals) * 7 // 10:
         raise ValueError("European archives do not align with this USA English catalog")
     args.output.mkdir(parents=True, exist_ok=True)
+    # A line is the same line on both discs where its European English is the USA English, or where its table has as
+    # many lines on both (the European English is then the USA line reworded: bullets added, a typo fixed).
+    usa_lines = collections.Counter(key.rsplit("/", 1)[0] for key in originals)
+    eu_lines = collections.Counter(key.rsplit("/", 1)[0] for key in banks[0])
     for bank, (locale, name, path) in targets.items():
         labels = {}
         for key, entry in originals.items():
             value = banks[bank].get(key)
-            if value is None or key not in banks[0] or banks[0][key] != entry["original"]:
+            table = key.rsplit("/", 1)[0]
+            if value is None or key not in banks[0] or (banks[0][key] != entry["original"] and
+                                                       usa_lines[table] != eu_lines[table]):
                 value = entry["original"]
             labels[key] = {"original": entry["original"], "text": value}
         catalog = {"schema_version": 1, "labels_version": english.get("labels_version", 1),
