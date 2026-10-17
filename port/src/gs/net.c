@@ -108,7 +108,11 @@ void Port_NetOptions(int rollback, int delay) {
 static char sNames[2][NAME_LEN], sMyName[NAME_LEN] = "Player";
 
 void Port_NetNameSet(const char *name) {
-    snprintf(sMyName, sizeof(sMyName), "%s", name != NULL && name[0] != '\0' ? name : "Player");
+    /* (through a copy: the menus pass the buffer of Port_NetNameGet(), this one, and snprintf into its own source is
+       undefined: glibc left it empty, the name gone from a quick match on Linux until the next start) */
+    char copy[NAME_LEN];
+    snprintf(copy, sizeof(copy), "%s", name != NULL && name[0] != '\0' ? name : "Player");
+    memcpy(sMyName, copy, sizeof(sMyName));
 }
 
 /* A match found with a room code (the lobby, below): the local port the lobby's socket had, which the session's
