@@ -109,3 +109,39 @@ Each catalog handles missing entries differently:
 | `labels/` | An entry with empty `text` uses its `original`. An ID absent from the selected label catalog has no per-ID English fallback: its artwork stays in place. Some IDs are required to load the catalog at all; if one is missing, the catalog is rejected. |
 
 
+
+## The European disc's languages
+
+`port/tools/extract_eu_text.py` reads a European disc image (SLES-54945) and
+gives Spanish, German, French and Italian from the game's own translation:
+
+```
+python3 port/tools/extract_eu_text.py SLES-54945.iso --output gamedata/game-text/translations/ui
+```
+
+It writes two things for each language, both the player's own disc data that
+stay in `gamedata` (never commit them):
+
+- `ui/<locale>.json`: the menu and dialog text, keyed by the USA IDs. A line
+  whose European English differs from the USA English cannot be matched and
+  stays English (about 2,300 of 20,385).
+- `art/<locale>.bin`: the menus' painted lettering (headings, menu items,
+  buttons such as Yes and No, the title's Press START). It holds the texture
+  files of the menu archives (448 to 472) that the language paints otherwise,
+  about 120 per language, each with where it is in the USA archive.
+
+When a language with an `art/<locale>.bin` is chosen, the game pairs each of
+those textures with the USA one (`MenuLabels_Art` in `menu_labels.c`, in a
+thread of its own at start, under two seconds): by the hash of the decoded USA
+pixels, the same hash the label list uses. The renderer then puts the European
+picture in place of the USA one when it decodes it (`MenuLabels_ArtSwap`,
+`gs_draw.c`). The game itself is untouched, and so is online play: it is only
+what a texture shows. The two main menu sheets that the PC's own item is
+written into are paired by their first 96 rows; the item's row is kept.
+
+A redrawn label (Menu font other than Original) is drawn from `labels/`; on a
+texture that shows the European picture there is no USA label to redraw, so
+the European art is what shows. The battle HUD (file 5: Ready, Fight, K.O.) is
+not covered (not looked for on the European disc yet) and stays as it is.
+
+`BT3_ART_LOG=1` lists every pair at start and every swap.

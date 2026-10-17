@@ -26,6 +26,7 @@
 #include "gs_texpack.h" /* texture packs (replacement textures) */
 #include "menu_text.h"  /* editable labels in the original menu texture slots */
 #include "menu_translation.h" /* optional language screen artwork */
+#include "menu_labels.h"      /* the chosen language's menu art from the European disc */
 #include <math.h>
 
 /* Stage-name overlay: defined here (C) so both the renderer (gs_gpu.c) and the game's menu (menu_c_e.c) can
@@ -380,6 +381,7 @@ static GsTex texture_get(int ctx) {
     /* Font replacements follow their settings and resolution. A new label catalog also refreshes cached Battle
        texture identities when the artwork is still on "Original". */
     gen ^= MenuText_TexKey((int)tw, (int)th, bits <= 8, (int)tbp, (int)cbp, MenuText_RasterScale(SCALE));
+    gen ^= bits <= 8 ? MenuLabels_ArtKey() : 0; /* the chosen language's menu art ready: decoded again */
     if (sTexPackOn && TexPack_Count() != 0) {
         gen ^= 0x5BD1E995u; /* with the pack and without it are different textures: switching it takes effect at once */
     }
@@ -464,6 +466,9 @@ static GsTex texture_get(int ctx) {
                         above 0x80 matter: the see-through pass gives palettes alpha 0xF9 to write an id */
             px[y * tw + x] = c;
         }
+    }
+    if (px != NULL && !replaced && bits <= 8) {
+        MenuLabels_ArtSwap((unsigned char *)px, (int)tw, (int)th); /* the European picture, in the chosen language */
     }
     if (px != NULL) {
         battleText = MenuText_IsBattleTexture((const uint8_t *)px, (int)tw, (int)th, bits <= 8);

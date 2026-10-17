@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Extract European disc UI text into catalogs keyed by the USA disc's IDs.
+"""Extract European disc UI text into catalogs keyed by the USA disc's IDs, and its menu art.
 
 Usage:
     python3 port/tools/extract_eu_text.py SLES-54945.iso --output gamedata/game-text/translations/ui
 
 Reads the ISO and AFS archive directly, without extracting the whole disc.
 Existing locale files are never replaced unless --overwrite is given.
+
+The menus' painted lettering (headings, menu items, stage names) is in textures, painted again for each language
+on the European disc. Next to the text catalogs (in ../art, or --art) goes <locale>.bin for each language: the
+texture files of the menu archives that differ from the USA disc's, each with where it is in the USA archive.
+The game pairs them with the USA textures and shows the European pictures in their place (menu_labels.c,
+MenuLabels_Art). Like the catalogs, they are the player's own disc data: they stay in gamedata.
 """
 import argparse
 import json
@@ -197,6 +203,63 @@ def walk(data, path, output, depth=0):
             walk(child, f"{path}/{index}", output, depth + 1)
 
 
+# The menu archives with painted lettering (menu_labels.c, kMlFiles; the HUD's file 5 has no European banks).
+ART_MAGIC = b"BT3ART1\n"
+
+
+def is_texture_file(data):
+    """A texture file of a menu archive: its texture table's first entry an 8- or 4-bit texture."""
+    if len(data) < 16:
+        return False
+    table = u32(data, 4) * 4
+    if table + 64 > len(data):
+        return False
+    tex0 = struct.unpack_from("<Q", data, table + 48)[0]
+    return (tex0 >> 20) & 63 in (19, 20) and (tex0 >> 26) & 15 <= 9 and (tex0 >> 30) & 15 <= 9
+
+
+def art_walk(usa, eu, path, out, depth=0):
+    """Texture files that differ, by path of section numbers as the game's tables count them (the first is 1)."""
+    if usa == eu:
+        return
+    if is_texture_file(usa) and is_texture_file(eu):
+        out.append((path, eu))
+        return
+    a, b = sections(usa), sections(eu)
+    if a is None or b is None or len(a) != len(b) or depth > 3:
+        return
+    for index, (x, y) in enumerate(zip(a, b), 1):
+        art_walk(x, y, path + [index], out, depth + 1)
+
+
+def extract_art(afs, usa_dir, bank):
+    """The differing texture files of language bank `bank`, as (USA file, path, European bytes)."""
+    out = []
+    for usa_index in USA_FILES:
+        usa = (usa_dir / f"{usa_index:05d}.bin").read_bytes()
+        eu = afs.read(EU_FIRST + (usa_index - USA_FILES[0]) + bank * EU_STRIDE)
+        a, b = sections(usa), sections(eu)
+        if a is None or b is None or len(a) != len(b):
+            continue
+        for index, (x, y) in enumerate(zip(a, b), 1):
+            x, y = unpack(x), unpack(y)
+            if x is None or y is None:
+                continue
+            found = []
+            art_walk(x, y, [], found)
+            out += [(usa_index, [index] + p, data) for p, data in found]
+    return out
+
+
+def write_art(path, records):
+    """BT3ART1: count, then per texture file: USA file, path length, four section numbers, size, bytes (to 4)."""
+    with path.open("wb") as f:
+        f.write(ART_MAGIC + struct.pack("<I", len(records)))
+        for usa_index, at, data in records:
+            f.write(struct.pack("<HH4HI", usa_index, len(at), *(at + [0, 0, 0, 0])[:4], len(data)))
+            f.write(data + b"\0" * (-len(data) % 4))
+
+
 def extract_bank(afs, bank):
     output = {}
     for usa_index in USA_FILES:
@@ -213,16 +276,38 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("port/build/eu-ui-translations"),
                         help="destination for generated JSON files")
     parser.add_argument("--overwrite", action="store_true", help="replace existing output files")
+    parser.add_argument("--art", type=Path, default=None,
+                        help="destination for the menu art (default: art next to the output folder)")
+    parser.add_argument("--usa", type=Path, default=Path("gamedata/pzs3us1"),
+                        help="the USA disc's archives, which the menu art is compared with")
+    parser.add_argument("--no-art", action="store_true", help="the text catalogs only")
     args = parser.parse_args()
+    art_dir = args.art if args.art is not None else args.output.parent / "art"
     english = json.loads(args.english.read_text(encoding="utf-8"))
     originals = english["labels"]
     targets = {}
+    art = {}
     for bank, (locale, name) in enumerate(LANGUAGES[1:], 1):
         path = args.output / f"{locale}.json"
         if path.exists() and not args.overwrite:
             print(f"{path}: exists, skipped")
         else:
             targets[bank] = (locale, name, path)
+        path = art_dir / f"{locale}.bin"
+        if not args.no_art:
+            if path.exists() and not args.overwrite:
+                print(f"{path}: exists, skipped")
+            else:
+                art[bank] = path
+    if art:
+        with args.iso.open("rb") as disc:
+            base, size = iso_file(disc, "DATA/PZS3EU1.AFS")
+            afs = Afs(disc, base, size)
+            art_dir.mkdir(parents=True, exist_ok=True)
+            for bank, path in art.items():
+                records = extract_art(afs, args.usa, bank)
+                write_art(path, records)
+                print(f"{path}: {len(records)} texture files")
     if not targets:
         return
     with args.iso.open("rb") as disc:

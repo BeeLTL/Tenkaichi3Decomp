@@ -1078,8 +1078,50 @@ int Port_MainItemLabel(int entry, int lit, int out) {
     return 1;
 }
 
+/* The European disc's menu art for the chosen language, if port/tools/extract_eu_text.py has made it
+   (game-text/translations/art/<locale>.bin): paired with the USA textures in a thread of its own, once. */
+static char sArtPath[1100];
+static void *art_thread(void *arg) {
+    char why[240];
+    struct timespec a, b;
+    int n;
+    (void)arg;
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    n = MenuLabels_Art(sDataDir, sArtPath, why, sizeof(why));
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    fprintf(stderr, n >= 0 ? "bt3: menu art: %s, %ld ms (%s)\n" : "bt3: menu art: not used: %s, %ld ms (%s)\n", why,
+            (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000), sArtPath);
+    return NULL;
+}
+
+static void art_start(void) {
+    static int started;
+    const char *locale;
+    pthread_t th;
+    pthread_attr_t attr;
+
+    if (started || sLabelDir[0] == '\0' || (locale = MenuTranslation_Locale()) == NULL) {
+        return;
+    }
+    started = 1;
+    if (strcmp(locale, "en") == 0 || strchr(locale, '/') != NULL || strchr(locale, '\\') != NULL || strstr(locale, "..") != NULL) {
+        return;
+    }
+    snprintf(sArtPath, sizeof(sArtPath), "%s/translations/art/%s.bin", sLabelDir, locale);
+    if (!file_there(sArtPath)) {
+        return;
+    }
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&th, &attr, art_thread, NULL) != 0) {
+        art_thread(NULL);
+    }
+    pthread_attr_destroy(&attr);
+}
+
 void MenuText_Poll(void) {
     if (__atomic_load_n(&sBootAwaitLanguage, __ATOMIC_ACQUIRE)) { return; }
+    art_start();
     item_start();
     if (sMake != 2) { return; }
     pthread_mutex_lock(&sLock);
