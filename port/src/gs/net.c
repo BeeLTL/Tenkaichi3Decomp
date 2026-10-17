@@ -52,11 +52,14 @@ enum { T_HELLO = 1, T_HELLO_ACK = 2, T_INPUT = 3, T_BYE = 4, T_PING = 5, T_PONG 
 /* The version of what goes over the line. The greeting and its answer carry it, and two copies that differ do not
    start a match (the input packets changed with version 2: times for the ping were added; a copy that read them
    the old way took them for input). 1 was releases 0.1.8 and 0.1.9, which said no version. */
-enum { NET_VERSION = 4, IN_HEAD = 44 }; /* 3 (0.1.15): the host's battle rules travel with its choices.
+enum { NET_VERSION = 5, IN_HEAD = 44 }; /* 3 (0.1.15): the host's battle rules travel with its choices.
    4 (0.1.34): a session's start-up no longer follows the player's "Skip logos" / "Skip intro video" (0.1.32 and
    0.1.33 with either on computed another start-up than the other side and the two never agreed again: such a copy
    must not be let into a match); the input packets carry the sender's check value (sync_*, below), 12 bytes more
-   in their head; the goodbye can say why. */
+   in their head; the goodbye can say why.
+   5: a session's start-up is run with nothing pressed and without waiting for the other side, which then is not
+   sent the start-up's input; the two meet at the character select (T_ARRIVED). A copy of 4 would wait for input
+   that does not come. */
 static int sVersionBad; /* the other side answered with another version */
 static const uint32_t kVersion = NET_VERSION;
 #include "net_match.h"
@@ -450,6 +453,13 @@ static void sync_check(uint32_t sure, unsigned tick) {
 
 static void gone(unsigned tick);
 
+/* The meeting at the end of a session's start-up (warp_tick, meet): the blank at which each copy reached the
+   character select. A copy that is waiting sends {MAGIC, T_ARRIVED, blank, 0}; one that has arrived answers each such
+   greeting with {..., 1}, so a lost packet costs a resend and the two never go on answering each other. */
+enum { T_ARRIVED = 11 };
+static uint32_t sMyArrival, sTheirArrival; /* (0: not yet) */
+static int sMet;
+
 static void send_inputs(void) {
     uint8_t pkt[IN_HEAD + REDUNDANT * PAD];
     uint32_t tsend = now_ms(), techo = sEchoTs, thold = sEchoTs != 0 ? tsend - sEchoAtMs : 0;
@@ -621,6 +631,14 @@ static int receive(void) {
                 memcpy(sNames[1], sMyName, NAME_LEN);
                 sCfgGot = 1;
                 sConnected = 1;
+            }
+        } else if (type == T_ARRIVED && sConnected && n >= 16) {
+            uint32_t v[2];
+            memcpy(v, pkt + 8, 8);
+            sTheirArrival = v[0];
+            if (v[1] == 0 && sMyArrival != 0) {
+                uint32_t answer[4] = {MAGIC, T_ARRIVED, sMyArrival, 1};
+                send_to_peer(answer, (int)sizeof(answer));
             }
         } else if (type == T_INPUT && n >= IN_HEAD && (sConnected || sMode == 1)) { /* (the joining side: not before the host's answer) */
             uint32_t base, count, i, other = (uint32_t)!sMe;
@@ -1155,6 +1173,72 @@ static void roll_tick(unsigned tick) {
     memcpy(sUsed[tick % RING], sIn[other][(tick < sHave[other] ? tick : sHave[other] - 1) % RING], PAD);
 }
 
+/* A blank of a session's start-up (the logos and the card check, without picture, up to the character select:
+   Port_NetWarp). Nobody plays it, so both copies give it nothing pressed for both players and go on without
+   waiting for each other: the two run the same blanks from the same first blank with the same input and arrive at
+   the character select in the same state, at their own speed (it was the round trip per blank or two: half a
+   minute at 100 ms). The check values still travel (with a packet a tenth of a second, which also keeps the line
+   open) and are compared as always. */
+static void warp_tick(unsigned tick) {
+    static uint64_t last;
+    uint64_t now = SDL_GetTicksNS();
+    uint32_t at = (uint32_t)tick + (uint32_t)sDelay, k;
+
+    for (k = 0; k < 2; k++) {
+        while (sHave[k] <= at) {
+            memcpy(sIn[k][sHave[k] % RING], kIdle, PAD);
+            sHave[k]++;
+        }
+    }
+    memcpy(sUsed[tick % RING], kIdle, PAD); /* (what the rollback's reading of the other pad gives) */
+    sync_note(tick);
+    sync_check(tick, tick);
+    if (now - last > 100000000ull) {
+        send_inputs();
+        last = now;
+    }
+    receive();
+    if (sGone) {
+        gone(tick);
+    }
+    gPortResim = 1;
+}
+
+/* The first blank after the start-up: waits for the other copy to have arrived too (a slower machine may take a
+   while: a minute is allowed), and both must have arrived at the same blank, or the two games are not the same. */
+static void meet(unsigned tick) {
+    uint64_t t0 = SDL_GetTicksNS(), last = 0;
+
+    sMet = 1;
+    sMyArrival = tick;
+    do {
+        uint64_t now = SDL_GetTicksNS();
+        if (last == 0 || now - last > 50000000ull) {
+            uint32_t hello[4] = {MAGIC, T_ARRIVED, tick, 0};
+            send_to_peer(hello, (int)sizeof(hello));
+            last = now;
+        }
+        if (sTheirArrival != 0) {
+            break;
+        }
+        if (!receive()) {
+            SDL_DelayNS(200000);
+        }
+        if (sGone) {
+            gone(tick);
+        }
+        if (now - t0 > 60000000000ull) {
+            gone_quiet(tick);
+        }
+    } while (sTheirArrival == 0);
+    fprintf(stderr, "bt3: net: both at the character select (blank %u), %u ms after connecting\n", tick, (unsigned)(now_ms() - sStartedMs));
+    if (sTheirArrival != tick) {
+        fprintf(stderr, "bt3: net: the other copy reached the character select at blank %u\n", (unsigned)sTheirArrival);
+        sByeWhy = BYE_APART;
+        ended("The two games no longer agree (desync): the match has ended.", tick);
+    }
+}
+
 void Port_NetBeginTick(unsigned tick) {
     uint64_t t0, last;
 
@@ -1162,6 +1246,13 @@ void Port_NetBeginTick(unsigned tick) {
         return;
     }
     sTick = tick;
+    if (Port_NetWarp()) {
+        warp_tick(tick);
+        return;
+    }
+    if (Port_NetSession() && !sMet) {
+        meet(tick);
+    }
     if (sRollMax > 0) {
         roll_tick(tick);
         return;
@@ -1435,6 +1526,8 @@ void Port_NetSessionBegin(int role, const char *address, int port) {
     }
     sSession = 1;
     sArrived = 0;
+    sMyArrival = sTheirArrival = 0;
+    sMet = 0;
     net_start(role, role == 1 ? host : NULL, role == 2 ? join : NULL);
 }
 
