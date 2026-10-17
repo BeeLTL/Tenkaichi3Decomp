@@ -596,7 +596,8 @@ int Ui_QuitAsk(void) {
     sQuit = true;
     PortQuit_Request();
     input_owner();
-    PortA11y_Say(PortA11y_Label("Close the game? Progress that was not saved is lost."), 1);
+    const char *translated = MenuTranslation_PortText(PORT_TEXT_QUIT_CONFIRM);
+    PortA11y_Say(translated ? translated : PortA11y_Label("Close the game? Progress that was not saved is lost."), 1);
     say_quit_button(1, 0);
     PortA11y_Say(PortA11y_Label("Left and right choose, Enter confirms, Escape goes back to the game"), 0);
     return 1;
@@ -623,7 +624,8 @@ static void build_quit(void) {
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Exit game", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-        static const char *const kAsk = "Close the game? Progress that was not saved is lost.";
+        const char *translated = MenuTranslation_PortText(PORT_TEXT_QUIT_CONFIRM);
+        const char *kAsk = translated ? translated : "Close the game?\nUnsaved progress will be lost.";
         // the two buttons under the middle of the question (the window is as wide as its text)
         float line = ImGui::CalcTextSize(kAsk).x, pair = 140.0f * 2.0f + ImGui::GetStyle().ItemSpacing.x;
         ImGui::TextUnformatted(kAsk);
@@ -642,7 +644,7 @@ static void build_quit(void) {
         focus = ImGui::IsItemFocused() ? 1 : focus;
         if (ImGui::IsWindowAppearing()) {
             ImGui::SetItemDefaultFocus(); // (on Cancel: a second press of the same button does not close the game)
-            PortA11y_Say(PortA11y_Label(kAsk), 1);
+            PortA11y_Say(translated ? translated : PortA11y_Label("Close the game? Progress that was not saved is lost."), 1);
             say_quit_button(1, 0);
             PortA11y_Say(PortA11y_Label("Left and right choose, Enter confirms, Escape goes back to the game"), 0);
             said = 1;

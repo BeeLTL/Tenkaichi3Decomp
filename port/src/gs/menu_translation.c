@@ -21,6 +21,14 @@
 #endif
 
 enum { TR_MAX_FILE = 1024 * 1024, TR_MAX_ROWS = 640, TR_MAX_GROUPS = 160 };
+enum { TR_PORT_TEXT_COUNT = 1, TR_PORT_TEXT_MAX = 1024, TR_PORT_MAX_FILE = 64 * 1024 };
+static const struct { const char *id, *original; } kPortText[TR_PORT_TEXT_COUNT] = {
+    {PORT_TEXT_QUIT_CONFIRM, "Close the game?\nUnsaved progress will be lost."}
+};
+typedef struct TrPortCatalog {
+    char text[TR_PORT_TEXT_COUNT][TR_PORT_TEXT_MAX];
+    unsigned char present[TR_PORT_TEXT_COUNT];
+} TrPortCatalog;
 typedef struct TrRow {
     char *id, *original, *text, *from;
     const char *resolved;
@@ -32,6 +40,7 @@ static TrRow sRows[TR_MAX_ROWS];
 static TrGroup sGroups[TR_MAX_GROUPS];
 static const char *sStage[36], *sSong[24], *sItem, *sItemOriginal;
 static char sMain[1024], sMainOriginal[1024], sLocale[16];
+static char sPortText[TR_PORT_TEXT_COUNT][TR_PORT_TEXT_MAX];
 static int sNRows, sNGroups, sReady;
 static int sBootChoiceMade;
 static pthread_mutex_t sLock = PTHREAD_MUTEX_INITIALIZER;
@@ -139,6 +148,7 @@ static void tr_clear(void) {
     sNRows = sNGroups = 0;
     __atomic_store_n(&sReady, 0, __ATOMIC_RELEASE);
     sItem = sItemOriginal = NULL; sMain[0] = sMainOriginal[0] = 0; sLocale[0] = 0;
+    memset(sPortText, 0, sizeof(sPortText));
 }
 static TrRow *tr_find(const char *id) {
     int i;
@@ -195,6 +205,103 @@ static int tr_parse(const char *buf, size_t size, const char *locale) {
         if (tr_take(&p, '}')) { tr_space(&p); return labels && schema && matching && p.p == p.end; }
     } while (tr_take(&p, ','));
     return 0;
+}
+/* Port-owned strings use the same JSON shape as label translations, but have their own IDs and limits. */
+static int tr_port_row(TrParser *p, const char *id, TrPortCatalog *catalog) {
+    char *key, *original = NULL, *text = NULL;
+    int closed = 0, i, ok = 0;
+    if (!tr_take(p, '{')) return 0;
+    if (tr_take(p, '}')) closed = 1;
+    else do {
+        key = tr_string(p);
+        if (key == NULL || !tr_take(p, ':')) { free(key); goto done; }
+        if (!strcmp(key, "original")) {
+            free(original); original = tr_string(p);
+            if (!original) { free(key); goto done; }
+        } else if (!strcmp(key, "text")) {
+            free(text); text = tr_string(p);
+            if (!text) { free(key); goto done; }
+        } else if (!tr_skip(p, 0)) { free(key); goto done; }
+        free(key);
+        if (tr_take(p, '}')) { closed = 1; break; }
+    } while (tr_take(p, ','));
+    if (!closed || !original || !text) goto done;
+    for (i = 0; i < TR_PORT_TEXT_COUNT; i++) {
+        if (!strcmp(id, kPortText[i].id) && !strcmp(original, kPortText[i].original) &&
+            text[0] && strlen(text) < TR_PORT_TEXT_MAX) {
+            snprintf(catalog->text[i], TR_PORT_TEXT_MAX, "%s", text);
+            catalog->present[i] = 1;
+        }
+    }
+    ok = 1;
+done:
+    free(original); free(text);
+    return ok;
+}
+static int tr_port_parse(const char *buf, size_t size, const char *locale, TrPortCatalog *catalog) {
+    TrParser p = {buf, buf + size};
+    char *key, *id;
+    int schema = 0, matching = 0, labels = 0, closed;
+    memset(catalog, 0, sizeof(*catalog));
+    if (!tr_take(&p, '{')) return 0;
+    do {
+        key = tr_string(&p);
+        if (!key || !tr_take(&p, ':')) { free(key); return 0; }
+        if (!strcmp(key, "labels")) {
+            if (!tr_take(&p, '{')) { free(key); return 0; }
+            closed = tr_take(&p, '}');
+            if (!closed) do {
+                id = tr_string(&p);
+                if (!id || !tr_take(&p, ':')) { free(id); free(key); return 0; }
+                { int rowOk = tr_port_row(&p, id, catalog);
+                  if (!rowOk) { free(id); free(key); return 0; } }
+                free(id);
+                if (tr_take(&p, '}')) { closed = 1; break; }
+            } while (tr_take(&p, ','));
+            if (!closed) { free(key); return 0; }
+            labels = 1;
+        } else if (!strcmp(key, "locale")) {
+            char *value = tr_string(&p);
+            matching = value && !strcmp(value, locale);
+            free(value);
+        } else if (!strcmp(key, "schema_version")) {
+            tr_space(&p);
+            schema = p.p < p.end && *p.p == '1';
+            if (schema) p.p++; else { free(key); return 0; }
+        } else if (!tr_skip(&p, 0)) { free(key); return 0; }
+        free(key);
+        if (tr_take(&p, '}')) { tr_space(&p); return schema && matching && labels && p.p == p.end; }
+    } while (tr_take(&p, ','));
+    return 0;
+}
+static int tr_port_read(const char *outDir, const char *locale, TrPortCatalog *catalog) {
+    char path[1200], *data;
+    FILE *fp;
+    long size;
+    int ok;
+    if (snprintf(path, sizeof(path), "%s/translations/port/%s.json", outDir, locale) >= (int)sizeof(path)) return 0;
+    fp = fopen(path, "rb");
+    if (!fp) return 0;
+    if (fseek(fp, 0, SEEK_END) || (size = ftell(fp)) < 1 || size > TR_PORT_MAX_FILE || fseek(fp, 0, SEEK_SET)) { fclose(fp); return 0; }
+    data = malloc((size_t)size + 1);
+    if (!data) { fclose(fp); return 0; }
+    ok = fread(data, 1, (size_t)size, fp) == (size_t)size;
+    fclose(fp);
+    if (ok) { data[size] = 0; ok = tr_port_parse(data, (size_t)size, locale, catalog); }
+    free(data);
+    return ok;
+}
+static void tr_port_load(const char *outDir, const char *locale) {
+    TrPortCatalog catalog;
+    int i;
+    if (tr_port_read(outDir, "en", &catalog)) {
+        for (i = 0; i < TR_PORT_TEXT_COUNT; i++) if (catalog.present[i])
+            snprintf(sPortText[i], sizeof(sPortText[i]), "%s", catalog.text[i]);
+    }
+    if (strcmp(locale, "en") && tr_port_read(outDir, locale, &catalog)) {
+        for (i = 0; i < TR_PORT_TEXT_COUNT; i++) if (catalog.present[i])
+            snprintf(sPortText[i], sizeof(sPortText[i]), "%s", catalog.text[i]);
+    }
 }
 static const char *tr_resolve(TrRow *r, int depth) {
     TrRow *src;
@@ -322,9 +429,42 @@ static int tr_copy_one(const char *source, const char *destination) {
     if (!ok) unlink(tmp);
     return ok;
 }
+static void tr_copy_catalogs(const char *root, const char *kind, const char *destinationDir) {
+    char source[1200], destination[1200], sourceDir[1200], locale[16];
+    if (snprintf(sourceDir, sizeof(sourceDir), "%s/%s", root, kind) >= (int)sizeof(sourceDir)) return;
+#ifdef _WIN32
+    {
+        struct _finddata_t entry;
+        intptr_t handle;
+        if (snprintf(source, sizeof(source), "%s/*.json", sourceDir) >= (int)sizeof(source)) return;
+        handle = _findfirst(source, &entry);
+        if (handle == -1) return;
+        do {
+            if (!tr_locale_name(entry.name, locale, sizeof(locale))) continue;
+            if (snprintf(source, sizeof(source), "%s/%s", sourceDir, entry.name) >= (int)sizeof(source) ||
+                snprintf(destination, sizeof(destination), "%s/%s", destinationDir, entry.name) >= (int)sizeof(destination)) continue;
+            tr_copy_one(source, destination);
+        } while (_findnext(handle, &entry) == 0);
+        _findclose(handle);
+    }
+#else
+    {
+        DIR *dir = opendir(sourceDir);
+        struct dirent *entry;
+        if (!dir) return;
+        while ((entry = readdir(dir)) != NULL) {
+            if (!tr_locale_name(entry->d_name, locale, sizeof(locale))) continue;
+            if (snprintf(source, sizeof(source), "%s/%s", sourceDir, entry->d_name) >= (int)sizeof(source) ||
+                snprintf(destination, sizeof(destination), "%s/%s", destinationDir, entry->d_name) >= (int)sizeof(destination)) continue;
+            tr_copy_one(source, destination);
+        }
+        closedir(dir);
+    }
+#endif
+}
 static void tr_copy_all(const char *outDir, const char *labelsDir) {
     const char *src = NULL;
-    char source[1200], destination[1200], assetsDir[1200], oldAssetsDir[1200], locale[16];
+    char source[1200], destination[1200], assetsDir[1200], oldAssetsDir[1200], portDir[1200];
     int i;
     static const char *dirs[] = {"port/translations", "translations"};
     for (i = 0; i < 2; i++) {
@@ -368,38 +508,14 @@ static void tr_copy_all(const char *outDir, const char *labelsDir) {
         }
     }
     if (src == NULL) return;
+    tr_copy_catalogs(src, "labels", labelsDir);
+    if (snprintf(portDir, sizeof(portDir), "%s/translations/port", outDir) >= (int)sizeof(portDir)) return;
 #ifdef _WIN32
-    {
-        struct _finddata_t entry;
-        intptr_t handle;
-        snprintf(source, sizeof(source), "%s/labels/*.json", src);
-        handle = _findfirst(source, &entry);
-        if (handle == -1) return;
-        do {
-            if (!tr_locale_name(entry.name, locale, sizeof(locale))) continue;
-            if (snprintf(source, sizeof(source), "%s/labels/%s", src, entry.name) >= (int)sizeof(source) ||
-                snprintf(destination, sizeof(destination), "%s/%s", labelsDir, entry.name) >= (int)sizeof(destination)) continue;
-            tr_copy_one(source, destination);
-        } while (_findnext(handle, &entry) == 0);
-        _findclose(handle);
-    }
+    _mkdir(portDir);
 #else
-    {
-        char sourceDir[1200];
-        DIR *dir;
-        struct dirent *entry;
-        if (snprintf(sourceDir, sizeof(sourceDir), "%s/labels", src) >= (int)sizeof(sourceDir)) return;
-        dir = opendir(sourceDir);
-        if (dir == NULL) return;
-        while ((entry = readdir(dir)) != NULL) {
-            if (!tr_locale_name(entry->d_name, locale, sizeof(locale))) continue;
-            if (snprintf(source, sizeof(source), "%s/%s", sourceDir, entry->d_name) >= (int)sizeof(source) ||
-                snprintf(destination, sizeof(destination), "%s/%s", labelsDir, entry->d_name) >= (int)sizeof(destination)) continue;
-            tr_copy_one(source, destination);
-        }
-        closedir(dir);
-    }
+    mkdir(portDir, 0755);
 #endif
+    tr_copy_catalogs(src, "port", portDir);
 }
 static int tr_translation_dir(const char *outDir, char *dir, size_t size) {
     char parent[1200];
@@ -555,8 +671,37 @@ static int tr_ui_option(const char *dir, const char *name, MenuTranslationOption
     snprintf(out->locale, sizeof(out->locale), "%s", locale);
     return 1;
 }
+static void tr_list_extra(const char *dirPath, MenuTranslationOption *out, int capacity, int *count, int large) {
+#ifdef _WIN32
+    struct _finddata_t entry;
+    intptr_t handle;
+    char pattern[1200];
+    if (snprintf(pattern, sizeof(pattern), "%s/*.json", dirPath) >= (int)sizeof(pattern) ||
+        (handle = _findfirst(pattern, &entry)) == -1) return;
+    do {
+        MenuTranslationOption option;
+        int i;
+        if (!(large ? tr_ui_option(dirPath, entry.name, &option) : tr_option(dirPath, entry.name, &option))) continue;
+        for (i = 0; i < *count && strcmp(out[i].locale, option.locale) != 0; i++) {}
+        if (i == *count && *count < capacity) out[(*count)++] = option;
+    } while (_findnext(handle, &entry) == 0);
+    _findclose(handle);
+#else
+    DIR *dir = opendir(dirPath);
+    struct dirent *entry;
+    if (!dir) return;
+    while ((entry = readdir(dir)) != NULL) {
+        MenuTranslationOption option;
+        int i;
+        if (!(large ? tr_ui_option(dirPath, entry->d_name, &option) : tr_option(dirPath, entry->d_name, &option))) continue;
+        for (i = 0; i < *count && strcmp(out[i].locale, option.locale) != 0; i++) {}
+        if (i == *count && *count < capacity) out[(*count)++] = option;
+    }
+    closedir(dir);
+#endif
+}
 int MenuTranslation_List(const char *outDir, MenuTranslationOption *out, int capacity) {
-    char dirPath[1200], uiDir[1200];
+    char dirPath[1200], extraDir[1200];
     int count = 0, i, j;
     if (outDir == NULL || out == NULL || capacity <= 0) return 0;
     UiText_ExtractOnStartup(outDir);
@@ -586,37 +731,10 @@ int MenuTranslation_List(const char *outDir, MenuTranslationOption *out, int cap
         }
     }
 #endif
-    if (snprintf(uiDir, sizeof(uiDir), "%s/translations/ui", outDir) < (int)sizeof(uiDir)) {
-#ifdef _WIN32
-        struct _finddata_t entry;
-        intptr_t handle;
-        char pattern[1200];
-        if (snprintf(pattern, sizeof(pattern), "%s/*.json", uiDir) < (int)sizeof(pattern) &&
-            (handle = _findfirst(pattern, &entry)) != -1) {
-            do {
-                MenuTranslationOption option;
-                int k;
-                if (!tr_ui_option(uiDir, entry.name, &option)) continue;
-                for (k = 0; k < count && strcmp(out[k].locale, option.locale) != 0; k++) {}
-                if (k == count && count < capacity) out[count++] = option;
-            } while (_findnext(handle, &entry) == 0);
-            _findclose(handle);
-        }
-#else
-        DIR *ui = opendir(uiDir);
-        struct dirent *entry;
-        if (ui) {
-            while ((entry = readdir(ui)) != NULL) {
-                MenuTranslationOption option;
-                int k;
-                if (!tr_ui_option(uiDir, entry->d_name, &option)) continue;
-                for (k = 0; k < count && strcmp(out[k].locale, option.locale) != 0; k++) {}
-                if (k == count && count < capacity) out[count++] = option;
-            }
-            closedir(ui);
-        }
-#endif
-    }
+    if (snprintf(extraDir, sizeof(extraDir), "%s/translations/ui", outDir) < (int)sizeof(extraDir))
+        tr_list_extra(extraDir, out, capacity, &count, 1);
+    if (snprintf(extraDir, sizeof(extraDir), "%s/translations/port", outDir) < (int)sizeof(extraDir))
+        tr_list_extra(extraDir, out, capacity, &count, 0);
     /* Explicit order first, then name and locale for missing or duplicate order values. */
     for (i = 0; i < count; i++) for (j = i + 1; j < count; j++) {
         int byName = strcmp(out[j].name, out[i].name);
@@ -685,7 +803,7 @@ void MenuTranslation_SaveChoice(const char *locale) {
 int MenuTranslation_Load(const char *outDir, char *why, size_t whyLen) {
     const char *wanted = getenv("BT3_MENU_LANG");
     char saved[16];
-    char path[1200], dirPath[1200], filename[32], locale[16], uiPath[1200];
+    char path[1200], dirPath[1200], filename[32], locale[16], uiPath[1200], portPath[1200];
     int ok = 0;
     if (wanted == NULL || wanted[0] == 0) {
         Port_SettingText("menu_lang", "en", saved, sizeof(saved));
@@ -705,11 +823,11 @@ int MenuTranslation_Load(const char *outDir, char *why, size_t whyLen) {
     tr_migrate_all(outDir, dirPath);
     tr_copy_all(outDir, dirPath);
     if (!tr_read(path, locale)) {
-        /* A language can supply UI/dialog text alone; its menu labels use English. */
+        int hasUi = snprintf(uiPath, sizeof(uiPath), "%s/translations/ui/%s.json", outDir, locale) < (int)sizeof(uiPath) && access(uiPath, 0) == 0;
+        int hasPort = snprintf(portPath, sizeof(portPath), "%s/translations/port/%s.json", outDir, locale) < (int)sizeof(portPath) && access(portPath, 0) == 0;
+        /* A language can supply UI or port text alone; its menu labels use English. */
         tr_clear();
-        if (!strcmp(locale, "en") ||
-            snprintf(uiPath, sizeof(uiPath), "%s/translations/ui/%s.json", outDir, locale) >= (int)sizeof(uiPath) ||
-            access(uiPath, 0) != 0 ||
+        if (!strcmp(locale, "en") || (!hasUi && !hasPort) ||
             snprintf(path, sizeof(path), "%s/en.json", dirPath) >= (int)sizeof(path) || !tr_read(path, "en")) {
             if (why != NULL) snprintf(why, whyLen, "%s is missing or is not a valid label catalog", path);
             tr_clear();
@@ -717,6 +835,7 @@ int MenuTranslation_Load(const char *outDir, char *why, size_t whyLen) {
         }
     }
     UiText_Load(outDir, locale);
+    tr_port_load(outDir, locale);
     snprintf(sLocale, sizeof(sLocale), "%s", locale);
     __atomic_store_n(&sReady, 1, __ATOMIC_RELEASE);
     ok = 1;
@@ -736,6 +855,13 @@ int MenuTranslation_Ensure(void) {
 }
 const char *MenuTranslation_Locale(void) { return __atomic_load_n(&sReady, __ATOMIC_ACQUIRE) ? sLocale : NULL; }
 const char *MenuTranslation_Text(const char *id) { TrRow *r = __atomic_load_n(&sReady, __ATOMIC_ACQUIRE) ? tr_find(id) : NULL; return r != NULL ? r->resolved : NULL; }
+const char *MenuTranslation_PortText(const char *id) {
+    int i;
+    if (!__atomic_load_n(&sReady, __ATOMIC_ACQUIRE) || !id) return NULL;
+    for (i = 0; i < TR_PORT_TEXT_COUNT; i++) if (!strcmp(id, kPortText[i].id))
+        return sPortText[i][0] ? sPortText[i] : NULL;
+    return NULL;
+}
 const char *MenuTranslation_Original(const char *id) { TrRow *r = __atomic_load_n(&sReady, __ATOMIC_ACQUIRE) ? tr_find(id) : NULL; return r != NULL ? r->original : NULL; }
 const char *MenuTranslation_Group(const char *id) { int i; if (!__atomic_load_n(&sReady, __ATOMIC_ACQUIRE)) return NULL; for (i = 0; i < sNGroups; i++) if (strcmp(sGroups[i].id, id) == 0) return sGroups[i].text; return NULL; }
 const char *const *MenuTranslation_StageNames(void) { return __atomic_load_n(&sReady, __ATOMIC_ACQUIRE) ? sStage : NULL; }

@@ -12,7 +12,9 @@ typedef struct MenuTranslationOption {
     int order; /* smaller numbers appear first; missing order sorts after numbered languages */
 } MenuTranslationOption;
 
-/* Copies bundled locale catalogs to outDir/translations/labels without replacing local edits, then loads
+#define PORT_TEXT_QUIT_CONFIRM "quit/confirm"
+
+/* Copies bundled label and port catalogs without replacing local edits, then loads
    BT3_MENU_LANG or the saved menu_lang setting (English if neither is set). */
 int MenuTranslation_Load(const char *outDir, char *why, size_t whyLen);
 int MenuTranslation_Ensure(void);
@@ -25,6 +27,8 @@ int MenuTranslation_ArtPath(int artId, char *out, size_t capacity);
 void MenuTranslation_SaveChoice(const char *locale);
 const char *MenuTranslation_Locale(void);
 const char *MenuTranslation_Text(const char *id);
+/* Port-owned UI text, decoded from translations/port/<locale>.json; NULL uses the built-in English string. */
+const char *MenuTranslation_PortText(const char *id);
 const char *MenuTranslation_Original(const char *id);
 const char *MenuTranslation_Group(const char *id);
 const char *const *MenuTranslation_StageNames(void); /* 36 entries */

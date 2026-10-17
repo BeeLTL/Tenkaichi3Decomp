@@ -14,6 +14,7 @@ Contents:  Tenkaichi3Decomp, Tenkaichi3Decomp.dat   the game without the data ta
 
            fonts/          the fonts of F1 > UI with their licences (port/third_party/fonts as it is)
            translations/labels/   menu and battle language catalogs
+           translations/port/     text added by the PC port
            translations/assets/   optional first-run language screen artwork
            tbo/ui/         the pictures of the Tenkaichi Budokai Online screens (port/tbo/ui), their credits in licenses/
            README.txt, licenses/
@@ -132,12 +133,13 @@ def take_lang(out):
             shutil.copy2(p, out / p.name)
 
 def take_translations(out):
-    """Menu and battle catalogs and optional language screen artwork copied into game-text at first start."""
+    """Bundled label and port-text catalogs, plus optional language screen artwork."""
     target = out / "translations"
-    (target / "labels").mkdir(parents=True, exist_ok=True)
-    for source in sorted((ROOT / "port/translations/labels").glob("*.json")):
-        if re.fullmatch(r"[a-z]{2,3}(?:-[A-Za-z]{2,3})?", source.stem):
-            shutil.copy2(source, target / "labels" / source.name)
+    for kind in ("labels", "port"):
+        (target / kind).mkdir(parents=True, exist_ok=True)
+        for source in sorted((ROOT / "port/translations" / kind).glob("*.json")):
+            if re.fullmatch(r"[a-z]{2,3}(?:-[A-Za-z]{2,3})?", source.stem):
+                shutil.copy2(source, target / kind / source.name)
     artwork = list((ROOT / "port/translations/assets").glob("*.png"))
     artwork += list((ROOT / "port/translations").glob("*.png"))
     if artwork:
