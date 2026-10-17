@@ -10,6 +10,7 @@
 #include <io.h>
 #endif
 #include <pthread.h>
+#include <stdint.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,9 @@
 #include <unistd.h>
 #ifdef _WIN32
 #include <direct.h>
+#include <windows.h> /* GetModuleFileNameA */
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h> /* _NSGetExecutablePath */
 #endif
 
 enum { TR_MAX_FILE = 1024 * 1024, TR_MAX_ROWS = 640, TR_MAX_GROUPS = 160 };
@@ -464,16 +468,46 @@ static void tr_copy_catalogs(const char *root, const char *kind, const char *des
     }
 #endif
 }
+/* The folder of the bundled catalogs: from the working folder (a source checkout's port/translations, a release's
+   translations), or else from the program's own folder (a release started from elsewhere: a shortcut, a terminal in
+   another folder; a checkout's port/build/<program>), as the fonts are found (menu_text.c). 0: none. */
+static int tr_bundled_dir(char *out, size_t size) {
+    static const char *const kHere[] = {"port/translations", "translations"};
+    static const char *const kByProgram[] = {"translations", "../translations"};
+    char exe[1024], path[1300], *slash;
+    long n;
+    int i;
+    for (i = 0; i < 2; i++) {
+        snprintf(path, sizeof(path), "%s/labels/en.json", kHere[i]);
+        if (access(path, 0) == 0) { snprintf(out, size, "%s", kHere[i]); return 1; }
+    }
+#ifdef _WIN32
+    n = (long)GetModuleFileNameA(NULL, exe, sizeof(exe) - 1);
+#elif defined(__APPLE__)
+    { uint32_t cap = sizeof(exe) - 1; n = _NSGetExecutablePath(exe, &cap) == 0 ? (long)strlen(exe) : -1; }
+#else
+    n = (long)readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+#endif
+    if (n <= 0 || n >= (long)sizeof(exe) - 1) return 0;
+    exe[n] = 0;
+    slash = strrchr(exe, '/');
+#ifdef _WIN32
+    if (strrchr(exe, '\\') > slash) slash = strrchr(exe, '\\');
+#endif
+    if (slash == NULL) return 0;
+    slash[1] = 0;
+    for (i = 0; i < 2; i++) {
+        snprintf(path, sizeof(path), "%s%s/labels/en.json", exe, kByProgram[i]);
+        if (access(path, 0) == 0) { snprintf(out, size, "%s%s", exe, kByProgram[i]); return 1; }
+    }
+    return 0;
+}
 static void tr_copy_all(const char *outDir, const char *labelsDir) {
     const char *src = NULL;
-    char source[1200], destination[1200], assetsDir[1200], oldAssetsDir[1200], catalogDir[1200];
+    char source[1200], destination[1200], assetsDir[1200], oldAssetsDir[1200], catalogDir[1200], bundled[1100];
     int i;
-    static const char *dirs[] = {"port/translations", "translations"};
     static const char *const extraCatalogs[] = {"ui", "port"};
-    for (i = 0; i < 2; i++) {
-        snprintf(source, sizeof(source), "%s/labels/en.json", dirs[i]);
-        if (access(source, 0) == 0) { src = dirs[i]; break; }
-    }
+    if (tr_bundled_dir(bundled, sizeof(bundled))) src = bundled;
     {
         static const char *const artwork[] = {
             TBO_LANG_BG_FILE, TBO_LANG_ARROW_LEFT_FILE, TBO_LANG_ARROW_RIGHT_FILE
