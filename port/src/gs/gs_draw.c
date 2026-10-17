@@ -572,7 +572,11 @@ static GsTex clut_texture(uint32_t cbp) {
 /* ((A - B) * C >> 7) + D as the pipeline key's blend bits: ks * Cs + kd * Cd with ks, kd from
    {0, 1, C, -C, 1 - C, 1 + C}. Each of A, B, D is source, destination or zero, so bit i of A/B decides
    which side is scaled. Returns the key of pure GS state (bits 0..8); the back end turns it back into
-   blend factors. k[i]: 0 nothing, 1 one, 2 C, 3 -C, 4 1 - C, 5 1 + C; i = 0 source, 1 destination. */
+   blend factors. k[i]: 0 nothing, 1 one, 2 C, 3 -C, 4 1 - C, 5 1 + C; i = 0 source, 1 destination.
+   Bit 9: the source is scaled by its own alpha in the shader and blended with factor one. The GS takes a source
+   alpha above 0x80 as a factor above one (up to 255 / 128), but a blend factor is clamped at one by an 8-bit
+   target: an additive layer at alpha 0xFF (the blinding of a Solar Flare: grey 0x80 times 0xFF, white on the PS2)
+   was drawn at half. Done where only the source is scaled by As (the destination by nothing or one). */
 static uint32_t blend_key(uint64_t alpha, int abe) {
     int A = alpha & 3, B = (alpha >> 2) & 3, C = (alpha >> 4) & 3, D = (alpha >> 6) & 3, k[2], i;
 
@@ -583,12 +587,13 @@ static uint32_t blend_key(uint64_t alpha, int abe) {
         int c = (A == i) - (B == i), one = D == i;
         k[i] = c == 0 ? one : c > 0 ? (one ? 5 : 2) : (one ? 4 : 3);
     }
-    return 1u | (uint32_t)k[0] << 1 | (uint32_t)k[1] << 4 | (uint32_t)C << 7;
+    return 1u | (uint32_t)k[0] << 1 | (uint32_t)k[1] << 4 | (uint32_t)C << 7 |
+           (uint32_t)(C == 0 && (k[0] == 2 || k[0] == 3) && k[1] <= 1) << 9;
 }
 
 /* The pipeline a draw uses: everything a pipeline depends on is in the key (the back end makes and caches
    one pipeline per key, so this is pure GS state -> an index):
-   bits 0..8 blend, 10..11 depth test, 12 depth write, 13..14 topology, 16..19 colour write mask,
+   bits 0..9 blend, 10..11 depth test, 12 depth write, 13..14 topology, 16..19 colour write mask,
    20..21 vertices: 0 GS vertices, 1 program 0, 2 program 4, 3 program 6, 22 full-screen table pass,
    23 the fragment shader without its own depth output, 24 flat-shadow stencil mask. */
 static int pipeline_get(int ctx, int topo, int vu, int shadow) {
