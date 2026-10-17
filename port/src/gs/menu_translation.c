@@ -779,7 +779,7 @@ int MenuTranslation_ShouldPrompt(const MenuTranslationOption *options, int count
     char saved[16];
     int i;
     const char *override = getenv("BT3_MENU_LANG");
-    if (count <= 0 || options == NULL || (override != NULL && override[0] != '\0') ||
+    if (count <= 1 || options == NULL || (override != NULL && override[0] != '\0') ||
         getenv("BT3_NET_SESSION") != NULL || getenv("BT3_PAD_PLAY") != NULL ||
         getenv("BT3_PAD_TABLE") != NULL || getenv("BT3_SYNCTEST") != NULL) return 0;
     if (__atomic_load_n(&sBootChoiceMade, __ATOMIC_ACQUIRE)) return 0;

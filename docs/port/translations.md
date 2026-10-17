@@ -58,8 +58,9 @@ display translated words in place of the original artwork.
 ## Selecting and loading a language
 
 The game discovers locale files in all three folders and shows each language
-once in the first-run selector and **F1 > UI > Language**. The selected locale
-is saved as `menu_lang` in `bt3_settings.txt`. The optional **Show language
+once in **F1 > UI > Language**. The startup selector appears only when at least
+two languages are available; it is skipped when there is just one. The selected
+locale is saved as `menu_lang` in `bt3_settings.txt`. The optional **Show language
 selector at startup** setting displays the selector on later launches too.
 `BT3_MENU_LANG=es` overrides the saved choice for one launch.
 

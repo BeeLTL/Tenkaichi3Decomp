@@ -1463,7 +1463,7 @@ static void ui_tab(PortVideo &v) {
             Port_SettingSave("language_prompt_always", alwaysPrompt);
             Port_SettingsWrite();
         }
-        ImGui::SetItemTooltip("Show the language list at every normal startup.");
+        ImGui::SetItemTooltip("Show the language list at every normal startup when more than one language is available.");
         if (sLanguageRestartPending) {
             ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.35f, 1.0f), "Language saved. It will apply on the next launch.");
         }

@@ -46,8 +46,9 @@ the file (the file is cut short or damaged). The setting is back on "Original".
 The bundled menu and battle translations are in `port/translations/labels/` (`translations/labels/` in a release).
 At startup, the game copies missing locale files into `gamedata/game-text/translations/labels/` and discovers
 languages from the `labels/`, `ui/`, and `port/` catalogs. A language without its own label catalog uses English
-menu and battle labels. On the first launch, a native language list appears before game data is loaded. The choice
-is saved in `bt3_settings.txt` and can be changed in F1 > UI > Language; restart to load another language.
+menu and battle labels. On the first launch, a native language list appears before game data is loaded when at least
+two languages are available. With only one language, the list is skipped. The choice is saved in `bt3_settings.txt`
+and can be changed in F1 > UI > Language; restart to load another language.
 The texture/layout index in `labels.tsv` is shared by all languages. `BT3_MENU_LANG=es` overrides the saved choice
 for one launch. F1 > UI > **Show language selector at startup** can show the list on later normal launches.
 See [Translations](translations.md) for catalog locations, editing, and fallback rules.
