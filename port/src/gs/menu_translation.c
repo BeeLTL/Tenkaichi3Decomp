@@ -82,8 +82,16 @@ static int tr_u4(TrParser *p, unsigned *out) {
 }
 static char *tr_string(TrParser *p) {
     char *out, *w;
+    const char *q;
     if (!tr_take(p, '"')) return NULL;
-    out = malloc((size_t)(p->end - p->p) + 1);
+    /* As much as the string can need: up to its closing quote (an escape keeps the next character from closing it;
+       decoded, an escape is never longer than written). It was the rest of the file: with 20,000 lines kept, tens of
+       gigabytes asked for in all. Linux and Wine give such memory only when it is written to; Windows counts all of
+       it against memory and the page file, and on a machine with less of them the catalog was refused ("invalid UI
+       translation catalog": the memory card box in English). */
+    for (q = p->p; q < p->end && *q != '"'; q += *q == '\\' && q + 1 < p->end ? 2 : 1) {
+    }
+    out = malloc((size_t)(q - p->p) + 1);
     if (out == NULL) return NULL;
     w = out;
     while (p->p < p->end) {
