@@ -464,9 +464,10 @@ static void tr_copy_catalogs(const char *root, const char *kind, const char *des
 }
 static void tr_copy_all(const char *outDir, const char *labelsDir) {
     const char *src = NULL;
-    char source[1200], destination[1200], assetsDir[1200], oldAssetsDir[1200], portDir[1200];
+    char source[1200], destination[1200], assetsDir[1200], oldAssetsDir[1200], catalogDir[1200];
     int i;
     static const char *dirs[] = {"port/translations", "translations"};
+    static const char *const extraCatalogs[] = {"ui", "port"};
     for (i = 0; i < 2; i++) {
         snprintf(source, sizeof(source), "%s/labels/en.json", dirs[i]);
         if (access(source, 0) == 0) { src = dirs[i]; break; }
@@ -509,13 +510,15 @@ static void tr_copy_all(const char *outDir, const char *labelsDir) {
     }
     if (src == NULL) return;
     tr_copy_catalogs(src, "labels", labelsDir);
-    if (snprintf(portDir, sizeof(portDir), "%s/translations/port", outDir) >= (int)sizeof(portDir)) return;
+    for (i = 0; i < (int)(sizeof(extraCatalogs) / sizeof(extraCatalogs[0])); i++) {
+        if (snprintf(catalogDir, sizeof(catalogDir), "%s/translations/%s", outDir, extraCatalogs[i]) >= (int)sizeof(catalogDir)) continue;
 #ifdef _WIN32
-    _mkdir(portDir);
+        _mkdir(catalogDir);
 #else
-    mkdir(portDir, 0755);
+        mkdir(catalogDir, 0755);
 #endif
-    tr_copy_catalogs(src, "port", portDir);
+        tr_copy_catalogs(src, extraCatalogs[i], catalogDir);
+    }
 }
 static int tr_translation_dir(const char *outDir, char *dir, size_t size) {
     char parent[1200];
@@ -704,10 +707,10 @@ int MenuTranslation_List(const char *outDir, MenuTranslationOption *out, int cap
     char dirPath[1200], extraDir[1200];
     int count = 0, i, j;
     if (outDir == NULL || out == NULL || capacity <= 0) return 0;
-    UiText_ExtractOnStartup(outDir);
     if (!tr_translation_dir(outDir, dirPath, sizeof(dirPath))) return 0;
     tr_migrate_all(outDir, dirPath);
     tr_copy_all(outDir, dirPath);
+    UiText_ExtractOnStartup(outDir);
 #ifdef _WIN32
     {
         struct _finddata_t entry;

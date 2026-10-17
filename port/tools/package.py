@@ -14,6 +14,7 @@ Contents:  Tenkaichi3Decomp, Tenkaichi3Decomp.dat   the game without the data ta
 
            fonts/          the fonts of F1 > UI with their licences (port/third_party/fonts as it is)
            translations/labels/   menu and battle language catalogs
+           translations/ui/       optional bundled game UI catalogs
            translations/port/     text added by the PC port
            translations/assets/   optional first-run language screen artwork
            tbo/ui/         the pictures of the Tenkaichi Budokai Online screens (port/tbo/ui), their credits in licenses/
@@ -133,9 +134,9 @@ def take_lang(out):
             shutil.copy2(p, out / p.name)
 
 def take_translations(out):
-    """Bundled label and port-text catalogs, plus optional language screen artwork."""
+    """Bundled label, UI, and port-text catalogs, plus optional language screen artwork."""
     target = out / "translations"
-    for kind in ("labels", "port"):
+    for kind in ("labels", "ui", "port"):
         (target / kind).mkdir(parents=True, exist_ok=True)
         for source in sorted((ROOT / "port/translations" / kind).glob("*.json")):
             if re.fullmatch(r"[a-z]{2,3}(?:-[A-Za-z]{2,3})?", source.stem):

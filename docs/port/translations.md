@@ -6,7 +6,7 @@ own JSON catalog under `gamedata/game-text/translations/`:
 | Folder | Text covered | Where the English text comes from |
 | --- | --- | --- |
 | `labels/` | Menu and other text painted into artwork textures | Bundled `port/translations/labels/en.json` |
-| `ui/` | Original game's menu and dialog text tables | Extracted from the USA game data at startup into `ui/en.json` |
+| `ui/` | Original game's menu and dialog text tables | Extracted from the USA game data at startup into `ui/en.json`, unless an English UI catalog is bundled |
 | `port/` | Text added by the PC port, currently the quit confirmation | Bundled `port/translations/port/en.json` |
 
 An entry has a stable ID, the English `original`, and editable `text`. For
@@ -31,19 +31,20 @@ revision and entry count; they do not select the language or alter rendering.
 
 ## Source files and game-data files
 
-The source tree bundles `port/translations/labels/*.json` and
-`port/translations/port/*.json`. A release puts these under its
-`translations/labels/` and `translations/port/` folders. At startup, the game
+The source tree bundles JSON catalogs from `port/translations/labels/`,
+`port/translations/ui/`, and `port/translations/port/`. A release puts these
+under its corresponding `translations/` folders. At startup, the game
 copies missing files into `gamedata/game-text/translations/`. It **never
 overwrites an existing game-data translation**, so the game-data copy is the
 one to edit after the first launch. Editing a bundled source file will affect
 an existing installation only if its game-data copy is also updated or removed.
 Packaging includes locale JSON files with valid locale filenames.
 
-The `ui/` catalog is different: the port extracts `ui/en.json` from the
-installed USA game data at startup. It preserves an existing copy. Other UI
-languages can be placed directly in `gamedata/game-text/translations/ui/`;
-they are not copied from `port/translations/` by the release packager.
+The port extracts `ui/en.json` from the installed USA game data at startup
+when no English UI catalog exists. It preserves an existing game-data copy.
+Developers may bundle reviewed UI catalogs in `port/translations/ui/`;
+the game copies those before starting extraction. Translators can also place
+UI catalogs directly in `gamedata/game-text/translations/ui/`.
 
 To add a language, copy an English catalog to
 `gamedata/game-text/translations/<kind>/<locale>.json`, set `locale` and
