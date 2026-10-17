@@ -21,9 +21,11 @@
 #endif
 
 enum { TR_MAX_FILE = 1024 * 1024, TR_MAX_ROWS = 640, TR_MAX_GROUPS = 160 };
-enum { TR_PORT_TEXT_COUNT = 1, TR_PORT_TEXT_MAX = 1024, TR_PORT_MAX_FILE = 64 * 1024 };
+enum { TR_PORT_TEXT_COUNT = 3, TR_PORT_TEXT_MAX = 1024, TR_PORT_MAX_FILE = 64 * 1024 };
 static const struct { const char *id, *original; } kPortText[TR_PORT_TEXT_COUNT] = {
-    {PORT_TEXT_QUIT_CONFIRM, "Close the game?\nUnsaved progress will be lost."}
+    {PORT_TEXT_QUIT_CONFIRM, "Close the game?\nUnsaved progress will be lost."},
+    {PORT_TEXT_NET_CONNECTING, "Connecting to your rival..."},
+    {PORT_TEXT_NET_RIVAL, "Your rival \"{name}\" is here! The match begins."}
 };
 typedef struct TrPortCatalog {
     char text[TR_PORT_TEXT_COUNT][TR_PORT_TEXT_MAX];

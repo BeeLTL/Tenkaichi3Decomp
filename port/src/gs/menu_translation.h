@@ -13,6 +13,9 @@ typedef struct MenuTranslationOption {
 } MenuTranslationOption;
 
 #define PORT_TEXT_QUIT_CONFIRM "quit/confirm"
+/* The start of an online match (gs/net.c): before the other player is there, and once they are ({name}: theirs). */
+#define PORT_TEXT_NET_CONNECTING "net/connecting"
+#define PORT_TEXT_NET_RIVAL "net/rival_here"
 
 /* Copies bundled label and port catalogs without replacing local edits, then loads
    BT3_MENU_LANG or the saved menu_lang setting (English if neither is set). */

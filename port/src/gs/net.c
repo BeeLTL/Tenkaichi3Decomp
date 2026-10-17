@@ -86,6 +86,10 @@ static int sOptRoll = -1, sOptDelay = -1;
 static int sCfgGot, sCfgDelay, sCfgRoll;
 static int sGone; /* the other player said goodbye (2: because its check found the two games apart) */
 extern void Port_UiNotice(const char *text); /* ui.cpp: a line over the picture for a few seconds */
+extern void Port_UiBanner(const char *text, int ms); /* ui.cpp: a line in the middle while the game waits */
+extern void Gs_HoldFrame(void);                      /* gs_draw.c: the last picture again, with that line on it */
+extern const char *MenuTranslation_PortText(const char *id);
+static void session_hold(void);
 
 static int sAutoDelay;
 static int sOptAuto;      /* the host asked for the input delay to be chosen from the line's ping */
@@ -459,6 +463,7 @@ static void gone(unsigned tick);
 enum { T_ARRIVED = 11 };
 static uint32_t sMyArrival, sTheirArrival; /* (0: not yet) */
 static int sMet;
+static char sBannerSaid[NAME_LEN + 8]; /* what session_banner last put up (empty: nothing yet in this session) */
 
 static void send_inputs(void) {
     uint8_t pkt[IN_HEAD + REDUNDANT * PAD];
@@ -871,6 +876,7 @@ static void net_start(int role, const char *host, const char *join) {
             last = now;
         }
         receive();
+        session_hold();
         if (sVersionBad) {
             fprintf(stderr, "bt3: net: the other player's game is another version; both need the same release\n");
             Port_UiNotice("The other player's game is a different version.");
@@ -900,6 +906,7 @@ static void net_start(int role, const char *host, const char *join) {
                 pings++;
             }
             receive();
+            session_hold();
             SDL_Delay(1);
         }
         if (sAutoDelay) {
@@ -918,12 +925,14 @@ static void net_start(int role, const char *host, const char *join) {
                 lastCfg = now;
             }
             receive();
+            session_hold();
             SDL_Delay(1);
         }
     } else {
         uint64_t start = SDL_GetTicksNS();
         while (sCfgGot != 2 && SDL_GetTicksNS() - start < 5000000000ull) {
             receive();
+            session_hold();
             SDL_Delay(1);
         }
     }
@@ -1173,6 +1182,58 @@ static void roll_tick(unsigned tick) {
     memcpy(sUsed[tick % RING], sIn[other][(tick < sHave[other] ? tick : sHave[other] - 1) % RING], PAD);
 }
 
+/* What the screen says while a session starts (the picture stands still meanwhile: Gs_HoldFrame keeps showing it
+   with this line on it). Before the other player's name is known: that their game is being reached; then that they
+   are there, by name. The lines are the port catalog's (net/connecting, net/rival_here; {name} is replaced). */
+static void session_banner(void) {
+    const char *other = sNames[!sMe], *line;
+    char text[256], name[NAME_LEN];
+    size_t i, k, n;
+
+    if (!sSession) {
+        return;
+    }
+    for (i = k = 0; other[i] != '\0' && k + 1 < sizeof(name); i++) { /* (the other side's text: printable only) */
+        if ((unsigned char)other[i] >= 0x20 && other[i] != 0x7F) {
+            name[k++] = other[i];
+        }
+    }
+    name[k] = '\0';
+    if (strcmp(sBannerSaid, k != 0 ? name : "\x01") == 0) {
+        return;
+    }
+    snprintf(sBannerSaid, sizeof(sBannerSaid), "%s", k != 0 ? name : "\x01");
+    if (k == 0) {
+        line = MenuTranslation_PortText("net/connecting");
+        Port_UiBanner(line != NULL ? line : "Connecting to your rival...", 0);
+        return;
+    }
+    line = MenuTranslation_PortText("net/rival_here");
+    if (line == NULL) {
+        line = "Your rival \"{name}\" is here! The match begins.";
+    }
+    for (i = n = 0; line[i] != '\0' && n + 1 < sizeof(text); i++) {
+        if (strncmp(line + i, "{name}", 6) == 0) {
+            for (k = 0; name[k] != '\0' && n + 1 < sizeof(text); k++) {
+                text[n++] = name[k];
+            }
+            i += 5;
+        } else {
+            text[n++] = line[i];
+        }
+    }
+    text[n] = '\0';
+    Port_UiBanner(text, 0);
+}
+
+/* While the game's thread waits for the other side during a session's start: the line, and the picture. */
+static void session_hold(void) {
+    if (sSession) {
+        session_banner();
+        Gs_HoldFrame();
+    }
+}
+
 /* A blank of a session's start-up (the logos and the card check, without picture, up to the character select:
    Port_NetWarp). Nobody plays it, so both copies give it nothing pressed for both players and go on without
    waiting for each other: the two run the same blanks from the same first blank with the same input and arrive at
@@ -1201,6 +1262,7 @@ static void warp_tick(unsigned tick) {
     if (sGone) {
         gone(tick);
     }
+    session_hold();
     gPortResim = 1;
 }
 
@@ -1230,7 +1292,10 @@ static void meet(unsigned tick) {
         if (now - t0 > 60000000000ull) {
             gone_quiet(tick);
         }
+        session_hold();
     } while (sTheirArrival == 0);
+    session_banner();
+    Port_UiBanner(NULL, 2500); /* (the line stays a little over the character select, without the dimming) */
     fprintf(stderr, "bt3: net: both at the character select (blank %u), %u ms after connecting\n", tick, (unsigned)(now_ms() - sStartedMs));
     if (sTheirArrival != tick) {
         fprintf(stderr, "bt3: net: the other copy reached the character select at blank %u\n", (unsigned)sTheirArrival);
@@ -1528,6 +1593,7 @@ void Port_NetSessionBegin(int role, const char *address, int port) {
     sArrived = 0;
     sMyArrival = sTheirArrival = 0;
     sMet = 0;
+    sBannerSaid[0] = 0;
     net_start(role, role == 1 ? host : NULL, role == 2 ? join : NULL);
 }
 

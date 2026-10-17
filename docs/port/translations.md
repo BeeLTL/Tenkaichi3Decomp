@@ -7,7 +7,7 @@ own JSON catalog under `gamedata/game-text/translations/`:
 | --- | --- | --- |
 | `labels/` | Menu and other text painted into artwork textures | Bundled `port/translations/labels/en.json` |
 | `ui/` | Original game's menu and dialog text tables | Extracted from the USA game data at startup into `ui/en.json`, unless an English UI catalog is bundled |
-| `port/` | Text added by the PC port, currently the quit confirmation | Bundled `port/translations/port/en.json` |
+| `port/` | Text added by the PC port: the quit confirmation, and the lines at the start of an online match (`{name}` is the rival's name) | Bundled `port/translations/port/en.json` |
 
 An entry has a stable ID, the English `original`, and editable `text`. For
 example, `port/en.json` contains:

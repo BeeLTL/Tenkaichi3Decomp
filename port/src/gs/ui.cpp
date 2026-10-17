@@ -1971,6 +1971,21 @@ extern "C" void Port_UiNotice(const char *text) {
     sNoticeNew = 1;
 }
 
+// A line in the middle of the screen, the picture behind it dimmed, while the game's thread waits inside a blank
+// (the start of an online match, gs/net.c): drawn by the frames it shows meanwhile (Gs_HoldFrame). `ms` > 0: the
+// wait is over; the line stays that long more, over the game's own pictures and without the dimming. NULL: gone.
+static char sBanner[256];
+static Uint64 sBannerUntil; // 0: while the game waits
+extern "C" void Port_UiBanner(const char *text, int ms) {
+    if (text != NULL) {
+        SDL_strlcpy(sBanner, text, sizeof(sBanner));
+    }
+    if (text == NULL && ms <= 0) {
+        sBanner[0] = '\0';
+    }
+    sBannerUntil = ms > 0 ? SDL_GetTicks() + (Uint64)ms : 0;
+}
+
 // The meter: frames shown and the game's speed, and in an online match the connection. A setting (Video tab).
 static bool meter_on(void) {
     if (sMeter < 0) {
@@ -2333,9 +2348,13 @@ static bool frame_build(void) {
         chat_close();
     }
     bool chat = online && (sChat || chat_recent());
+    if (sBanner[0] != '\0' && sBannerUntil != 0 && SDL_GetTicks() >= sBannerUntil) {
+        sBanner[0] = '\0';
+    }
+    bool banner = sReady && sBanner[0] != '\0';
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars && !chat)) {
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars && !chat && !banner)) {
         return false;
     }
     if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
@@ -2415,6 +2434,28 @@ static bool frame_build(void) {
             }
             dl->AddText(font, size, ImVec2(x, y), IM_COL32(255, 255, 255, 255), text);
         }
+    }
+    if (banner) { // the start of an online match (Port_UiBanner): in the middle, large, outlined
+        ImGuiIO &io = ImGui::GetIO();
+        ImDrawList *dl = ImGui::GetForegroundDrawList();
+        ImFont *font = ImGui::GetFont();
+        float size = ImGui::GetFontSize() * (io.DisplaySize.y >= 900.0f ? 2.0f : 1.6f);
+        float wrap = io.DisplaySize.x * 0.8f;
+        ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, wrap, sBanner);
+        float x = (io.DisplaySize.x - extent.x) * 0.5f, y = (io.DisplaySize.y - extent.y) * 0.5f;
+        if (sBannerUntil == 0) { // still waiting: the picture dimmed
+            dl->AddRectFilled(ImVec2(0.0f, 0.0f), io.DisplaySize, IM_COL32(0, 0, 0, 150));
+        }
+        dl->AddRectFilled(ImVec2(x - size, y - size * 0.6f), ImVec2(x + extent.x + size, y + extent.y + size * 0.6f), IM_COL32(10, 14, 40, 210),
+                          size * 0.4f);
+        for (int ox = -1; ox <= 1; ox++) {
+            for (int oy = -1; oy <= 1; oy++) {
+                if (ox != 0 || oy != 0) {
+                    dl->AddText(font, size, ImVec2(x + (float)ox * 2.0f, y + (float)oy * 2.0f), IM_COL32(0, 0, 0, 230), sBanner, NULL, wrap);
+                }
+            }
+        }
+        dl->AddText(font, size, ImVec2(x, y), IM_COL32(255, 236, 120, 255), sBanner, NULL, wrap);
     }
     if (notice) { // a line over the picture for a few seconds (the end of an online match)
         ImGuiIO &io = ImGui::GetIO();

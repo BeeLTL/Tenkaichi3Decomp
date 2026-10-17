@@ -51,6 +51,28 @@ extern int Port_PageAspectMilli(void); /* plat_stub.c: the shape of the page sho
 extern int gPortMusicPercent, gPortSePercent, gPortVoicePercent, gPortStagePercent;
 
 static GsBackend *sBackend;
+
+/* The last picture again, with the overlay on it (Port_UiBanner, ui.cpp), and the window's events taken: for the
+   game's thread while it waits inside a blank (the start of an online match, gs/net.c), so that the window shows
+   something and does not look hung. The frame being recorded is set aside and left as it was for the blank's own
+   end. At most every 1/30 s. Nothing of the game's state is touched (the renderer's memory is not part of it). */
+void Gs_HoldFrame(void) {
+    static uint64_t last;
+    uint64_t now = SDL_GetTicksNS();
+    uint32_t draws = gsDrawCount, verts = gsVertCount, vuVerts = gsVuVertCount, vuIdx = gsVuIdxCount, vuUni = gsVuUniCount;
+
+    if (sBackend == NULL || now - last < 33000000ull) {
+        return;
+    }
+    last = now;
+    gsDrawCount = gsVertCount = gsVuVertCount = gsVuIdxCount = gsVuUniCount = 0;
+    sBackend->frameEnd();
+    gsDrawCount = draws;
+    gsVertCount = verts;
+    gsVuVertCount = vuVerts;
+    gsVuIdxCount = vuIdx;
+    gsVuUniCount = vuUni;
+}
 static int sSmooth2d = 1; /* the setting "2D filtering" (smooth_2d; BT3_2D_SMOOTH=0/1 wins): 1 smooth */
 static int sWholeFrame; /* the draw being set up shows a frame the game read back (the cross-fade) */
 
