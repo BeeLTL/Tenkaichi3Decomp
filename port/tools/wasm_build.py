@@ -15,7 +15,7 @@ Usage (emcc on PATH):
   python port/tools/wasm_build.py data                the data tables (wasm_data.py) and their disc-run list
   python port/tools/wasm_build.py link                stubs for what nobody defines, wasm_sig.py, link -> port/build/web
 """
-import concurrent.futures, os, pathlib, re, subprocess, sys
+import concurrent.futures, os, pathlib, re, shutil, subprocess, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import eeconst, portsrc, wasm_sf, wasm_shaders
@@ -118,7 +118,7 @@ def game_object(f):
 # ImGui) is not built either: the page has its own settings panel, and port/src/web/web_ui.c is the engine's side of
 # ui.h for it. With that the browser build has no C++ at all. The crash handlers (plat_crash.c: signals, Windows
 # exceptions) are not built either: in the browser the page catches a crash, and web/web_crash.c gives it the context.
-WASM_SKIP = {"net.c", "net_match.c", "net_relay.c", "gs_gpu.c", "plat_crash.c"}
+WASM_SKIP = {"net_io.c", "net_match.c", "net_relay.c", "gs_gpu.c", "plat_crash.c"}
 HARD = {"plat_libm.c", "plat_fastvec.c"}  # host floats on purpose (undefined.py)
 SDL = ["-sUSE_SDL=3"]
 # Renderer back ends that exist only in the browser build: in port/src/web/, compiled with the renderer's flags and
@@ -217,7 +217,7 @@ LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000
         "-sEMULATE_FUNCTION_POINTER_CASTS=1",
         "-sMODULARIZE=1", "-sEXPORT_NAME=createBt3", "-sENVIRONMENT=web",
         "-sFORCE_FILESYSTEM=1", "-sEXPORTED_RUNTIME_METHODS=FS,ENV,HEAPU8,UTF8ToString,callMain,ccall",
-        "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext,_malloc,_free", "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
+        "-sEXPORTED_FUNCTIONS=_main,_Port_CrashContext,_malloc,_free", "-Wl,-Map=" + str(ROOT / "port/build/bt3_wasm.map"), "-sINVOKE_RUN=0", "-sEXIT_RUNTIME=0",
         "-Wl,--wrap=Progress_Main", "-Wl,--wrap=fopen",  # fopen: the data folder over HTTP (port/src/web/web_fs.c)
         "-Wl,--wrap=Port_PadRead",  # what the game receives from the pads, for the page (port/src/web/web_ui.c)
         # content added from outside the disc: said when it cannot be found here, and why
@@ -226,6 +226,9 @@ LINK = ["-sGLOBAL_BASE=" + str(0x12010000), "-sINITIAL_MEMORY=" + str(0x18000000
         "-Wl,--wrap=stat", "-Wl,--wrap=opendir", "-Wl,--wrap=readdir", "-Wl,--wrap=closedir",
         # the check of the game data (plat_verify.c) cannot run here: not started, and said (web/web_verify.c)
         "-Wl,--wrap=Port_VerifyStart", "-Wl,--wrap=Port_DataSummary",
+        # (the gameplay fingerprint: given by the data server, web/web_verify.c)
+        "-Wl,--wrap=Port_DataFingerprint", "-Wl,--wrap=Port_DataFingerprintPart", "-Wl,--wrap=Port_DataFingerprintOriginal",
+        "-Wl,--wrap=Port_DataFingerprintText",
         # the memory card's close / write / sync (plat_mc.c): when a save is whole, for the page to keep it (web_ui.c)
         "-Wl,--wrap=func_002A1FB8", "-Wl,--wrap=func_002A2320", "-Wl,--wrap=func_002A2498",
         "-Wl,--error-limit=0", "--profiling-funcs", "-sASSERTIONS=1"]
@@ -297,8 +300,35 @@ def link():
             break
         need |= more
         write_stubs()
-    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
+    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "net_overlay.js", "screen_overlay.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
         (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
+    # Tenkaichi Budokai Online's pictures (port/tbo/ui, with their credits): the page puts them at /tbo/ui in the game's
+    # file system (the program's folder is "/"), where gs_draw.c tbo_texture looks; files.txt lists them for it
+    tbo = WEB / "tbo/ui"
+    tbo.mkdir(parents=True, exist_ok=True)
+    names = sorted(f.name for f in (ROOT / "port/tbo/ui").iterdir() if f.is_file())
+    for name in names:
+        (tbo / name).write_bytes((ROOT / "port/tbo/ui" / name).read_bytes())
+    (tbo / "files.txt").write_text("\n".join(n for n in names if n.endswith(".png")) + "\n", newline="\n")
+    # Folders the page puts into the program's file system at the same name (the program's folder is "/"), each with a
+    # files.txt of what it fetches:
+    #   - the TrueType fonts (port/third_party/fonts, with their licences): Tenkaichi Budokai Online and the menu,
+    #     battle and dialogue fonts write with them (gs/tbo_text.c, menu_text.c look for "fonts/fonts.tsv");
+    #   - the bundled translation catalogs (port/translations, upstream 0.1.37): menu_translation.c looks for
+    #     "translations/" and copies them into gamedata/game-text/translations/ (docs/port/translations.md)
+    for src_rel, name, kinds in (("port/third_party/fonts", "fonts", (".ttf", ".tsv")), ("port/translations", "translations", (".json",)),
+                                ("port/assets/bars", "bars", (".png",))):  # (the side bars' art: the page draws it, screen_overlay.js)
+        src, dst = ROOT / src_rel, WEB / name
+        if dst.exists():
+            shutil.rmtree(dst)
+        rels = sorted(f.relative_to(src).as_posix() for f in src.rglob("*") if f.is_file())
+        for rel in rels:
+            (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+            (dst / rel).write_bytes((src / rel).read_bytes())
+        (dst / "files.txt").write_text("\n".join(r for r in rels if r.endswith(kinds)) + "\n", newline="\n")
+    if r.returncode == 0:  # the game's variables in bt3.wasm, for state.c's checksum (bt3.mem; wasm_state.py)
+        st = run([sys.executable, str(ROOT / "port/tools/wasm_state.py")])
+        print((st.stdout or st.stderr).strip())
     mism = re.findall(r"signature mismatch: (\S+)", r.stderr)
     errs = [l for l in r.stderr.splitlines() if "error" in l]
     print(f"{len(need)} stubs (port/build/wasm_stubs.txt); {len(mism)} signature mismatches left; link "

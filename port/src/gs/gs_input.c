@@ -169,6 +169,158 @@ int PortInput_Hotkey(const SDL_Event *ev) {
 /* The settings window closed, or its exit question was answered, with a controller button: that press is not the game's. */
 void PortInput_Swallow(void) { sSwallow = 2; }
 void PortInput_SwallowKeys(void) { sKeySwallow = 1; }
+
+/* Tenkaichi Budokai Online's keypads (src/menu/port_tbo.c): while one takes text (gPortTboTyping), what is typed
+   goes to it, a character at a time (PortTbo_TextRead: the character, 8 backspace, 13 enter, 27 escape, 0 none),
+   and the keys that type (letters, digits, space, punctuation, enter, backspace, escape) are not the pad's: the
+   arrow keys and the controller still move on the keypad. The window's events come in on the renderer's thread
+   (PortInput_TboEvent, from Ui_Event), the game reads them on its own. */
+int gPortTboTyping;
+static char sTboKeys[64];
+static unsigned sTboHead, sTboTail;
+static SDL_SpinLock sTboLock;
+
+static int typing_key(int sc) {
+    return (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_SLASH && sc != SDL_SCANCODE_TAB) ||
+           (sc >= SDL_SCANCODE_KP_DIVIDE && sc <= SDL_SCANCODE_KP_PERIOD);
+}
+
+static void tbo_push(int c) {
+    SDL_LockSpinlock(&sTboLock);
+    if (sTboHead - sTboTail < sizeof(sTboKeys)) {
+        sTboKeys[sTboHead++ % sizeof(sTboKeys)] = (char)c;
+    }
+    SDL_UnlockSpinlock(&sTboLock);
+}
+
+void PortTbo_TextMode(int on) {
+    SDL_LockSpinlock(&sTboLock);
+    sTboHead = sTboTail = 0;
+    SDL_UnlockSpinlock(&sTboLock);
+    if (gPortTboTyping && !on) {
+        sKeySwallow = 1; /* (Enter, which ended it, is START: not the game's until it is let go) */
+    }
+    gPortTboTyping = on != 0;
+}
+
+int PortTbo_TextRead(void) {
+    int c = 0;
+    SDL_LockSpinlock(&sTboLock);
+    if (sTboTail != sTboHead) {
+        c = (unsigned char)sTboKeys[sTboTail++ % sizeof(sTboKeys)];
+    }
+    SDL_UnlockSpinlock(&sTboLock);
+    return c;
+}
+
+/* "Copy Code" (the room's code, to give the rival): the game's thread hands the text over, the window's thread
+   puts it on the clipboard (PortInput_TboClipboard, from the overlay's frame: SDL wants the clipboard there). */
+static char sTboCopy[64];
+static int sTboCopyDue;
+static int sTboPasteDue; /* the keypad's PASTE (Join Room): the clipboard's room code, typed on the window's thread */
+
+void PortTbo_Copy(const char *text) {
+    SDL_LockSpinlock(&sTboLock);
+    SDL_strlcpy(sTboCopy, text != NULL ? text : "", sizeof(sTboCopy));
+    sTboCopyDue = sTboCopy[0] != '\0';
+    SDL_UnlockSpinlock(&sTboLock);
+}
+
+void PortTbo_Paste(void) {
+    SDL_LockSpinlock(&sTboLock);
+    sTboPasteDue = 1;
+    SDL_UnlockSpinlock(&sTboLock);
+}
+
+/* The room code in a copied text: the last run of exactly six letters and digits ("Room code: MFT8FD"); without
+   one, every letter and digit of it. Typed as if by hand. */
+static void tbo_paste_code(const char *clip) {
+    const unsigned char *p = (const unsigned char *)clip, *code = NULL;
+    int run = 0, n = 0;
+
+    for (; p != NULL && *p; p++) {
+        int alnum = (*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z');
+        run = alnum ? run + 1 : 0;
+        if (run == 6 && !((p[1] >= '0' && p[1] <= '9') || (p[1] >= 'A' && p[1] <= 'Z') || (p[1] >= 'a' && p[1] <= 'z'))) {
+            code = p - 5;
+        }
+    }
+    if (code != NULL) {
+        for (n = 0; n < 6; n++) {
+            tbo_push(code[n]);
+        }
+        return;
+    }
+    for (p = (const unsigned char *)clip; p != NULL && *p && n < 48; p++) {
+        if ((*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) {
+            tbo_push(*p);
+            n++;
+        }
+    }
+}
+
+void PortInput_TboClipboard(void) {
+    char text[sizeof(sTboCopy)];
+    int due, paste;
+    SDL_LockSpinlock(&sTboLock);
+    due = sTboCopyDue;
+    sTboCopyDue = 0;
+    paste = sTboPasteDue;
+    sTboPasteDue = 0;
+    memcpy(text, sTboCopy, sizeof(text));
+    SDL_UnlockSpinlock(&sTboLock);
+    if (due) {
+        SDL_SetClipboardText(text);
+    }
+    if (paste) {
+        char *clip = SDL_GetClipboardText();
+        tbo_paste_code(clip);
+        SDL_free(clip);
+    }
+}
+
+/* 1: the event was the keypad's. Only plain characters (32..126) are typed: a name or a room code. */
+int PortInput_TboEvent(const SDL_Event *ev) {
+    if (!gPortTboTyping) {
+        return 0;
+    }
+    if (ev->type == SDL_EVENT_TEXT_INPUT) {
+        const unsigned char *p = (const unsigned char *)ev->text.text;
+        for (; p != NULL && *p; p++) {
+            if (*p >= 32 && *p < 127) {
+                tbo_push(*p);
+            }
+        }
+        return 1;
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN) {
+        SDL_Scancode sc = ev->key.scancode;
+        if (sc == SDL_SCANCODE_V && (ev->key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) && !ev->key.repeat) {
+            /* Ctrl+V (Cmd+V): the clipboard's text, as if typed (a room code copied from a message); only its
+               plain characters, and no more than the keypad can hold */
+            char *clip = SDL_GetClipboardText();
+            const unsigned char *p = (const unsigned char *)clip;
+            int n = 0;
+            for (; p != NULL && *p && n < 48; p++) {
+                if (*p >= 32 && *p < 127) {
+                    tbo_push(*p);
+                    n++;
+                }
+            }
+            SDL_free(clip);
+            return 1;
+        }
+        if (sc == SDL_SCANCODE_BACKSPACE) {
+            tbo_push(8);
+        } else if ((sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) && !ev->key.repeat) {
+            tbo_push(13);
+        } else if (sc == SDL_SCANCODE_ESCAPE && !ev->key.repeat) {
+            tbo_push(27);
+        }
+        return typing_key(sc);
+    }
+    return ev->type == SDL_EVENT_KEY_UP && typing_key(ev->key.scancode);
+}
 int *PortInput_ChatKey(void) { pthread_once(&sLoadOnce, load); return &sChatKey; }
 void PortInput_ResetDefaults(int player) { pthread_once(&sLoadOnce, load); defaults(player); }
 
@@ -369,8 +521,8 @@ static unsigned script_buttons(void) {
  * next of up, right, down, left for as long as it is held: one press, one newly pressed direction, as a tap of
  * the d-pad gives. The stick and the d-pad go on working beside it.
  *
- * A press can be made to count for more than one (setting clash_square_x, in quarters: 4, 6, 7 or 8 for 1, 1.5,
- * 1.75 or 2; 1.75 unless set; BT3_CLASH_SQUARE_X): the d-pad has four buttons to tap in turn and the stick four
+ * A press can be made to count for more than one (setting clash_square_x, in quarters: 4, 6, 7, 8 or 9 for 1, 1.5,
+ * 1.75, 2 or 2.25; 2.25 unless set; BT3_CLASH_SQUARE_X): the d-pad has four buttons to tap in turn and the stick four
  * directions a turn, Square is one button. What a press is worth beyond one is kept as credit, and whenever a
  * whole point of it is owed the stick is put in the next direction for one frame without a press: four presses at
  * 1.75 give 2, 2, 2, 1. Still at most one newly pressed direction a frame, the game's own limit, and credit does
@@ -387,19 +539,19 @@ int Port_ClashSquare(void) {
     return sClashSquare;
 }
 
-/* What a press of Square is worth in a clash, in quarters of a point (4, 6, 7 or 8). */
+/* What a press of Square is worth in a clash, in quarters of a point (4, 6, 7, 8 or 9). */
 static int sClashSquareX = -1;
 
 int Port_ClashSquareX(void) {
     if (sClashSquareX < 0) {
-        int x = getenv("BT3_CLASH_SQUARE_X") != NULL ? atoi(getenv("BT3_CLASH_SQUARE_X")) : Port_Setting("clash_square_x", 7);
-        sClashSquareX = x == 4 || x == 6 || x == 7 || x == 8 ? x : 7;
+        int x = getenv("BT3_CLASH_SQUARE_X") != NULL ? atoi(getenv("BT3_CLASH_SQUARE_X")) : Port_Setting("clash_square_x", 9);
+        sClashSquareX = x == 4 || x == 6 || x == 7 || x == 8 || x == 9 ? x : 9;
     }
     return sClashSquareX;
 }
 
 void Port_ClashSquareXSet(int quarters) {
-    sClashSquareX = quarters == 4 || quarters == 6 || quarters == 8 ? quarters : 7;
+    sClashSquareX = quarters == 4 || quarters == 6 || quarters == 7 || quarters == 8 || quarters == 9 ? quarters : 9;
     Port_SettingSave("clash_square_x", sClashSquareX);
 }
 
@@ -794,7 +946,8 @@ int Port_PadRead(int socket, unsigned char *data) {
             const bool *ks = SDL_GetKeyboardState(NULL);
             const int *k = sKeys[socket];
             for (a = 0; a < PORT_ACTIONS; a++) {
-                if (k[a] > 0 && k[a] < SDL_SCANCODE_COUNT && ks[k[a]]) {
+                /* (upstream: while Tenkaichi Budokai Online's keypad takes text, its typing keys are not the game's) */
+                if (k[a] > 0 && k[a] < SDL_SCANCODE_COUNT && ks[k[a]] && !(gPortTboTyping && typing_key(k[a]))) {
                     held |= 1u << a;
                 }
             }

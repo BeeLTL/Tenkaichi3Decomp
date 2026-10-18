@@ -228,6 +228,10 @@ class Bt3Saves {
 
   // ---- the engine says the card is whole ---------------------------------------------------------------------------
   cardWritten() {
+    if (this.sessionActive) {  // (an online session writes its own card, net_session/: the player's saves are not it)
+      this.log('saves: an online session wrote its own card; nothing kept');
+      return;
+    }
     const files = this.readCard();  // (now: the files are whole at this moment)
     this.queue = this.queue.then(() => this.commit(files, 'the game')).catch((e) => this.say(`The save was not kept: ${e.message}`, true));
   }

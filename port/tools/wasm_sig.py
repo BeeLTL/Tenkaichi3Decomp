@@ -18,7 +18,7 @@ Every repair is listed in port/build/wasm_sig.txt. Calls through function pointe
 to compare with); a mismatch there traps at run time with the function's name in the stack.
 
 Usage: python wasm_sig.py <folder with objects>...   (rewrites <object>.sf.ll / .ll to .sig.ll and recompiles)"""
-import collections, pathlib, re, subprocess, sys
+import collections, pathlib, re, shutil, subprocess, sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import wasm_obj
@@ -171,25 +171,37 @@ def fix_module(text, wrong, tag):
 def main():
     folders = [pathlib.Path(f) for f in (sys.argv[1:] or [ROOT / "port/build/obj_wasm", ROOT / "port/build/obj_wasm_data"])]
     objs = [o for f in folders for o in sorted(f.glob("*.o"))]
+    # An object repaired before is not what its IR declares any more. Its imports AS COMPILED are what the repair
+    # must be measured against, and the repair is always made again from the unrepaired IR, with every mismatch at
+    # once: so a second pass of the link (new stubs) and a definition that changed since (a stub replaced by the real
+    # function) are both repaired correctly. The object as compiled is kept beside it the first time it is replaced
+    # (<name>.o.orig: not *.o, so neither the link nor this tool takes it for an object); it is the original while
+    # it is newer than the IR (a new compile makes it stale).
+    def source_of(o):
+        return o.with_suffix(".sf.ll") if o.with_suffix(".sf.ll").exists() else o.with_suffix(".ll")
+    def original(o):
+        orig, src = o.with_name(o.name + ".orig"), source_of(o)
+        return orig if orig.exists() and src.exists() and orig.stat().st_mtime >= src.stat().st_mtime else None
     defs, imps = {}, {}
     for o in objs:
-        d, i = wasm_obj.functions(o)
+        d, _ = wasm_obj.functions(o)
         for k, v in d.items():
             defs.setdefault(k, v)
-        imps[o] = i
+        imps[o] = wasm_obj.functions(original(o) or o)[1]
     report, failed, fixed = [], 0, 0
     for o in objs:
         if "obj_wasm_data" in str(o):  # the data tables only take addresses: the type does not matter there
             continue
         wrong = {k: true_type(k, defs) for k, v in imps[o].items() if true_type(k, defs) is not None and v != true_type(k, defs)}
         if not wrong:
+            if original(o) is not None and (o.with_suffix(".sig.ll")).exists():
+                # (repaired before, nothing to repair now: the compiled original is right as it is again)
+                shutil.copyfile(original(o), o)
             continue
-        src = o.with_suffix(".sf.ll") if o.with_suffix(".sf.ll").exists() else o.with_suffix(".ll")
+        src = source_of(o)
         sig = o.with_suffix(".sig.ll")
-        # a repair already made to this same build of the object (a later pass of the link: the stubs it added can
-        # bring new mismatches) is kept: the new repairs go on top of it, not on the unrepaired IR
-        if sig.exists() and src.exists() and sig.stat().st_mtime >= src.stat().st_mtime:
-            src = sig
+        if original(o) is None:
+            shutil.copyfile(o, o.with_name(o.name + ".orig"))
         if not src.exists():
             report.append(f"{o.name}: NO IR to repair: {', '.join(sorted(wrong))}")
             failed += 1

@@ -20,6 +20,7 @@ typedef struct PortVideo {
     int frameSkip;   /* 1 = a tick's picture is left out when the machine is behind, instead of the game slowing down */
     int hudLayout;   /* a fight's HUD in a wide picture: 0 at the edges, 1 at the edges with long health bars, 2 in the middle as in 4:3 */
     int menuFont;    /* 0 Original (default), then entries in the generated font catalog */
+    int battleFont; /* 0 original battle artwork (default), otherwise a font listed for battle */
     int textFont;    /* separate font for dialogue and other shared Font_Print text */
     int smooth2d;    /* "2D filtering": 0 sharp (a PS2 pixel is a block), 1 smooth (sampled per output pixel) */
 } PortVideo;
@@ -77,7 +78,7 @@ extern int gPortInputCapture;  /* it is waiting for a key or button to bind: not
 extern int gPortChatTyping;    /* a line of the online chat is being typed: the keyboard does not reach the game */
 
 /* ui.cpp */
-int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context); /* device: the SDL GPU back end; NULL and a GL context: the OpenGL one */
+int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const char *gpu_name); /* device: the SDL GPU back end; NULL and a GL context: the OpenGL one */
 void Ui_DrawGL(void); /* the OpenGL back end: draws this frame's window with the context current */
 int Ui_Event(const SDL_Event *ev); /* 1 = the window used the event */
 int GsDraw_FrameSkip(void);       /* gs_draw.c */

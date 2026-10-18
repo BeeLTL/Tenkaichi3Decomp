@@ -1,7 +1,8 @@
 /* Test of the pipeline key (port/src/gs/gs_pipekey.c) against the code it replaced.
  *
  * REFERENCE below is a verbatim copy of the encoding as it was in gs_draw.c (blend_key, pipeline_get; upstream 0.1.31's,
- * with bit 23, the fragment shader without its depth output) and of the blend factors the OpenGL back end chose from it
+ * with bit 23, the fragment shader without its depth output, and 0.1.37's bit 9, the source scaled by its alpha in the
+ * shader) and of the blend factors the OpenGL back end chose from it
  * (gs_gl.c apply_blend), before the shared decoder existed. Every combination of the inputs is checked, with the
  * variant switched on and off (BT3_NZ):
  *   1. the new key equals the old key (the values are kept between runs, and the Vulkan back end decodes them itself);
@@ -22,9 +23,11 @@ static uint32_t ref_blend_key(uint64_t alpha, int abe) {
         int c = (A == i) - (B == i), one = D == i;
         k[i] = c == 0 ? one : c > 0 ? (one ? 5 : 2) : (one ? 4 : 3);
     }
-    return 1u | (uint32_t)k[0] << 1 | (uint32_t)k[1] << 4 | (uint32_t)C << 7;
+    return 1u | (uint32_t)k[0] << 1 | (uint32_t)k[1] << 4 | (uint32_t)C << 7 |
+           (uint32_t)(C == 0 && (k[0] == 2 || k[0] == 3) && k[1] <= 1) << 9;
 }
-static uint32_t ref_key(uint64_t alpha, int abe, uint64_t test, uint64_t zb, uint32_t m, int topo, int vu, int nz) {
+/* (upstream 0.1.35.2 pipeline_get: bit 24 the flat-shadow stencil mask, given by the caller; not in the table pass) */
+static uint32_t ref_key(uint64_t alpha, int abe, uint64_t test, uint64_t zb, uint32_t m, int topo, int vu, int nz, int shadow) {
     int zte = (test >> 16) & 1, ztst = (test >> 17) & 3, zwrite = !((zb >> 32) & 1);
     uint32_t bkey = ref_blend_key(alpha, abe), wmask, key;
     if (!zte) {
@@ -32,7 +35,8 @@ static uint32_t ref_key(uint64_t alpha, int abe, uint64_t test, uint64_t zb, uin
     }
     wmask = ((m & 0xFF) != 0xFF ? GS_CC_R : 0) | ((m & 0xFF00) != 0xFF00 ? GS_CC_G : 0) |
             ((m & 0xFF0000) != 0xFF0000 ? GS_CC_B : 0) | ((m & 0xFF000000u) != 0xFF000000u ? GS_CC_A : 0);
-    key = bkey | (uint32_t)ztst << 10 | (uint32_t)zwrite << 12 | (uint32_t)topo << 13 | wmask << 16 | (uint32_t)vu << 20;
+    key = bkey | (uint32_t)ztst << 10 | (uint32_t)zwrite << 12 | (uint32_t)topo << 13 | wmask << 16 | (uint32_t)vu << 20 |
+          (uint32_t)shadow << 24;
     if (nz && !zwrite && ztst != 3 && vu != 4) {
         key |= 1u << 23;
     }
@@ -48,6 +52,9 @@ static void ref_gl_blend(uint32_t bkey, char f[2], char *op, int *csrc) {
     for (i = 0; i < 2; i++) {
         f[i] = k[i] == 0 ? 'Z' : k[i] == 1 || k[i] == 5 ? '1' : k[i] == 4 ? 'i' : 'c';
     }
+    if (bkey & (1u << 9)) {
+        f[0] = '1'; /* (upstream 0.1.37: the shader scaled the source by its alpha) */
+    }
     *op = k[0] == 3 ? 'R' : k[1] == 3 ? 'S' : 'A';
     *csrc = C == 0 ? 0 : C == 1 ? 1 : 2;
 }
@@ -60,7 +67,7 @@ static char factor_char(GsBlendFactor f) {
 int main(void) {
     static const uint32_t channel[3] = {0x00, 0xFF, 0x0F}; /* written, masked, partly masked (counts as written) */
     unsigned long checked = 0, bad[3] = {0, 0, 0};
-    unsigned alpha, abe, test, zmsk, fb, topo, vu, nz;
+    unsigned alpha, abe, test, zmsk, fb, topo, vu, nz, sh;
 
     for (alpha = 0; alpha < 256; alpha++)
     for (abe = 0; abe < 2; abe++)
@@ -69,14 +76,16 @@ int main(void) {
     for (fb = 0; fb < 81; fb++)               /* each of the four FBMSK bytes one of channel[] */
     for (topo = 0; topo < 3; topo++)
     for (vu = 0; vu < 5; vu++)                /* 0..3 vertex sources, 4: the old code's "table pass" */
-    for (nz = 0; nz < 2; nz++) {              /* BT3_NZ: the variant without depth output allowed or not */
+    for (nz = 0; nz < 2; nz++)                /* BT3_NZ: the variant without depth output allowed or not */
+    for (sh = 0; sh < 2; sh++) {              /* the flat-shadow stencil mask (upstream 0.1.35.2) */
         uint64_t t = (uint64_t)test << 16, z = (uint64_t)zmsk << 32;
         uint32_t m = channel[fb % 3] | channel[fb / 3 % 3] << 8 | channel[fb / 9 % 3] << 16 | channel[fb / 27 % 3] << 24;
-        uint32_t want = ref_key(alpha, (int)abe, t, z, m, (int)topo, (int)vu, (int)nz), key, again;
+        uint32_t want = ref_key(alpha, (int)abe, t, z, m, (int)topo, (int)vu, (int)nz, (int)sh), key, again;
         GsPipeState s = GsPipeState_FromGs(alpha, (int)abe, t, z, m, (GsTopology)topo, vu == 4 ? GS_VERTS_GS : (GsVertexSource)vu, vu == 4);
         GsPipeState d;
 
         s.noFragDepth = nz && GsPipeState_FragDepthRedundant(&s); /* (as gs_draw.c pipeline_get) */
+        s.shadow = sh && vu != 4;                                  /* (as gs_draw.c pipeline_get) */
 
         key = GsPipeKey_Encode(&s);
         GsPipeKey_Decode(key, &d);
@@ -94,7 +103,7 @@ int main(void) {
             GsBlendDesc bd = GsBlend_Describe(d.blend);
             char nop = bd.op == GS_OP_ADD ? 'A' : bd.op == GS_OP_SUBTRACT ? 'S' : 'R';
             int nc = bd.c == GS_BLEND_C_SRC_ALPHA ? 0 : bd.c == GS_BLEND_C_DST_ALPHA ? 1 : 2;
-            ref_gl_blend(want & 0x1FF, f, &op, &csrc);
+            ref_gl_blend(want & 0x3FF, f, &op, &csrc);
             if ((factor_char(bd.srcFactor) != f[0] || factor_char(bd.dstFactor) != f[1] || nop != op || nc != csrc) && bad[2]++ < 5) {
                 printf("  blend differs for key %08x: new %c %c %c C%d, old %c %c %c C%d\n", key, factor_char(bd.srcFactor),
                        factor_char(bd.dstFactor), nop, nc, f[0], f[1], op, csrc);

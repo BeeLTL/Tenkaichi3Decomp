@@ -73,6 +73,11 @@ function magentaPng(w, h) {
     { stdio: 'ignore', env: { ...process.env, DEVSERVER_QUIET: '1' } });
   const b = await launch({ headless: true });
   try {
+    // (the checks "reached over HTTP" look in the page's resource timing list, which keeps 250 entries by default: a
+    // page that fetches more at start than that (the fonts, the gameplay fingerprint) would push the ones looked for
+    // out of it)
+    await b.send('Page.enable');
+    await b.send('Page.addScriptToEvaluateOnNewDocument', { source: 'performance.setResourceTimingBufferSize(100000);' });
     await sleep(1500);
     const ev = (e) => evaluate(b.send, e);
     const get = (n) => ev(`window.bt3Module.ccall('Bt3Ui_Get', 'number', ['string'], ['${n}'])`);

@@ -598,6 +598,30 @@ Also: a fault in the page's panel no longer ends the game (it did: a panel bug s
 engine's calls into the page catch it, log it and show a notice. Regression: demo 12/12 identical, trace unchanged on
 both renderers.
 
+### Upstream 0.1.37 merged (2026-10-18) — verified
+
+Merged from 0.1.35.2 through 0.1.35.4, 0.1.36 and 0.1.37 (33 commits): translations (a language screen, menu art,
+the game's UI text and the port's own lines; the European disc for Spanish, German, French and Italian), battle
+fonts, the online match's start line and a start without the ping-long pause, the Random item-set fix, low input
+lag with smooth motion, the clash Square worth 2.25, and the Solar Flare's whiteout (a source alpha above 0x80).
+
+- **Conflicts:** two, both from the whiteout fix (upstream's `blend_key` bit 9 and its GL blend). Carried into the
+  shared pipeline key (`gs_pipekey.c`: `GsBlend.srcInShader`, the same bit 9, so upstream's Vulkan back end reads
+  our keys alike; `GsBlend_Describe` takes the source with factor one), and `Params.extra.y` set by both browser
+  back ends (`gs_gl.c`, `web/gs_wgpu.c`); `gs.frag`'s line merged as upstream wrote it. `port/tests/pipekey`: the
+  reference moved to 0.1.37's encoding; PASS, 39,813,120 combinations.
+- **ui.cpp's new calls:** `Port_UiBanner` (net.c at every online match's start: it would have been an aborting stub)
+  drawn by the page (`net_overlay.js`); `Ui_LanguageChosen` (the language screen) answered in `web_ui.c`. Stubs back
+  to 103.
+- **The page:** the bundled translation catalogs shipped like the fonts (`web/translations`, at `/translations`);
+  Battle font, Language and "Show the language screen at every start" in the Video tab (the language list made on
+  the game's thread, as the fonts').
+- **Pictures:** boot 12 / 12 identical on both renderers. The demo fight differs (0 / 12) in its additive glows:
+  the whiteout fix brightens them as upstream intends. Checked: the merged build with bit 9 switched off gives
+  12 / 12 identical to 0.1.35.2 on WebGL 2 and on WebGPU, so every difference is that fix. The fight trace is
+  unchanged (`8ad198bf58dbed33`).
+- **Tests:** WGSL (11 shaders), page tests, `settings_more`, `signal_setting`, the Worker's, O2 to O5: all pass.
+
 ### Upstream 0.1.31 integrated (2026-10-12) — verified
 **Upstream commit**: `fff151eb989ecaa5a0aaeb637984e33e07ef3ad9` (z3xox/Tenkaichi3Decomp `main`, "Release 0.1.31"): 39
 commits on top of the previous base `80e0dd4` (0.1.25 to 0.1.31). **Strategy**: a merge of `origin/main` into
@@ -681,12 +705,17 @@ SELECT, or the bound one) calls the page's `toggle`.
 | Full screen (F11) | page button (browser Fullscreen API; a browser grants it only from a click, so the saved setting cannot apply it at start) |
 | Controls: player, controller, reset, 24 bindings + the settings key; clash option and its worth | panel, same engine values |
 | Cheats: unlock everything | panel (offered once a save is loaded; reports the result) |
-| Meter (frame rate, game speed) | Developer section (with renderer, GPU, resolution, frame, WebGPU errors, screenshot, restart with start-up switches) |
+| Meter (frame rate, game speed) | over the picture (2026-10-18, `net_overlay.js`): Video > Meter, the pictures a second and the game's speed as natively, and the connection during an online match; the Developer section keeps its own numbers |
 | Display (monitor choice) | not offered: the browser decides |
 | Smooth motion (60 / 120 / 240) | **not offered**: measured in the browser, it slows the game (speed 90 % at "60", 74 % at "120") and the in-between pictures do not reach the screen (a page shows one picture per animation frame). The engine's F9 still switches it, with that effect |
-| Online play window, players' names, connection meter | online play is not in the browser build: the main menu's Dragon Net Battle entry is hidden (`BT3_MENU_ITEM4=0`) |
-| Names of stages / songs added from outside the disc | the game prints them with its own font (its fallback without the overlay); the browser data has none |
+| Online play window, players' names, connection meter | the game's own Tenkaichi Budokai Online menu (P5); the Dragon Net Battle entry stays hidden (`BT3_MENU_ITEM4=0`) |
+| Names of stages / songs added from outside the disc | drawn by the page over the Map Select and the BGM Select (2026-10-18, `screen_overlay.js`, `Bt3Ui_MenuNames`), in the game's rectangle, cream with a dark outline as natively; seen through the real menus with an added stage and song (`port/tests/web/screen_overlay.js`) |
+| Side bars (border art beside a picture narrower than the window) | drawn by the page beside the picture in full screen and in touch play (2026-10-18, `screen_overlay.js`): Video > Side bars, upstream's art (`port/assets/bars`) |
 | Notices (`Port_UiNotice`) | a line under the game |
+| Menu font, Dialogue / UI font (UI tab) | Video tab, under Text (2026-10-16): the engine's own list of `fonts.tsv` (made on the game's thread: reading it can wait for a file over HTTP, which a call from the page cannot); a choice is applied and kept as natively, the menu font once the labels made from the disc are there |
+| Low input lag (experimental) | Video tab (2026-10-16), the same engine setting `late_input` |
+| Deadzone per stick, vibration on / strength / Test (controller section, per player) | Controls tab, for the player chosen there (2026-10-16); the live stick picture is the controller test's (`controllers.js`). Checked with SDL's virtual controller (`BT3_STICK_TEST`, `BT3_RUMBLE_LOG`): `port/tests/web/settings_more.js`; a real controller's motors not felt |
+| Online chat and connection meter | `net_overlay.js` over the game (P5, docs/BROWSER_ONLINE_PLAN.md); chat, chat size and meter in the Online tab |
 
 **Keyboard and focus**: SDL hears the keyboard on the canvas only (`SDL_EMSCRIPTEN_KEYBOARD_ELEMENT=#canvas`; SDL's
 default, the whole window, swallowed Tab and the arrows and passed the page's typing to the game). Panel: tabs with

@@ -196,6 +196,9 @@
 <script src="bt3_data.js"></script>
 <script src="dashboard.js"></script>
 <script src="toasts.js"></script>
+<script src="net_web.js"></script>
+<script src="net_overlay.js"></script>
+<script src="screen_overlay.js"></script>
 <script src="controllers.js"></script>
 <script src="saves.js"></script>
 <script src="touch.js"></script>
@@ -365,12 +368,16 @@ async function start() {
     // SDL hears the keyboard on the canvas only (its default is the whole window): keys typed in the page's controls do
     // not reach the game, and SDL does not swallow Tab and the arrows of the page.
     SDL_EMSCRIPTEN_KEYBOARD_ELEMENT: '#canvas',
-    // Dragon Net Battle (main-menu item 4): online play is not in the browser build (port/src/web/net_off.c)
+    // Dragon Net Battle (main-menu item 4): its window (the PC's ImGui lobby) is not in the browser build; the page's own
+    // comes later (docs/BROWSER_ONLINE_PLAN.md, P5). Online play itself (net.c, port/src/web/net_web.c) is.
     BT3_MENU_ITEM4: '0',
     // Texture packs (gs_texpack.c): natively the folder `textures` next to the program; here the program has no folder
     // of its own, so the data folder's `textures` (read over HTTP, web_fs.c). ?env=BT3_TEXTURES=... names another.
     BT3_TEXTURES: 'gamedata/textures',
   };
+  // A relaunch (online play: a session starts or ends, net_web.js): the program's BT3_* variables as the old one left
+  // them replace the page's own, as the environment of a program started again; nothing of the address bar's ?env.
+  const relaunched = Bt3Net.takeRelaunch();
   // NAME=value,NAME=value; a part without "=" belongs to the value before it (BT3_PAD=2800:start,2950:cross)
   let last = null;
   for (const kv of (q.get('env') || '').split(',').filter(Boolean)) {
@@ -379,6 +386,12 @@ async function start() {
     last = kv.slice(0, i);
     env[last] = kv.slice(i + 1);
   }
+  if (relaunched) {
+    for (const k of Object.keys(env)) if (k.startsWith('BT3_')) delete env[k];
+    Object.assign(env, relaunched);
+    log(`online play: started again ${env.BT3_NET_SESSION === '1' ? 'for a session' : 'after a session'} (${Object.keys(relaunched).length} variables)`);
+  }
+  saves.sessionActive = env.BT3_NET_SESSION === '1';  // (a session has a card of its own, net_session: nothing to keep)
   let s = step('loading bt3.js');
   await new Promise((res, rej) => {
     const el = document.createElement('script');
@@ -391,9 +404,44 @@ async function start() {
   // The two programs plat_mem.c reads in a constructor, before main (where a read cannot wait): fetched first.
   const early = ['disc/SLUS_216.78', 'disc/BIN/DBZP.BIN'];
   const pre = {};
+  // The gameplay fingerprint of the data folder (online play's "two unmodded games" rule, plat_fprint.c), which the
+  // browser cannot work out itself: the data server does (port/web/devserver.py, /<data folder>/.bt3-fingerprint).
+  // The game compares it with the original disc's (web_verify.c). Asked now, used when the game starts.
+  const fingerprint = fetch(dataBase.replace(/\/?$/, '/') + '.bt3-fingerprint', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : r.text().then((t) => ({ why: `HTTP ${r.status}${t ? ': ' + t.trim() : ''}` }))), (e) => ({ why: e.message }));
   s = step('fetching the game\'s programs from the data folder');
   for (const rel of early) pre[rel] = await data.whole(rel);
+  // where the game's own variables lie in bt3.wasm (port/tools/wasm_state.py): what state.c's checksum covers
+  // (BT3_HASH, online play's sync check). Without it the checksum covers the game's heap only, and says so.
+  const stateList = await fetch('bt3.mem').then((r) => (r.ok ? r.arrayBuffer() : null), () => null);
+  // Tenkaichi Budokai Online's pictures (port/tbo/ui): put at /tbo/ui, where the game looks for them (gs_draw.c)
+  const tboNames = await fetch('tbo/ui/files.txt').then((r) => (r.ok ? r.text() : ''), () => '');
+  const tboFiles = await Promise.all(tboNames.split('\n').filter(Boolean).map((n) =>
+    fetch('tbo/ui/' + n).then((r) => (r.ok ? r.arrayBuffer() : null), () => null).then((b) => [n, b])));
+  if (tboNames && tboFiles.some(([, b]) => !b)) log(`tbo: ${tboFiles.filter(([, b]) => !b).length} of its pictures could not be fetched`);
+  // the TrueType fonts (port/third_party/fonts): put at /fonts, where the game looks for them (menu_text.c); Tenkaichi
+  // Budokai Online writes its words with them
+  const fontNames = await fetch('fonts/files.txt').then((r) => (r.ok ? r.text() : ''), () => '');
+  const fontFiles = await Promise.all(fontNames.split('\n').filter(Boolean).map((n) =>
+    fetch('fonts/' + n).then((r) => (r.ok ? r.arrayBuffer() : null), () => null).then((b) => [n, b])));
+  if (!fontNames || fontFiles.some(([, b]) => !b)) log(`fonts: ${fontNames ? `${fontFiles.filter(([, b]) => !b).length} could not be fetched` : 'none found (fonts/files.txt)'}: Tenkaichi Budokai Online's screens have no words without them`);
+  // the bundled translation catalogs (port/translations): put at /translations, where the game looks for them and
+  // copies them into the data folder's game-text/translations (menu_translation.c, docs/port/translations.md)
+  const trNames = await fetch('translations/files.txt').then((r) => (r.ok ? r.text() : ''), () => '');
+  const trFiles = await Promise.all(trNames.split('\n').filter(Boolean).map((n) =>
+    fetch('translations/' + n).then((r) => (r.ok ? r.arrayBuffer() : null), () => null).then((b) => [n, b])));
+  if (!trNames || trFiles.some(([, b]) => !b)) log(`translations: ${trNames ? `${trFiles.filter(([, b]) => !b).length} could not be fetched` : 'none found (translations/files.txt)'}: the English catalogs are made from the disc or built in`);
   s(`fetched ${early.map((r) => `${r} (${pre[r].length} bytes)`).join(', ')}`, 'ok');
+  {
+    const fp = await fingerprint;
+    if (fp && fp.version === 1 && /^[0-9a-f]{16}$/.test(fp.main) && Array.isArray(fp.parts) && fp.parts.length === 7 &&
+        fp.parts.every((p) => /^[0-9a-f]{16}$/.test(p))) {
+      env.BT3_WEB_FPRINT = [fp.main, ...fp.parts].join(',');
+    } else {
+      log(`gameplay fingerprint: not given by the data server (${(fp && fp.why) || 'an answer of another form'}): ` +
+          'online play needs it (its rule: two unmodded games); port/web/devserver.py and play.py give it');
+    }
+  }
   s = step('compiling and instantiating bt3.wasm');
   const t0 = performance.now();
   try {
@@ -409,9 +457,23 @@ async function start() {
           m.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
           m.FS.writeFile(path, pre[rel]);
         }
+        if (stateList) m.FS.writeFile('/bt3.mem', new Uint8Array(stateList));
+        if (tboFiles.length) m.FS.mkdirTree('/tbo/ui');
+        for (const [n, b] of tboFiles) if (b) m.FS.writeFile('/tbo/ui/' + n, new Uint8Array(b));
+        for (const [n, b] of fontFiles) {
+          if (!b) continue;
+          m.FS.mkdirTree(('/fonts/' + n).slice(0, ('/fonts/' + n).lastIndexOf('/')));
+          m.FS.writeFile('/fonts/' + n, new Uint8Array(b));
+        }
+        for (const [n, b] of trFiles) {
+          if (!b) continue;
+          m.FS.mkdirTree(('/translations/' + n).slice(0, ('/translations/' + n).lastIndexOf('/')));
+          m.FS.writeFile('/translations/' + n, new Uint8Array(b));
+        }
         Object.assign(m.ENV, env);
         Bt3Settings.restore(m.FS);  // the settings saved by an earlier visit
         settings.attach(m);
+        if (typeof globalThis.bt3TestPreRun === 'function') globalThis.bt3TestPreRun(m);  // (tests: files for the game, e.g. BT3_NET_SCRIPT)
       }],
     });
   } catch (e) {
@@ -448,7 +510,7 @@ checks().then((ok) => {
   btn.disabled = false;
   btn.textContent = 'Start';
   btn.onclick = () => start().catch((e) => stop('Start-up failed', (e && e.stack) || String(e)));
-  if (q.get('autostart')) btn.click();
+  if (q.get('autostart') || Bt3Net.relaunchPending()) btn.click();  // (a relaunch starts at once, as a program would)
 });
 </script>
 </body>

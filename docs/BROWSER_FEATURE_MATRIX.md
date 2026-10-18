@@ -14,7 +14,7 @@ Environment:
 | Boot, intro movie, title, menus | Yes | Yes | boot runs, both renderers |
 | Battles (demo, versus) | Yes | Yes | demo runs; trace `8ad198bf58dbed33` |
 | WebGL 2 renderer (default) | Yes | — (native: GL, Vulkan) | demo/boot shots |
-| WebGPU renderer (`?gpu=webgpu`) | Yes | — | demo/boot shots identical to WebGL 2 |
+| WebGPU renderer (`?gpu=webgpu`) | Yes | — | the same game trace as WebGL 2; boot shots identical to WebGL 2's, the demo fight's not pixel for pixel (each renderer is compared with its own earlier shots). Upstream 0.1.35.2's flat-shadow stencil needs `depth32float-stencil8` (requested; without it shadows lack the mask, said in the log) |
 | Widescreen, HUD layout, effect switches | Yes (page settings panel) | Yes (ImGui window) | status doc, settings section |
 | Settings kept | Yes (localStorage) | settings file | status doc |
 | Controllers: set-up, presets, live view, test | Yes | ImGui | `controllers.js` |
@@ -30,7 +30,7 @@ Environment:
 | Added stages and songs | **Found** in the data folder's `stages` / `songs` over HTTP (M3a); unavailable and said when the server does not list folders. **A battle on an added stage and playing an added song: not seen** (audit §6a) | Yes | `web/extras.js` |
 | Texture packs | **Yes**: the data folder's `textures`, found and used (M3b; a replacement seen on WebGL 2 and WebGPU) | Yes | `web/extras.js`, bench screenshots |
 | `mods/` file overrides | **Probably yes, untested** | Yes | code reading |
-| Online play | No: menu item hidden, `net_off.c` | Yes | by design |
+| Online play | **Yes, tested on one machine** (docs/BROWSER_ONLINE_PLAN.md, P0–P5): upstream's `net.c` over a WebRTC data channel; the game's own Tenkaichi Budokai Online menu (Create Room / Join Room, Copy Code, paste); room codes through our signalling Worker (`port/web/signal`, not deployed); the session by a page reload; chat and connection meter. Input delay only (no rollback), no Quick Match; two machines and the relay not tested yet | Yes (with rollback) | `web/net_o2.js` … `net_o5.js`, `signal/test.mjs` |
 | Vulkan, installer, release packaging | No | Yes | by design |
 
 ## 2. Baseline test results

@@ -195,6 +195,10 @@ typedef struct GsBlend {
     int enabled;  /* PRIM.ABE */
     GsBlendK src, dst;
     GsBlendC c;
+    int srcInShader; /* (upstream 0.1.37, key bit 9) the shader scales the source by its own alpha and the blend takes
+                        it with factor one: the GS takes a source alpha above 0x80 as a factor above one (up to
+                        255 / 128), which a blend factor cannot be (the Solar Flare's whiteout). Where C is the source
+                        alpha, only the source is scaled by it, and the destination by nothing or one. */
 } GsBlend;
 
 /* TEST.ZTST (with the test off counted as ALWAYS). */
@@ -212,6 +216,9 @@ typedef struct GsPipeState {
     GsVertexSource vertices;
     int tablePass;       /* the full-screen table pass: blend and write mask only, no vertices, no depth */
     int noFragDepth;     /* gs.frag without its depth output (gsnz.frag): see GsPipeState_FragDepthRedundant */
+    int shadow;          /* the flat-shadow stencil mask (upstream PR 104): a pixel is drawn only where the stencil is 0, and
+                            the stencil is then raised, so overlapping triangles of one shadow darken it once; the back
+                            end clears the stencil where a run of such draws starts on a target */
 } GsPipeState;
 
 /* gs_pipekey.c. FromGs: the state of a draw from the GS registers of its context (ALPHA, PRIM.ABE, TEST, ZBUF, the
@@ -223,6 +230,8 @@ GsPipeState GsPipeState_FromGs(uint64_t alpha, int abe, uint64_t test, uint64_t 
 int GsPipeState_FragDepthRedundant(const GsPipeState *s);
 uint32_t GsPipeKey_Encode(const GsPipeState *s);
 void GsPipeKey_Decode(uint32_t key, GsPipeState *s);
+/* 1 = a draw of this pipeline has the shader scale its colour by its alpha (Params extra.y; GsBlend.srcInShader) */
+int GsPipeKey_SrcInShader(uint32_t key);
 
 /* The blend a GPU can do for a GsBlend: dst' = op(src * srcFactor, dst * dstFactor), factors from C. -C is the
    subtracting operation; 1 + C is approximated by 1 (blend factors do not go above one). The alpha channel is not

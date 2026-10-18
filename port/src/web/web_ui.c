@@ -40,6 +40,7 @@ void Port_ClashSquareXSet(int quarters);
 void Port_SettingSave(const char *name, int value);
 void Port_SettingsWrite(void);
 int Port_Setting(const char *name, int def);
+void Port_SettingText(const char *name, const char *def, char *out, int size); /* plat_settings.c */
 int Port_GameSpeed(void);               /* plat_stub.c: the player's own game speed, percent (never used online) */
 void Port_GameSpeedSet(int percent);
 void Port_AudioRefresh(void);           /* snd_adx.c: playing streams follow the volumes and the speed at once */
@@ -97,6 +98,18 @@ VIDEO_FIELD(stage)
 VIDEO_FIELD(hudLayout)
 VIDEO_FIELD(frameSkip)
 VIDEO_FIELD(texPack)
+VIDEO_FIELD(menuFont)
+VIDEO_FIELD(textFont)
+VIDEO_FIELD(battleFont)
+int Port_LateInput(void);           /* plat_stub.c: "Low input lag", the blanks are waited for before the pad read */
+void Port_LateInputSet(int on);
+/* the native window's side bars (ui.cpp bars_draw: its art beside a picture narrower than the window); the page draws
+   them beside the picture in full screen and in touch play (screen_overlay.js) */
+static int get_side_bars(void) { return Port_Setting("side_bars", 0) != 0; }
+static void set_side_bars(int x) { Port_SettingSave("side_bars", x != 0); Port_SettingsWrite(); }
+static int get_language_prompt(void) { return Port_Setting("language_prompt_always", 0) != 0; }
+static void set_language_prompt(int x) { Port_SettingSave("language_prompt_always", x != 0); Port_SettingsWrite(); }
+static void set_late_input(int x) { Port_LateInputSet(x); Port_SettingsWrite(); } /* (the native window writes the file on closing) */
 static int get_texPackCount(void) { PortVideo v; GsGpu_GetSettings(&v); return v.texPackCount; }
 /* Content added from outside the disc: what was found, and whether it has been looked for yet (web_extras.c) */
 extern int PortStages_Count(void), PortSongs_Count(void), WebExtras_Checked(void);
@@ -149,6 +162,14 @@ extern int Port_Menus43(void);
 extern void Port_Menus43Set(int on);
 static int get_skip_logos(void) { return Port_Setting("skip_logos", 0) != 0; }
 static void set_skip_logos(int x) { Port_SettingSave("skip_logos", x != 0); Port_SettingsWrite(); }
+/* online play's chat (net_chat.c: on by default) and the size of its box, the meter over the game (ui.cpp's names) */
+#include "gs/net_chat.h"
+static int get_chat(void) { return PortChat_Enabled(); }
+static void set_chat(int x) { PortChat_EnabledSet(x != 0); }
+static int get_chat_size(void) { int v = Port_Setting("chat_size", 1); return v < 0 || v > 2 ? 1 : v; }
+static void set_chat_size(int x) { Port_SettingSave("chat_size", x < 0 || x > 2 ? 1 : x); Port_SettingsWrite(); }
+static int get_meter(void) { return Port_Setting("meter", 0) != 0; }
+static void set_meter(int x) { Port_SettingSave("meter", x != 0); Port_SettingsWrite(); }
 static int get_skip_intro(void) { return Port_Setting("skip_intro", 0) != 0; }
 static void set_skip_intro(int x) { Port_SettingSave("skip_intro", x != 0); Port_SettingsWrite(); }
 static int get_skip_copyright(void) { return Port_Setting("skip_copyright", 0) != 0; }
@@ -166,6 +187,17 @@ static int get_unlock_done(void) { return gPortUnlockDone; }
 /* (the unlock is carried out only with a save loaded: headless.c drops the request otherwise) */
 static int get_save_loaded(void) { return gSaveData != NULL; }
 static int get_frame(void) { return (int)gGsFrame; }
+/* online play (net.c): a match is on; it is a session (started from a lobby); the session's start-up is over (the
+   character select is reached: headless.c Port_NetArrived) */
+extern int Port_NetActive(void), Port_NetSession(void), Port_NetWarp(void);
+/* Not asked before the game's first blank: the first call of Port_NetActive starts the match (net.c net_start: the
+   greeting, with waits), and it has to come from the game's own thread. Asked from the page (the panel reads every
+   value when the engine is ready, during the game's start-up), its waits cannot suspend: the greeting broke off and
+   the session went on half connected ("the connection to the other player was lost", blank 1). */
+extern unsigned gPortVBlanks;
+static int get_net_active(void) { return gPortVBlanks > 0 && Port_NetActive(); }
+static int get_net_session(void) { return gPortVBlanks > 0 && Port_NetSession(); }
+static int get_net_arrived(void) { return gPortVBlanks > 0 && Port_NetSession() && !Port_NetWarp(); }
 static int get_vblanks(void) { return (int)gPortLiveBlanks; }
 static int get_interp_shown(void) { return (int)gInterpShown; }
 static int get_webgpu_errors(void) { return (int)GsWgpu_DeviceErrors(); }
@@ -185,6 +217,12 @@ static const struct {
     {"scale", get_scale, set_scale},
     {"aspect_milli", get_aspectMilli, set_aspectMilli},
     {"smooth_2d", get_smooth2d, set_smooth2d},
+    {"menu_font_id", get_menuFont, set_menuFont},
+    {"text_font_id", get_textFont, set_textFont},
+    {"battle_font_id", get_battleFont, set_battleFont},
+    {"language_prompt_always", get_language_prompt, set_language_prompt},
+    {"side_bars", get_side_bars, set_side_bars},
+    {"late_input", Port_LateInput, set_late_input},
     {"fx_off", get_fxOff, set_fxOff},
     {"glow", get_glow, set_glow},
     {"music", get_music, set_music},
@@ -213,6 +251,12 @@ static const struct {
     {"unlock_done", get_unlock_done, NULL},
     {"save_loaded", get_save_loaded, NULL},
     {"frame", get_frame, NULL},
+    {"chat", get_chat, set_chat},
+    {"chat_size", get_chat_size, set_chat_size},
+    {"meter", get_meter, set_meter},
+    {"net_active", get_net_active, NULL},
+    {"net_session", get_net_session, NULL},
+    {"net_arrived", get_net_arrived, NULL},
     {"vblanks", get_vblanks, NULL},
     {"interp_shown", get_interp_shown, NULL},
     {"webgpu_errors", get_webgpu_errors, NULL},
@@ -236,7 +280,7 @@ static int setting_index(const char *name) {
 
 /* ---- the queue of changes ------------------------------------------------------------------------------------- */
 
-typedef enum { REQ_SETTING, REQ_UNLOCK_ALL, REQ_RESET_CONTROLS, REQ_RESET_KEYS, REQ_RESET_PADS, REQ_SCREENSHOT } RequestKind;
+typedef enum { REQ_SETTING, REQ_UNLOCK_ALL, REQ_RESET_CONTROLS, REQ_RESET_KEYS, REQ_RESET_PADS, REQ_SCREENSHOT, REQ_NET_LAUNCH, REQ_FONT_LIST } RequestKind;
 static struct {
     RequestKind kind;
     int index, value;
@@ -286,6 +330,7 @@ static void reset_half(int keys, int player) {
     PortInput_Save();
 }
 
+static void font_lists_make(void);
 static void queue_apply(void) {
     int i;
     for (i = 0; i < sQueued; i++) {
@@ -296,6 +341,8 @@ static void queue_apply(void) {
         case REQ_RESET_KEYS:
         case REQ_RESET_PADS: reset_half(sQueue[i].kind == REQ_RESET_KEYS, sQueue[i].value); break;
         case REQ_SCREENSHOT: screenshot(); break;
+        case REQ_NET_LAUNCH: { extern void Port_LobbyLaunch(void); Port_LobbyLaunch(); } break; /* (does not return) */
+        case REQ_FONT_LIST: font_lists_make(); break; /* (the page's copy: Bt3Ui_FontList) */
         }
     }
     sQueued = 0;
@@ -366,20 +413,323 @@ static int capture_event(const SDL_Event *ev) {
 
 /* ---- ui.h --------------------------------------------------------------------------------------------------- */
 
-int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
-    (void)window; (void)device; (void)gl_context;
+int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const char *gpu_name) {
+    (void)window; (void)device; (void)gl_context; (void)gpu_name; /* (the page shows the GPU's name itself: dashboard.js) */
     sEventType = SDL_RegisterEvents(1);
     if (sEventType == 0) {
         fprintf(stderr, "bt3: no SDL event for the page's settings: %s\n", SDL_GetError());
         return 0;
     }
+    /* the names of stages and songs added from outside the disc: drawn by the page over the menus (Bt3Ui_MenuNames,
+       screen_overlay.js), as the native window draws them, instead of the game's plain fallback font */
+    gUiNameReady = 1;
+    gUiSongReady = 1;
     page_call("ready", 0);
     return 1;
 }
 
+/* ---- what the native window draws over and beside the picture (ui.cpp), for the page (screen_overlay.js) ----
+   The picture's rectangle in the canvas (the back ends fill gUiPresent*: gs_gl.c, web/gs_wgpu.c) and the name of an
+   added stage or song the menu shows now, its rectangle in the game's 512 x 448:
+   "px,py,pw,ph" then a line "stage|song<TAB>x<TAB>y<TAB>w<TAB>h<TAB>lit<TAB>name" for each name shown. */
+extern const char *PortStages_Name(int index), *PortSongs_Name(int index);
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_MenuNames(void) {
+    static char out[1024];
+    size_t used = (size_t)snprintf(out, sizeof(out), "%d,%d,%d,%d", gUiPresentX, gUiPresentY, gUiPresentW, gUiPresentH);
+    if (gUiNameIdx >= 0 && gUiNameIdx < PortStages_Count() && used < sizeof(out)) {
+        used += (size_t)snprintf(out + used, sizeof(out) - used, "\nstage\t%d\t%d\t%d\t%d\t0\t%s", gUiNameX, gUiNameY, gUiNameW, gUiNameH,
+                                 PortStages_Name(gUiNameIdx));
+    }
+    if (gUiSongIdx >= 0 && gUiSongIdx < PortSongs_Count() && used < sizeof(out)) {
+        snprintf(out + used, sizeof(out) - used, "\nsong\t%d\t%d\t%d\t%d\t%d\t%s", gUiSongX, gUiSongY, gUiSongW, gUiSongH, gUiSongLit != 0,
+                 PortSongs_Name(gUiSongIdx));
+    }
+    return out;
+}
+
+/* ---- Tenkaichi Budokai Online's keypads (src/menu/port_tbo.c: a name, a room code) -------------------------------
+   Natively the settings window (gs/ui.cpp) does this; the browser build has the page instead:
+     - while a keypad takes text (gPortTboTyping) and the page's panel is closed, SDL's text input is on and what is
+       typed goes to the keypad (PortInput_TboEvent, as ui.cpp does);
+     - "Copy Code" puts the code on SDL's clipboard (PortInput_TboClipboard), which in the browser is SDL's own, not
+       the system's: the page is told (copy) and puts it on the system clipboard;
+     - Ctrl+V and the keypad's PASTE: SDL keeps Ctrl+V from the browser, so the page takes the browser's paste itself
+       and hands it over (Bt3Ui_TboPaste); PASTE takes the last text the page saw pasted or copied. */
+extern int gPortTboTyping;
+extern int PortInput_TboEvent(const SDL_Event *ev);
+extern void PortInput_TboClipboard(void);
+static int sClipFromPage; /* the clipboard's last change was the page's own (not to be handed back) */
+
+EM_JS(void, page_copy, (const char *text), {
+    if (Module.bt3Ui && typeof Module.bt3Ui.copy === 'function') Module.bt3Ui.copy(UTF8ToString(text));
+});
+
+static void tbo_sync(void) {
+    static int on;
+    int want = gPortTboTyping && !gPortOverlayOpen;
+    SDL_Window *w = SDL_GetKeyboardFocus();
+    if (w == NULL) {
+        int n = 0;
+        SDL_Window **all = SDL_GetWindows(&n);
+        w = all != NULL && n > 0 ? all[0] : NULL;
+        SDL_free(all);
+    }
+    if (want != on && w != NULL) {
+        if (want) {
+            SDL_StartTextInput(w);
+        } else {
+            SDL_StopTextInput(w);
+        }
+        on = want;
+    }
+    PortInput_TboClipboard();
+}
+
+/* The page: text the browser pasted (Ctrl+V on the game). Kept as the clipboard's (the keypad's PASTE) and, while
+   a keypad takes text, typed into it as natively (printable characters, at most 48). 1 = typed. */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_TboPaste(const char *text) {
+    char line[49];
+    int n = 0;
+    const unsigned char *p = (const unsigned char *)text;
+    SDL_Event ev;
+
+    sClipFromPage = 1;
+    SDL_SetClipboardText(text != NULL ? text : "");
+    if (!gPortTboTyping || gPortOverlayOpen) {
+        return 0;
+    }
+    for (; p != NULL && *p && n < 48; p++) {
+        if (*p >= 32 && *p < 127) {
+            line[n++] = (char)*p;
+        }
+    }
+    line[n] = '\0';
+    SDL_zero(ev);
+    ev.type = SDL_EVENT_TEXT_INPUT;
+    ev.text.text = line;
+    return PortInput_TboEvent(&ev);
+}
+
+/* The page: the system clipboard's text, when it could read it (the keypad's PASTE takes it). */
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_Clipboard(const char *text) {
+    sClipFromPage = 1;
+    SDL_SetClipboardText(text != NULL ? text : "");
+}
+
+/* ---- online play's chat and connection meter (natively ui.cpp's chat_draw / meter_draw; the page draws them,
+   port/web/net_overlay.js). The chat key (Tab by default, PortInput_ChatKey) opens the line during a match: the page
+   is told (chatOpen), takes the keyboard (gPortChatTyping: not the game's meanwhile) and gives it back (Bt3Ui_ChatClose). */
+extern int gPortChatTyping;
+extern int *PortInput_ChatKey(void);
+extern void PortInput_SwallowKeys(void);
+extern int Port_NetStats(int *out), Port_NetMe(void), Port_LobbyRelayed(void);
+extern const char *Port_NetName(int player);
+
+static int chat_online(void) {
+    return gPortVBlanks > 0 && Port_NetActive() && PortChat_Enabled(); /* (not before the first blank: get_net_active) */
+}
+
+/* The chat's lines for the page, oldest first: "mine<TAB>age ms<TAB>sender<TAB>text" each, a line feed between; the
+   last `rows` only. "" outside a match. */
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_ChatLines(int rows) {
+    static char out[16 * (CHAT_TEXT + 64)];
+    unsigned n, i, first;
+    size_t used = 0;
+    uint64_t now = SDL_GetTicks();
+
+    out[0] = '\0';
+    if (!chat_online()) {
+        return out;
+    }
+    n = PortChat_Count();
+    rows = rows < 1 ? 1 : rows > 16 ? 16 : rows;
+    first = n > (unsigned)rows ? n - (unsigned)rows : 0;
+    for (i = first; i < n && used < sizeof(out) - 1; i++) {
+        PortChatLine l;
+        const char *sender;
+        if (!PortChat_Line(i, &l)) {
+            continue;
+        }
+        sender = l.sender[0] != '\0' ? l.sender : Port_NetName(l.mine ? Port_NetMe() : !Port_NetMe());
+        if (sender == NULL || sender[0] == '\0') {
+            sender = l.mine ? "You" : "Rival";
+        }
+        used += (size_t)snprintf(out + used, sizeof(out) - used, "%s%d\t%llu\t%s\t%s", used ? "\n" : "", l.mine ? 1 : 0,
+                                 (unsigned long long)(now - l.atMs), sender, l.text);
+    }
+    return out;
+}
+
+/* Sends a line. 1 = sent; 0 = nothing to send, or within a second of the last (kept by the page, sent again). */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_ChatSay(const char *text) {
+    return chat_online() && text != NULL && PortChat_Say(text);
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_ChatClose(void) {
+    if (gPortChatTyping) {
+        gPortChatTyping = 0;
+        PortInput_SwallowKeys(); /* (Enter, which sent the line, is START: not the game's until it is let go) */
+    }
+}
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_ChatMuted(void) { return PortChat_Muted(); }
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_ChatMutedSet(int on) { PortChat_MutedSet(on != 0); }
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_ChatOnline(void) { return chat_online(); }
+
+/* The connection meter (net.c Port_NetStats, as ui.cpp shows it): "ping,rollbacks/s,rollback frames x10,waits/s,
+   ms waited/s,rollback limit,delay,auto delay,relayed"; "" when no match is on. */
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetStats(void) {
+    static char out[96];
+    int n[8];
+    out[0] = '\0';
+    if (gPortVBlanks > 0 && Port_NetActive() && Port_NetStats(n)) {
+        snprintf(out, sizeof(out), "%d,%d,%d,%d,%d,%d,%d,%d,%d", n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], Port_LobbyRelayed());
+    }
+    return out;
+}
+
+/* ---- what the native window's UI tab and controller section offer besides the table above (ui.cpp ui_tab, the
+   sticks' part): the fonts to choose from, and per player each stick's deadzone and the vibration ---- */
+#include "gs/menu_text.h"
+#include "gs/menu_translation.h"
+/* The fonts of fonts.tsv that can be chosen for the menus (shared 0) or for dialogue and other text (shared 1):
+   "number<TAB>name" each, a line feed between (0 is "Original", the game's own). */
+/* The page gets a copy made on the game's thread (REQ_FONT_LIST, between two frames): reading the list can wait for
+   a file of the data folder over HTTP (the labels made from the disc, menu_text.c), and a call from the page cannot
+   wait ("trying to suspend JS frames": the list stayed at Original and the panel's start-up refresh broke off).
+   Asked for again at most every two seconds while it holds no more than Original (the menu fonts are offered once
+   the labels are made). "" until the first copy is there; then "changed" tells the page. */
+static char sFontLists[3][4096]; /* menu, dialogue, battle (MENU_TEXT_MENU / _DIALOGUE / _BATTLE) */
+static char sLanguageList[4096]; /* (made with them: font_lists_make) */
+static int sFontListsMade;
+static uint64_t sFontListsAsked;
+
+static void font_lists_make(void) {
+    int shared, i;
+    for (shared = 0; shared < 3; shared++) {
+        size_t used = 0;
+        sFontLists[shared][0] = '\0';
+        for (i = 0; i < MenuText_FontCount() && used < sizeof(sFontLists[shared]) - 1; i++) {
+            if (MenuText_FontAvailable(i, shared)) {
+                used += (size_t)snprintf(sFontLists[shared] + used, sizeof(sFontLists[shared]) - used, "%s%d\t%s", used ? "\n" : "", i,
+                                         MenuText_FontName(i));
+            }
+        }
+    }
+    {   /* the languages too (upstream 0.1.37, docs/port/translations.md): finding the catalogs looks through the data
+           folder, over HTTP here */
+        MenuTranslationOption langs[64];
+        int n = MenuTranslation_Available(langs, (int)(sizeof(langs) / sizeof(langs[0])));
+        size_t used = 0;
+        sLanguageList[0] = '\0';
+        for (i = 0; i < n && used < sizeof(sLanguageList) - 1; i++) {
+            used += (size_t)snprintf(sLanguageList + used, sizeof(sLanguageList) - used, "%s%s\t%s", used ? "\n" : "", langs[i].locale, langs[i].name);
+        }
+    }
+    sFontListsMade = 1;
+}
+
+/* At most this many times while a list holds no more than Original (the menu and battle fonts are offered once the
+   labels made from the disc are there): a data folder with no font for a kind stays at Original without asking on. */
+#define FONT_LISTS_ASKS 15
+static void font_lists_ask(int incomplete) {
+    static int asks;
+    uint64_t now = SDL_GetTicks();
+    if ((!sFontListsMade || incomplete) && asks < FONT_LISTS_ASKS && (sFontListsAsked == 0 || now - sFontListsAsked > 2000) && gPortVBlanks > 0) {
+        sFontListsAsked = now;
+        asks++;
+        queue_push(REQ_FONT_LIST, 0, 0);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_FontList(int shared) {
+    shared = shared < 0 || shared > 2 ? 0 : shared;
+    font_lists_ask(strchr(sFontLists[shared], '\n') == NULL);
+    return sFontListsMade ? sFontLists[shared] : "";
+}
+
+/* The languages for the panel ("locale<TAB>name" each, a line feed between; "" until the list is made), the one in
+   use for this run and the one chosen for the next (menu_lang: a language is loaded once a run, as natively). */
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_Languages(void) {
+    font_lists_ask(0);
+    return sFontListsMade ? sLanguageList : "";
+}
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_LanguageSaved(void) {
+    static char saved[16];
+    Port_SettingText("menu_lang", "en", saved, sizeof(saved));
+    return saved;
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_LanguageSet(const char *locale) {
+    MenuTranslation_SaveChoice(locale); /* (saved and written: from the next start, the page loaded again) */
+}
+
+/* ---- ui.cpp's two calls the game makes of the native window (upstream 0.1.37) ----
+   Port_UiBanner (gs/net.c, the start of an online match): a line in the middle, the picture dimmed, while the game's
+   thread waits in a blank; ms > 0: the wait is over and the line stays that long more, undimmed; NULL and no ms: gone.
+   The page draws it (net_overlay.js). Ui_LanguageChosen (the start-up language screen, menu/port_language.c): the
+   native window's language list follows it; the page reads the saved choice (Bt3Ui_LanguageSaved) instead. */
+EM_JS(void, page_banner, (const char *text, int ms), {
+    if (Module.bt3Ui && typeof Module.bt3Ui.banner === 'function') Module.bt3Ui.banner(text ? UTF8ToString(text) : null, ms);
+});
+void Port_UiBanner(const char *text, int ms) {
+    page_banner(text, ms);
+}
+void Ui_LanguageChosen(const char *locale) {
+    (void)locale;
+    page_call("changed", 0); /* (the panel reads the choice again) */
+}
+/* stick 0 left, 1 right: -1 the game's own, 0..PORT_DEADZONE_MAX a round one (percent); saved as natively */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_Deadzone(int player, int stick) {
+    return player >= 0 && player < 2 && stick >= 0 && stick < 2 ? PortInput_Deadzone(player)[stick] : -1;
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_DeadzoneSet(int player, int stick, int value) {
+    if (player >= 0 && player < 2 && stick >= 0 && stick < 2) {
+        PortInput_Deadzone(player)[stick] = value < -1 ? -1 : value > PORT_DEADZONE_MAX ? PORT_DEADZONE_MAX : value;
+        PortInput_Save();
+    }
+}
+/* which 0: on (0 / 1), 1: strength (0..100 percent) */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_Vibration(int player, int which) {
+    return player >= 0 && player < 2 && which >= 0 && which < 2 ? PortInput_Vibration(player)[which] : 0;
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_VibrationSet(int player, int which, int value) {
+    if (player >= 0 && player < 2 && which >= 0 && which < 2) {
+        PortInput_Vibration(player)[which] = which == 0 ? value != 0 : value < 0 ? 0 : value > 100 ? 100 : value;
+        PortInput_Save();
+    }
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_VibrationTest(int player) {
+    if (player >= 0 && player < 2) {
+        PortInput_VibrationTest(player); /* half a second of both motors at the strength set */
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_TboTyping(void) {
+    return gPortTboTyping && !gPortOverlayOpen;
+}
+
 int Ui_Event(const SDL_Event *ev) {
+    tbo_sync();
     if (sEventType != 0 && ev->type == sEventType) {
         queue_apply();
+        return 1;
+    }
+    if (ev->type == SDL_EVENT_CLIPBOARD_UPDATE) { /* "Copy Code" (or the page's own paste, which is not handed back) */
+        if (!sClipFromPage) {
+            char *text = SDL_GetClipboardText();
+            if (text != NULL && text[0] != '\0') {
+                page_copy(text);
+            }
+            SDL_free(text);
+        }
+        sClipFromPage = 0;
+        return 1;
+    }
+    if (!gPortOverlayOpen && sCapKind == CAPTURE_NONE && PortInput_TboEvent(ev)) {
+        return 1; /* typed on a keypad (as ui.cpp) */
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat && !gPortOverlayOpen && !gPortChatTyping && sCapKind == CAPTURE_NONE &&
+        *PortInput_ChatKey() > 0 && (int)ev->key.scancode == *PortInput_ChatKey() && chat_online()) {
+        gPortChatTyping = 1; /* the chat's line: the page's (net_overlay.js) until Bt3Ui_ChatClose */
+        page_call("chatOpen", 0);
         return 1;
     }
     return sCapKind != CAPTURE_NONE && capture_event(ev);
@@ -616,8 +966,43 @@ EMSCRIPTEN_KEEPALIVE int Bt3Ui_Action(const char *name, int arg) {
     if (strcmp(name, "reset_keys") == 0) { return queue_push(REQ_RESET_KEYS, 0, arg & 1); }
     if (strcmp(name, "reset_pads") == 0) { return queue_push(REQ_RESET_PADS, 0, arg & 1); }
     if (strcmp(name, "screenshot") == 0) { return queue_push(REQ_SCREENSHOT, 0, 0); }
+    if (strcmp(name, "net_launch") == 0) { return queue_push(REQ_NET_LAUNCH, 0, 0); }
     fprintf(stderr, "bt3: unknown settings action %s\n", name);
     return 0;
+}
+
+/* Online play's lobby (net.c, as the native window drives it), over the page's connection (net_web.c: one peer, the
+   address does not matter). Start: host (1) or join (0); then Poll until 2 (the other player is there) and the action
+   "net_launch", which starts the session on the game's own thread (the program starts again: the page reloads).
+   Poll: 0 idle, 1 waiting, 2 the other player is there, < 0 failed (-2: the other side is another release). */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_NetLobbyStart(int host) {
+    extern int Port_LobbyStart(int host, const char *address, int port);
+    return Port_LobbyStart(host, host ? NULL : "127.0.0.2", 1);
+}
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_NetLobbyPoll(void) {
+    extern int Port_LobbyPoll(void);
+    return Port_LobbyPoll();
+}
+
+/* The same lobby with a room code (P4: the page's signalling Worker, net_web.js): host (1) makes a room, its code
+   comes with Bt3Ui_NetCode once known; join (0) with `code`. Poll as above: 3 while the room is being made or the
+   other page connects, then as with an address; -3: the room failed (Bt3Ui_NetError says why), -4: the two pages
+   could not reach each other. Cancel: Bt3Ui_NetLobbyCancel. */
+EMSCRIPTEN_KEEPALIVE int Bt3Ui_NetCodeStart(int host, const char *code) {
+    extern int Port_LobbyStartCode(int host, const char *code);
+    return Port_LobbyStartCode(host, code != NULL ? code : "");
+}
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetCode(void) {
+    extern const char *Port_LobbyCode(void);
+    return Port_LobbyCode();
+}
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetError(void) {
+    extern const char *Port_LobbyError(void);
+    return Port_LobbyError();
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_NetLobbyCancel(void) {
+    extern void Port_LobbyCancel(void);
+    Port_LobbyCancel();
 }
 
 /* The panel is open: neither the keyboard nor a controller reaches the game (gs_input.c), as with the native window. */

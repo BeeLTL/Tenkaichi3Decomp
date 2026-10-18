@@ -13,6 +13,11 @@ Contents:  Tenkaichi3Decomp, Tenkaichi3Decomp.dat   the game without the data ta
            a11y_<code>.txt the screen reader's lines in other languages (port/lang; its own labels, no game text)
 
            fonts/          the fonts of F1 > UI with their licences (port/third_party/fonts as it is)
+           translations/labels/   menu and battle language catalogs
+           translations/ui/       optional bundled game UI catalogs
+           translations/port/     text added by the PC port
+           translations/assets/   optional first-run language screen artwork
+           tbo/ui/         the pictures of the Tenkaichi Budokai Online screens (port/tbo/ui), their credits in licenses/
            README.txt, licenses/
 The user needs nothing but their disc image. Nothing from the disc is in the zip."""
 import os, pathlib, re, shutil, subprocess, sys, zipfile
@@ -28,17 +33,22 @@ README = """Dragon Ball Z: Budokai Tenkaichi 3 - PC port (Linux, 64-bit)
 1. Start  Tenkaichi3Decomp-setup
 2. Choose your own disc image of the USA release (SLUS-21678), an .iso file.
    The setup checks it and unpacks the game's data next to this file. About 4 GB are needed.
+   Optional: a disc image of the European release (SLES-54945) as well, for Spanish, German, French and
+   Italian (menus, battle screen and text as that release has them). It can also be added later: start the
+   setup again and press "Add languages...".
 3. Press Play. Later, start  Tenkaichi3Decomp  itself (or the setup again, and press Play).
 
 In the game, F1 opens the settings: resolution, widescreen, controls and sound.
+With the European languages added, the first launch shows a language list in the game window before loading game or memory card data. Change it later with F1 > UI > Language.
 Saves are kept in saves/. A file placed in gamedata/mods/<same path as the original> replaces the original.
 Texture packs (PCSX2 naming, .dds or .png) go into textures/, stages and music from outside the disc into
 stages/ and songs/: see the note in each folder.
-F1 > UI has two font settings, both "Original" unless you choose: "Menu font" draws the menus' labels and
-"Dialogue / UI font" the game's text from a font in fonts/ instead of the game's own lettering (the fonts and their
-licences are in that folder; fonts.tsv there is the list, to which a .ttf of your own can be added). For the menus
-the game makes a list of their labels from your disc data the first time it starts (gamedata/game-text/, a moment
-in the background): the fonts appear under "Menu font" when it is done.
+F1 > UI has three font settings, all starting on "Original": "Menu font" draws menu labels, "Battle font" draws
+announcements and HUD text, and "Dialogue / UI font" draws the game's ordinary text. Their fonts and licences are
+in fonts/. To add a .ttf, put it there and list it in fonts.tsv. The third column says where it can be used:
+1 = Menu, 2 = Dialogue / UI, 4 = Battle, added up for several (3 = Menu and Dialogue / UI, 7 = all three).
+The game makes the menu and battle label list from your disc data on its first start (gamedata/game-text/, in the
+background). Menu and Battle font choices appear when the list is ready.
 
 Screen reader: with Prism's library (prism.dll, libprism.so; release 0.18.3) placed next to the program, the menus
 and the fight's gauges are spoken and shown in braille. a11y_es.txt is its Spanish; another language is a file
@@ -126,6 +136,21 @@ def take_lang(out):
         if not p.name.endswith("_own.txt"):
             shutil.copy2(p, out / p.name)
 
+def take_translations(out):
+    """Bundled label, UI, and port-text catalogs, plus optional language screen artwork."""
+    target = out / "translations"
+    for kind in ("labels", "ui", "port"):
+        (target / kind).mkdir(parents=True, exist_ok=True)
+        for source in sorted((ROOT / "port/translations" / kind).glob("*.json")):
+            if re.fullmatch(r"[a-z]{2,3}(?:-[A-Za-z]{2,3})?", source.stem):
+                shutil.copy2(source, target / kind / source.name)
+    artwork = list((ROOT / "port/translations/assets").glob("*.png"))
+    artwork += list((ROOT / "port/translations").glob("*.png"))
+    if artwork:
+        (target / "assets").mkdir(exist_ok=True)
+        for source in sorted(artwork):
+            shutil.copy2(source, target / "assets" / source.name)
+
 def take_fonts(out, lic):
     """The fonts the settings offer, and their licences next to them and in licenses/. Only what is in the
     repository: the list of menu labels (gamedata/game-text) is made from the disc, by the game at its first start
@@ -137,6 +162,14 @@ def take_fonts(out, lic):
             shutil.copy2(p, out / "fonts" / p.relative_to(src))
             if p.name == "LICENSE":
                 shutil.copy2(p, lic / f"{p.parent.name}-fonts.txt")
+
+def take_tbo_art(out, lic):
+    """The pictures of the Tenkaichi Budokai Online screens, and who made them (port/tbo/ui/CREDITS.md)."""
+    src = ROOT / "port/tbo/ui"
+    (out / "tbo/ui").mkdir(parents=True, exist_ok=True)
+    for p in sorted(src.glob("*.png")):
+        shutil.copy2(p, out / "tbo/ui" / p.name)
+    shutil.copy2(src / "CREDITS.md", lic / "tbo-ui-credits.txt")
 
 def bundle_sdl_dependencies(dll, out, lic, prefix):
     """MSYS2 SDL can import libiconv; the official SDL archive is self-contained.
@@ -180,6 +213,7 @@ def main_win():
         shutil.rmtree(out)
     take_program(exe, out)
     take_lang(out)
+    take_translations(out)
     shutil.copy2(setup, out / "Tenkaichi3Decomp-setup.exe")
     shutil.copy2(dll, out / "SDL3.dll")
     (out / "README.txt").write_text(WIN_README.replace("\n", "\r\n"))
@@ -194,6 +228,7 @@ def main_win():
     shutil.copy2(ROOT / "port/third_party/dr_libs/LICENSE", lic / "dr_mp3.txt")
 
     take_fonts(out, lic)
+    take_tbo_art(out, lic)
     (out / "textures").mkdir()
     (out / "textures/README.txt").write_text(TEXTURES_NOTE.replace("\n", "\r\n"))
     for kind, note in (("stages", STAGES_NOTE), ("songs", SONGS_NOTE)):
@@ -223,6 +258,7 @@ def main():
         shutil.rmtree(OUT)
     take_program(exe, OUT)
     take_lang(OUT)
+    take_translations(OUT)
     shutil.copy2(setup, OUT / "Tenkaichi3Decomp-setup")
     (OUT / "lib").mkdir()
     lib = next((p for d in ("/usr/local/lib", "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu") for p in sorted(pathlib.Path(d).glob("libSDL3.so.0"))), None)
@@ -240,6 +276,7 @@ def main():
     shutil.copy2(ROOT / "port/third_party/dr_libs/LICENSE", lic / "dr_mp3.txt")
 
     take_fonts(OUT, lic)
+    take_tbo_art(OUT, lic)
     (OUT / "textures").mkdir()
     (OUT / "textures/README.txt").write_text(TEXTURES_NOTE)
     for kind, note in (("stages", STAGES_NOTE), ("songs", SONGS_NOTE)):

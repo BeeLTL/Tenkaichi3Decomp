@@ -31,6 +31,13 @@ static uint32_t sHeapNext = HEAP_FIRST, sHeapEnd = HEAP_END;
 #else
 #define PORT_LOW_REGION 0
 #endif
+/* The browser build hands out the same ordered blocks (Port_LowAlloc), from a fixed range of its linear memory, but
+   is not a 64-bit build otherwise (no Port_GameBigAlloc, the blocks are not part of a saved state). */
+#if PORT_LOW_REGION || defined(__EMSCRIPTEN__)
+#define PORT_LOW_ORDERED 1
+#else
+#define PORT_LOW_ORDERED 0
+#endif
 
 /* How far the start got, for the crash report (plat_crash.c). */
 const char *volatile gPortStage = "starting";
@@ -549,10 +556,17 @@ static void Port_LoadGameData(void) {
     }
 }
 
-#if PORT_LOW_REGION
+#if PORT_LOW_ORDERED
+#ifdef __EMSCRIPTEN__
+/* (linear memory between the end of the PS2's 32 MB and its hardware registers at 0x10000000, which nothing else
+   uses: zero at start, at the same address in every page that runs the same build) */
+#define LOW_ARENA_BASE 0x08000000u
+#define LOW_ARENA_SIZE 0x04000000u
+#else
 /* (between the GS registers at 0x12000000 and the program at 0x20000000: see the note at STACK_BASE) */
 #define LOW_ARENA_BASE 0x13000000u
 #define LOW_ARENA_SIZE 0x0C000000u /* address space only: pages are taken as they are first used */
+#endif
 enum { LOW_SIZES = 256 };
 PORT_HOST static uint8_t *sLowArena = NULL; /* where the region is: fixed once it is taken, not game state */
 static uint8_t *sLowNext;
@@ -633,7 +647,7 @@ void Port_HeapRegion(uint8_t **base, uint32_t *size) {
     *size = HEAP_END - HEAP_BASE;
 }
 
-#if PORT_LOW_REGION
+#if PORT_LOW_ORDERED
 static void low_region_take(void);
 #endif
 __attribute__((constructor)) static void Port_MapMemory(void) {
@@ -674,6 +688,9 @@ __attribute__((constructor)) static void Port_MapMemory(void) {
 #if defined(__x86_64__) && defined(_WIN32)
     low_region_take();
 #endif
+#ifdef __EMSCRIPTEN__
+    low_region_take();
+#endif
     map_heap();
     map(0x10000000u, 0x10000, "the hardware registers");
     map(0x12000000u, 0x2000, "the GS registers");
@@ -696,12 +713,15 @@ void *Port_Malloc(uint32_t size) {
 /* Memory the port hands to the game by address (file handles, the "second processor's" memory): zeroed, and below
    4 GB in the 64-bit build, where the game keeps such an address in 4 bytes. The C library's malloc is not safe
    for this there: it moves to mappings far above 4 GB whenever the break area cannot grow. */
-#if PORT_LOW_REGION
+#if PORT_LOW_ORDERED
 /* Takes the region of Port_LowAlloc. At the program's start (Port_MapMemory), before anything else can sit at its
    address and before any state is saved: a state restored to before the region existed would otherwise take it a
    second time, somewhere else. */
 static void low_region_take(void) {
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+        map(LOW_ARENA_BASE, LOW_ARENA_SIZE, "the port's own blocks");
+        sLowArena = (uint8_t *)(uintptr_t)LOW_ARENA_BASE;
+#elif defined(_WIN32)
         /* address space only (reserved); pages are committed as the region is used, below */
         sLowArena = VirtualAlloc((void *)(uintptr_t)LOW_ARENA_BASE, LOW_ARENA_SIZE, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_READWRITE);
         if (sLowArena == NULL) {
@@ -735,7 +755,7 @@ static void low_region_take(void) {
 #endif
 
 void *Port_LowAlloc(size_t size) {
-#if PORT_LOW_REGION
+#if PORT_LOW_ORDERED
     /* From one region at a fixed address, handed out in order, freed blocks reused by size (last freed first).
        The addresses end up in the game's memory (file handles, sound buffers); with the system choosing them they
        differed from run to run, and so did the game's state. This way they depend only on the order of the
@@ -794,7 +814,7 @@ void *Port_LowAlloc(size_t size) {
 }
 
 void Port_LowFree(void *addr) {
-#if PORT_LOW_REGION
+#if PORT_LOW_ORDERED
     if (addr != NULL) {
         uint64_t *p = (uint64_t *)addr - 2, total = p[0];
         int i;

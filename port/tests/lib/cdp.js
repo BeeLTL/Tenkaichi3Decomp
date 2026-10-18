@@ -33,9 +33,10 @@ async function launch({ browser = DEFAULT_BROWSER, headless = true, extraArgs = 
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((r) => ws.addEventListener('open', r, { once: true }));
   let id = 0;
-  const waiting = new Map();
+  const waiting = new Map(), handlers = [];
   ws.addEventListener('message', (ev) => {
     const m = JSON.parse(ev.data);
+    if (m.method) for (const h of handlers) h(m);  // (events: onEvent)
     if (m.id && waiting.has(m.id)) {
       const w = waiting.get(m.id);
       waiting.delete(m.id);
@@ -54,7 +55,8 @@ async function launch({ browser = DEFAULT_BROWSER, headless = true, extraArgs = 
     await sleep(500);
     try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch (e) { /* the browser may still hold files */ }
   }
-  return { send, version, close };
+  const onEvent = (fn) => { handlers.push(fn); };  // every event the browser sends (after the domain is enabled)
+  return { send, version, close, onEvent };
 }
 
 // Evaluates an expression in the page and returns its value (awaiting a promise).

@@ -56,8 +56,19 @@ const PANEL = [
       help: 'In a picture wider than 4:3, the menus are shown at their own shape with black at the sides instead of stretched. Fights are not changed.' },
     { key: 'frame_skip', label: 'Skip pictures instead of slowing down', type: 'checkbox',
       help: 'When this machine cannot show a picture in time, the game stays at full speed and leaves pictures out instead (choppier, not slower).' },
+    { key: 'meter', label: 'Meter', type: 'checkbox',
+      help: 'In the corner of the picture: the pictures shown a second and the game\'s speed (a fight shows 30 a second and the menus 60, as on the console); during an online match also the connection.' },
+    { key: 'side_bars', label: 'Side bars', type: 'checkbox',
+      help: 'In full screen and in touch play, where the picture leaves room at its sides: the border art there instead of black.' },
+    { key: 'late_input', label: 'Low input lag (experimental)', type: 'checkbox',
+      help: 'The game reads the controller, computes, and then waits before the picture is shown: about 33 ms in a fight. With this on the wait comes first, so the picture follows your press sooner. The game itself is unchanged. Not during online play.' },
     { key: 'texture_pack', label: 'Texture pack', type: 'checkbox', when: (s) => s.get('texture_pack_count') > 0,
       help: 'Replacement textures found next to the game.' },
+    { heading: 'Text' },
+    { language: true },
+    { key: 'language_prompt_always', label: 'Show the language screen at every start', type: 'checkbox',
+      help: 'Otherwise the language screen shows only while more than one language is there and none is chosen yet.' },
+    { fonts: true },
   ] },
   { tab: 'Effects', items: [
     ...[['Outline', 'The black line around the fighters.'], ['See-through tint', 'The tint that shows a fighter behind scenery.'],
@@ -81,6 +92,7 @@ const PANEL = [
   { tab: 'Controls', items: [
     { bindings: true },
     { controllers: true },
+    { sticks: true },
     { heading: 'Gameplay' },
     { key: 'clash_square', label: 'Clashes: Square counts as a direction', type: 'checkbox',
       help: 'In a beam or rush clash, each press of Square counts like a d-pad tap. Works online.' },
@@ -89,6 +101,14 @@ const PANEL = [
   ] },
   { tab: 'Saves', items: [{ saves: true }] },
   { tab: 'Touch', items: [{ touch: true }] },
+  { tab: 'Online', items: [
+    { online: true },
+    { key: 'chat', label: 'Chat', type: 'checkbox',
+      help: 'During an online match, Tab opens a line to the other player (Enter sends, Esc closes). The last lines show in the lower left.' },
+    { key: 'chat_size', label: 'Chat box size', type: 'select', when: (s) => s.get('chat') === 1,
+      options: [[0, 'Compact'], [1, 'Normal'], [2, 'Large']] },
+    { heading: 'The connection meter: Video > Meter (during a match it shows the ping, the waits and the delay).' },
+  ] },
   { tab: 'Extras', items: [
     { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
       help: "How fast the game runs (the sound keeps its pitch). 100% is the game's own; 114% is what competitive play uses." },
@@ -123,6 +143,8 @@ class Bt3Settings {
     this.captureListener = null;  // the guided set-up's, while it runs: the engine's captureDone goes there
     this.controllers = new Bt3Controllers(this);  // the Controls tab's controller part (controllers.js)
     this.touch = new Bt3Touch({ stage, settings: this, log });  // the on-screen touch controls and the Touch tab (touch.js)
+    this.netOverlay = new Bt3NetOverlay({ stage, settings: this });
+    this.screenOverlay = new Bt3ScreenOverlay({ stage, canvas, settings: this });  // side bars, added stages' and songs' names (screen_overlay.js)  // online play's chat box and connection meter (net_overlay.js)
     // the Developer section's live numbers and the diagnostics export (dashboard.js)
     this.dashboard = new Bt3Dashboard({ root: document.getElementById('dev-dashboard'), renderer, data, log, getLog,
                                         getSettings: () => this.snapshot() });
@@ -143,6 +165,36 @@ class Bt3Settings {
       if (document.fullscreenElement) document.exitFullscreen();
     }, true);
     document.addEventListener('fullscreenchange', () => this.fitStage());
+    // Tenkaichi Budokai Online's keypads (web_ui.c): SDL keeps Ctrl+V from the browser, so while a keypad takes text
+    // it is kept from SDL here and the browser pastes; the pasted text goes to the keypad (Bt3Ui_TboPaste).
+    stage.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && this.engineReady && this.call('Bt3Ui_TboTyping', 'number', []) === 1) {
+        e.stopPropagation();
+      }
+    }, true);
+    document.addEventListener('paste', (e) => {
+      if (!this.engineReady || (e.target.closest && e.target.closest('input, textarea, [contenteditable]'))) return;
+      const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+      if (text === '') return;
+      e.preventDefault();
+      this.call('Bt3Ui_TboPaste', 'number', [text]);
+    });
+    // the keypad's PASTE takes SDL's clipboard: the system's text, when the browser lets the page read it unasked
+    const fromClipboard = () => {
+      if (!this.engineReady || !navigator.permissions || !navigator.clipboard) return;
+      navigator.permissions.query({ name: 'clipboard-read' }).then((p) => {
+        if (p.state === 'granted') navigator.clipboard.readText().then((t) => { if (t) this.call('Bt3Ui_Clipboard', null, [t]); }, () => {});
+      }, () => {});
+    };
+    window.addEventListener('focus', fromClipboard);
+  }
+
+  // "Copy Code" in Tenkaichi Budokai Online (web_ui.c): onto the system clipboard, and said in any case
+  copyText(text) {
+    const done = () => this.notice(`Copied: ${text}`);
+    const failed = () => this.notice(`Could not use the clipboard. The code is: ${text}`);
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, failed);
+    else failed();
   }
 
   // The handlers the engine calls (web_ui.c page_call / page_notice / page_screenshot): Module.bt3Ui.
@@ -155,6 +207,9 @@ class Bt3Settings {
       notice: (text) => this.notice(text),
       screenshot: (rgba, w, h) => this.saveScreenshot(rgba, w, h),
       cardWritten: () => this.saves.cardWritten(),
+      copy: (text) => this.copyText(text),
+      chatOpen: () => this.netOverlay.open(),
+      banner: (text, ms) => this.netOverlay.banner(text, ms),
     };
   }
 
@@ -211,6 +266,8 @@ class Bt3Settings {
       for (const item of t.items) {
         page.appendChild(item.heading ? el('h3', {}, item.heading) : item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root : item.saves ? this.saves.buildUi()
                          : item.unlock ? this.buildUnlock() : item.added ? this.buildAdded() : item.touch ? this.touch.buildSettings()
+                         : item.online ? this.buildOnline() : item.fonts ? this.buildFonts() : item.sticks ? this.buildSticks()
+                         : item.language ? this.buildLanguage()
                          : this.buildControl(item));
       }
       if (t.tab === 'Video') page.appendChild(this.buildRenderer());
@@ -529,6 +586,135 @@ class Bt3Settings {
           : `none (the data folder has no ${k.folder} folder with any).`);
       });
     });
+    return box;
+  }
+
+  // The language (upstream 0.1.37, docs/port/translations.md): the catalogs found (English is bundled; others are a
+  // translator's or made from a European disc), the engine's own list. Loaded once a run, as natively: a choice is
+  // kept and used from the next start (the page loaded again).
+  buildLanguage() {
+    const id = 'set-language', row = el('div', { class: 'row' });
+    const select = el('select', { id, 'aria-describedby': `${id}-help` });
+    const help = el('p', { class: 'help', id: `${id}-help` });
+    select.addEventListener('change', () => {
+      this.call('Bt3Ui_LanguageSet', null, [select.value]);
+      this.persist();
+      this.notice('The language is used from the next start: reload the page.');
+      this.refresh();
+    });
+    row.append(el('label', { for: id }, 'Language'), select, help);
+    this.refreshers.push(() => {
+      const list = this.call('Bt3Ui_Languages', 'string', []).split('\n').filter(Boolean).map((l) => l.split('\t'));
+      if (list.length !== select.options.length) {
+        select.replaceChildren(...list.map(([locale, name]) => el('option', { value: locale }, name)));
+      }
+      select.value = this.call('Bt3Ui_LanguageSaved', 'string', []);
+      select.disabled = list.length < 2;
+      help.textContent = list.length < 2
+        ? 'Only English is there. Another language comes as a catalog in the data folder\'s game-text/translations (the repository\'s docs/port/translations.md).'
+        : 'Used from the next start (the page loaded again). Menu art shows translated words with a Menu or Battle font other than Original.';
+    });
+    return row;
+  }
+
+  // The fonts (the native window's UI tab): fonts.tsv's, as the engine lists them (web_ui.c Bt3Ui_FontList); 0 is
+  // "Original", the game's own lettering. Menu font: matching menu labels; Dialogue / UI font: dialogue, subtitles,
+  // ordinary text.
+  buildFonts() {
+    const box = el('div');
+    const rows = [['menu_font_id', 'Menu font', 0, 'Original uses the game\'s own lettering. Another font replaces matching menu labels at once; decorative lettering keeps its artwork.'],
+      ['battle_font_id', 'Battle font', 2, 'The words of a fight (announcements, the HUD). Original keeps the game\'s own artwork.'],
+      ['text_font_id', 'Dialogue / UI font', 1, 'The font of dialogue, subtitles and ordinary text. Original keeps the game\'s glyphs; placement, colours, shadows and icons are kept.']];
+    for (const [key, label, shared, help] of rows) {
+      const id = `set-${key}`, row = el('div', { class: 'row' });
+      const select = el('select', { id, 'aria-describedby': `${id}-help` });
+      select.addEventListener('change', () => this.set(key, Number(select.value)));
+      row.append(el('label', { for: id }, label), select, el('p', { class: 'help', id: `${id}-help` }, help));
+      box.appendChild(row);
+      this.refreshers.push(() => {
+        if (select.options.length === 0) {  // (the list is the engine's: filled once it is running)
+          for (const line of this.call('Bt3Ui_FontList', 'string', [shared]).split('\n').filter(Boolean)) {
+            const [n, name] = line.split('\t');
+            select.appendChild(el('option', { value: n }, name));
+          }
+        }
+        select.value = String(this.get(key));
+        select.disabled = select.options.length < 2;
+      });
+    }
+    return box;
+  }
+
+  // Each stick's deadzone and the vibration, for the player chosen above (the native window's controller section;
+  // saved in the settings file as natively: deadzone_p1_ls, vibration_p1, ...).
+  buildSticks() {
+    const box = el('div');
+    const sticks = ['Left stick', 'Right stick'].map((name, s) => {
+      const id = `set-deadzone-${s}`, row = el('div', { class: 'row' });
+      const input = el('input', { id, type: 'range', min: '-1', max: '90', step: '1', 'aria-describedby': `${id}-help` });
+      const out = el('output', { for: id });
+      const show = () => { out.textContent = Number(input.value) < 0 ? 'Original' : `${input.value}%`; };
+      input.addEventListener('input', show);
+      input.addEventListener('change', () => { this.call('Bt3Ui_DeadzoneSet', null, [this.player, s, Number(input.value)]); this.persist(); });
+      row.append(el('label', { for: id }, `${name} deadzone`), input, out);
+      if (s === 1) {
+        row.appendChild(el('p', { class: 'help', id: `${id}-help` }, 'How far a stick has to move before the game is told anything. ' +
+          'Original: the game\'s own, 39% for left / right and for up / down separately (a square). 0% to 90%: a round one of that size; ' +
+          'from its edge the value grows evenly to full tilt. Choose a size that covers where your stick rests when let go.'));
+      }
+      box.appendChild(row);
+      return { input, show };
+    });
+    const vibRow = el('div', { class: 'row check' });
+    const vib = el('input', { id: 'set-vibration', type: 'checkbox' });
+    vibRow.append(vib, el('label', { for: 'set-vibration' }, 'Vibration'));
+    const strRow = el('div', { class: 'row' });
+    const strength = el('input', { id: 'set-vibration-strength', type: 'range', min: '0', max: '100', step: '1' });
+    const strOut = el('output', { for: 'set-vibration-strength' });
+    const test = el('button', { type: 'button', class: 'secondary', id: 'set-vibration-test' }, 'Test');
+    strRow.append(el('label', { for: 'set-vibration-strength' }, 'Strength'), strength, strOut, test,
+      el('p', { class: 'help' }, 'The game\'s own vibration (hits, clashes, charging) on this player\'s controller, where the browser supports it. ' +
+        'The game\'s Options > Controller > Vibration has to be on as well. Test: half a second of both motors.'));
+    vib.addEventListener('change', () => { this.call('Bt3Ui_VibrationSet', null, [this.player, 0, vib.checked ? 1 : 0]); this.persist(); this.refresh(); });
+    strength.addEventListener('input', () => { strOut.textContent = `${strength.value}%`; });
+    strength.addEventListener('change', () => { this.call('Bt3Ui_VibrationSet', null, [this.player, 1, Number(strength.value)]); this.persist(); });
+    test.addEventListener('click', () => this.call('Bt3Ui_VibrationTest', null, [this.player]));
+    box.append(vibRow, strRow);
+    this.refreshers.push(() => {
+      sticks.forEach(({ input, show }, s) => { input.value = String(this.call('Bt3Ui_Deadzone', 'number', [this.player, s])); show(); });
+      vib.checked = this.call('Bt3Ui_Vibration', 'number', [this.player, 0]) === 1;
+      strength.value = String(this.call('Bt3Ui_Vibration', 'number', [this.player, 1]));
+      strOut.textContent = `${strength.value}%`;
+      strength.disabled = test.disabled = !vib.checked;
+    });
+    return box;
+  }
+
+  // Online play's signalling service (port/web/signal, net_web.js): where room codes are made and joined
+  buildOnline() {
+    const box = el('div', { class: 'row' });
+    const input = el('input', { type: 'url', id: 'signal-url', placeholder: 'https://bt3-signal.example.workers.dev', spellcheck: 'false',
+                                'aria-describedby': 'signal-help' });
+    const save = el('button', { type: 'button', class: 'secondary' }, 'Save');
+    const state = el('p', { class: 'help', role: 'status' });
+    const show = () => {
+      const url = globalThis.bt3Net ? bt3Net.signalUrl : '';
+      input.value = url;
+      state.textContent = url ? `Room codes go through ${url}.` : 'Not set: Host Room and Join Room cannot make or find a room.';
+    };
+    save.addEventListener('click', () => {
+      const url = input.value.trim().replace(/\/+$/, '');
+      if (url !== '' && !/^https?:\/\/\S+$/.test(url)) { state.textContent = 'That is not a web address (http:// or https://).'; return; }
+      try { localStorage.setItem('bt3.signal', url); } catch (e) { /* (kept for this page only) */ }
+      if (globalThis.bt3Net) bt3Net.signalUrl = url;
+      show();
+    });
+    box.append(el('h3', {}, 'Online play'),
+      el('label', { for: 'signal-url' }, 'Signalling server'), input, save, state,
+      el('p', { class: 'help', id: 'signal-help' }, 'Tenkaichi Budokai Online (in the main menu) hosts and joins rooms by code through this server; ' +
+        'the two games then connect directly, or through its relay. Both players need the same server. To run your own: ' +
+        'port/web/signal/README.md. Quick Match is not available in the browser version yet.'));
+    show();
     return box;
   }
 

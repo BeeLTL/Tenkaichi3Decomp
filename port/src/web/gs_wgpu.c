@@ -35,7 +35,11 @@
    outline and the DATE test read), and depth stored as z / w. */
 #define WG_COLOR_FORMAT WGPUTextureFormat_RGBA8Unorm
 #define WG_AUX_FORMAT WGPUTextureFormat_R8Unorm
-#define WG_DEPTH_FORMAT WGPUTextureFormat_Depth32Float
+/* The targets' depth: 32-bit float as the other back ends, with an 8-bit stencil where the device offers
+   depth32float-stencil8 (an optional feature; upstream 0.1.35.2's flat-shadow mask needs the stencil, gs_draw.h
+   GsPipeState.shadow). Without it the shadow draws are made without the mask (as before 0.1.35.2), and the log says so. */
+static int sStencil;
+static WGPUTextureFormat sDepthFormat = WGPUTextureFormat_Depth32Float;
 #define WG_MAX_PIPES 1024
 #define WG_ENTRY_POINT "main" /* (naga names every stage's entry point main) */
 /* WebGPU: a texture-to-buffer copy's bytes per row are a multiple of this */
@@ -54,7 +58,7 @@ typedef struct GsParams {
     float misc[4];
     float rect[4];
     float orig[4];
-    float extra[4]; /* x: the depth buffer's largest value (GsDraw_DepthMax) */
+    float extra[4]; /* x: the depth buffer's largest value (GsDraw_DepthMax); y: 1 = the shader scales the colour by its alpha */
 } GsParams;
 /* the full-screen passes' Params (dclut.frag, outline.frag, blit.frag): one vec4. Stored in a GsParams-sized slot, so
    that one bind group of sizeof(GsParams) serves every fragment stage. */
@@ -212,7 +216,7 @@ static void print_adapter(void) {
 }
 
 static int device_create(void) {
-    WGPUFeatureName features[3];
+    WGPUFeatureName features[4];
     size_t featureCount = 0;
     WGPUDeviceDescriptor desc = WGPU_DEVICE_DESCRIPTOR_INIT;
 
@@ -232,6 +236,14 @@ static int device_create(void) {
                   (getenv("BT3_GPU_TIMING") == NULL || atoi(getenv("BT3_GPU_TIMING")) != 0); /* (=0: off, to measure its cost) */
     if (sTimestamps) {
         features[featureCount++] = WGPUFeatureName_TimestampQuery;
+    }
+    sStencil = wgpuAdapterHasFeature(sAdapter, WGPUFeatureName_Depth32FloatStencil8);
+    if (sStencil) {
+        features[featureCount++] = WGPUFeatureName_Depth32FloatStencil8;
+        sDepthFormat = WGPUTextureFormat_Depth32FloatStencil8;
+    } else {
+        fprintf(stderr, "bt3: webgpu: no depth32float-stencil8: flat shadows are drawn without their stencil mask "
+                        "(overlapping parts darker; differs from the OpenGL and Vulkan back ends)\n");
     }
     desc.label = string_view("bt3");
     desc.requiredFeatureCount = featureCount;
@@ -300,6 +312,7 @@ static void surface_fit(void) {
 typedef struct WgTexture {
     WGPUTexture texture;
     WGPUTextureView view;
+    WGPUTextureView attachView;           /* a depth-stencil target: all aspects, to attach (view: the depth, to sample) */
     unsigned copiesEpoch;                 /* sCopiesEpoch when `draw` was made (they hold the DATE copy) */
     WGPUBindGroup draw[GS_SAMPLER_COUNT]; /* gs.frag's group 2: this texture with each sampler, and the DATE copy */
     WGPUBindGroup blit;                   /* blit.frag's group 2: this texture, bilinear and clamped */
@@ -384,6 +397,9 @@ static void texture_free(WgTexture *t) {
         wgpuBindGroupRelease(t->blit);
     }
     wgpuTextureViewRelease(t->view);
+    if (t->attachView != NULL) {
+        wgpuTextureViewRelease(t->attachView);
+    }
     wgpuTextureDestroy(t->texture);
     wgpuTextureRelease(t->texture);
     sGpuBytes -= t->bytes;
@@ -652,8 +668,14 @@ static void wg_target_ensure(int i) {
     t->aux = texture_new(w, h, WG_AUX_FORMAT, 1,
                          WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc,
                          "target alpha byte");
-    t->depth = texture_new(w, h, WG_DEPTH_FORMAT, 1, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding,
+    t->depth = texture_new(w, h, sDepthFormat, 1, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding,
                            "target depth");
+    if (sStencil) { /* sampled (the table pass) as depth alone; attached whole */
+        WGPUTextureViewDescriptor vd = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
+        vd.aspect = WGPUTextureAspect_DepthOnly;
+        t->depth->attachView = t->depth->view;
+        t->depth->view = wgpuTextureCreateView(t->depth->texture, &vd);
+    }
 }
 
 static void wg_target_drop(int i) {
@@ -807,8 +829,19 @@ static WGPURenderPipeline pipe_desc_create(PipeDesc *p) {
 }
 
 /* The depth state of a pass with the target's depth attached (every pass but the table pass). */
-static void pipe_desc_depth(PipeDesc *p, WGPUCompareFunction compare, int write) {
-    p->depth.format = WG_DEPTH_FORMAT;
+static void pipe_desc_depth(PipeDesc *p, WGPUCompareFunction compare, int write, int shadow) {
+    p->depth.format = sDepthFormat;
+    if (sStencil) { /* the stencil untouched, except by a flat shadow: drawn where 0, then raised (gs_gl.c does the same) */
+        WGPUStencilFaceState face = WGPU_STENCIL_FACE_STATE_INIT;
+        face.compare = shadow ? WGPUCompareFunction_Equal : WGPUCompareFunction_Always;
+        face.failOp = WGPUStencilOperation_Keep;
+        face.depthFailOp = WGPUStencilOperation_Keep;
+        face.passOp = shadow ? WGPUStencilOperation_IncrementClamp : WGPUStencilOperation_Keep;
+        p->depth.stencilFront = face;
+        p->depth.stencilBack = face;
+        p->depth.stencilReadMask = 0xFF;
+        p->depth.stencilWriteMask = shadow ? 0xFF : 0;
+    }
     p->depth.depthCompare = compare;
     p->depth.depthWriteEnabled = write ? WGPUOptionalBool_True : WGPUOptionalBool_False;
     p->desc.depthStencil = &p->depth;
@@ -835,7 +868,7 @@ static WGPURenderPipeline pipeline_create(const GsPipeState *s) {
         }
         p.desc.vertex.bufferCount = 1;
         p.desc.vertex.buffers = &p.buffer;
-        pipe_desc_depth(&p, kWgDepthCompare[s->depthTest], s->depthWrite);
+        pipe_desc_depth(&p, kWgDepthCompare[s->depthTest], s->depthWrite, s->shadow);
     }
     if (s->blend.enabled) {
         GsBlendDesc d = GsBlend_Describe(s->blend);
@@ -893,7 +926,7 @@ static WGPURenderPipeline outline_pipeline_create(void) {
     p.targets[0].blend = &p.blend;
     p.targets[0].writeMask = WGPUColorWriteMask_Red | WGPUColorWriteMask_Green | WGPUColorWriteMask_Blue;
     p.targets[1].writeMask = WGPUColorWriteMask_None;
-    pipe_desc_depth(&p, WGPUCompareFunction_Always, 0);
+    pipe_desc_depth(&p, WGPUCompareFunction_Always, 0, 0);
     return pipe_desc_create(&p);
 }
 
@@ -1132,7 +1165,7 @@ static int wg_init(void) {
     fprintf(stderr, "bt3: webgpu: surface %ux%u, depth clamp %s, BC textures %s, uniform offset alignment %u\n", sSurfaceW,
             sSurfaceH, sUnclippedDepth ? "yes" : "NO", sBcTextures ? "yes" : "no", sLimits.minUniformBufferOffsetAlignment);
     /* the settings are the page's (port/src/web/web_ui.c): nothing is drawn over the game */
-    return Ui_Init(sWindow, NULL, NULL);
+    return Ui_Init(sWindow, NULL, NULL, NULL);
 }
 
 /* Validation, out-of-memory and internal errors the device has reported (the page's developer panel shows them). */
@@ -1299,6 +1332,8 @@ static struct {
     GsParams lastParams; /* the Params last pushed (the next draw with the same reuses them) */
     uint32_t lastParamsOffset;
     int haveLastParams;
+    int stencilClear;  /* the next pass clears the stencil (a flat-shadow run starts), whatever it does with the rest */
+    int shadowTarget;  /* the target of the flat-shadow run going on, -1 when the last draw was not one */
 } sR;
 
 static void pass_end(void) {
@@ -1331,10 +1366,16 @@ static void pass_begin(WgPassKind kind, int target, int clear) {
     colors[1].view = t->aux->view;
     colors[1].loadOp = load;
     colors[1].storeOp = WGPUStoreOp_Store;
-    depth.view = t->depth->view;
+    depth.view = t->depth->attachView != NULL ? t->depth->attachView : t->depth->view;
     depth.depthLoadOp = load;
     depth.depthStoreOp = WGPUStoreOp_Store;
     depth.depthClearValue = 0.0f;
+    if (sStencil) {
+        depth.stencilLoadOp = clear || sR.stencilClear ? WGPULoadOp_Clear : WGPULoadOp_Load;
+        depth.stencilStoreOp = WGPUStoreOp_Store;
+        depth.stencilClearValue = 0;
+    }
+    sR.stencilClear = 0;
     desc.colorAttachments = colors;
     desc.colorAttachmentCount = kind == WG_PASS_UPLOAD ? 1 : 2;
     desc.depthStencilAttachment = kind == WG_PASS_DRAW ? &depth : NULL;
@@ -1482,6 +1523,14 @@ static void replay_outline(const GsDraw *d) {
 /* An ordinary primitive. */
 static void replay_primitive(const GsDraw *d) {
     GsParams p;
+    const int shadow = sPipes[d->pipeline].s.shadow;
+    if (shadow && sStencil && sR.shadowTarget != d->target) {
+        /* one bit per pixel blocks every later triangle of this flat-shadow run: the stencil is cleared where it
+           starts, which here means a new pass (a pass cannot clear part of itself) */
+        pass_end();
+        sR.stencilClear = 1;
+    }
+    sR.shadowTarget = shadow ? d->target : -1;
     if (sR.kind != WG_PASS_DRAW || sR.target != d->target) {
         pass_begin(WG_PASS_DRAW, d->target, !gsTargets[d->target].cleared);
     }
@@ -1507,6 +1556,7 @@ static void replay_primitive(const GsDraw *d) {
     memcpy(p.rect, d->rect, sizeof(p.rect));
     memcpy(p.orig, d->orig, sizeof(p.orig));
     p.extra[0] = GsDraw_DepthMax(d);
+    p.extra[1] = GsPipeKey_SrcInShader(sPipes[d->pipeline].key) ? 1.0f : 0.0f; /* (upstream 0.1.37: the source scaled by its alpha) */
     if (!sR.haveLastParams || memcmp(&p, &sR.lastParams, sizeof(p)) != 0) {
         sR.lastParams = p;
         sR.lastParamsOffset = uniforms_push(&p, sizeof(p), sUniforms.paramsSlot);
@@ -1527,8 +1577,13 @@ static void replay(void) {
     sR.haveLastParams = 0;
     sR.kind = WG_PASS_NONE;
     sR.target = -1;
+    sR.shadowTarget = -1;
+    sR.stencilClear = 0;
     for (n = 0; n < gsDrawCount; n++) {
         const GsDraw *d = &gsDraws[n];
+        if (d->native != GS_NATIVE_NONE) {
+            sR.shadowTarget = -1; /* (anything else between two shadow draws ends the run) */
+        }
         if (d->native >= GS_NATIVE_FB_UPLOAD) {
             replay_fb_upload(d);
         } else if (d->native == GS_NATIVE_COPY_DATE || d->native == GS_NATIVE_COPY_IDS) {

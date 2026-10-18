@@ -53,6 +53,9 @@ static void regions_init(void) {
 #elif defined(__APPLE__)
     uint32_t cap = sizeof(exe) - 1;
     long n = _NSGetExecutablePath(exe, &cap) == 0 ? (long)strlen(exe) : -1;
+#elif defined(__EMSCRIPTEN__)
+    /* the browser: the page puts the list at /bt3.mem in the file system (port/tools/wasm_state.py writes it) */
+    long n = (long)snprintf(exe, sizeof(exe), "/bt3");
 #else
     long n = (long)readlink("/proc/self/exe", exe, sizeof(exe) - 1);
 #endif
@@ -106,10 +109,12 @@ static void regions_init(void) {
     sRegion[sRegions].n = heapSize;
     sRegion[sRegions].what = "heap";
     sRegions++;
+#ifndef __EMSCRIPTEN__ /* (the browser build keeps the scratchpad outside its memory on purpose: plat_mem.c) */
     sRegion[sRegions].p = (const uint8_t *)Port_Ptr(0x70000000u);
     sRegion[sRegions].n = 0x4000;
     sRegion[sRegions].what = "scratchpad";
     sRegions++;
+#endif
 }
 
 uint64_t Port_StateHash(void) {
