@@ -31,15 +31,25 @@ is uploaded anywhere.
 - **Touch controls** for phones and tablets: d-pad, analog stick, face and shoulder buttons, START and SELECT,
   with size, opacity, left or right hand, and a layout editor.
 - **Saves** kept in the browser, with a backup, and export and import as a file.
-- Texture packs made for PCSX2, in the data folder's `textures` folder.
+- **Online play, browser against browser**: the game's own *Tenkaichi Budokai Online* menu (Create Room, Join Room
+  by a six-letter code, Copy Code), with chat (Tab) and a connection meter. See [Playing online](#playing-online).
+- Per-stick deadzone and controller vibration (Settings, Controls), "Low input lag", and the PC version's menu,
+  battle and dialogue fonts.
+- Languages: the game's language screen and Settings, Video, Language (English is included; other languages need
+  their catalogs: [docs/port/translations.md](docs/port/translations.md)).
+- Texture packs made for PCSX2, in the data folder's `textures` folder; stages and songs added in the data folder's
+  `stages` and `songs` folders, with their names in the menus.
+- Side bars beside the picture in full screen, and a meter (pictures a second, game speed).
 - "Unlock everything" (a debug function the game's developers left in).
 - A performance view and a diagnostics export (Settings, Developer).
 
-**Not in the browser version:** online play and the Vulkan renderer (both are in the PC version). Added stages and
-songs are found in the data folder, but a battle on an added stage has not been seen yet.
+**Not in the browser version:** the Vulkan renderer; rollback online (the browser plays online with input delay:
+each side waits for the other's buttons); Quick Match (room codes only); playing online against the PC version; the
+PC version's screen reader.
 
 **Tested with:** Chrome and Edge on Windows 11. Firefox and Safari are not tested yet. Controllers and touch were
-tested with simulated devices; please report how real ones behave.
+tested with simulated devices; please report how real ones behave. Online play was tested with two browser windows
+on one computer, not yet between two computers over the internet: please report how it goes.
 Details: [docs/BROWSER_FEATURE_MATRIX.md](docs/BROWSER_FEATURE_MATRIX.md).
 
 ## Playing (the ready-made package)
@@ -68,6 +78,46 @@ The package holds only program code: the page reads the game's data from your `g
 [docs/BROWSER_RELEASE.md](docs/BROWSER_RELEASE.md).
 
 **Keep the extracted data to yourself:** never put it on a public server or share it.
+
+## Playing online
+
+Two players, each with the web version running on their own computer (with their own disc's data), play against
+each other. Online play is in the source code now and comes with the next release package (the current one,
+web-0.1.33.3, is older); until then, [build from source](#building-from-source). The browsers connect directly to each other (WebRTC); no game data and no part of the game passes
+between them, only the buttons pressed, a check that both games agree, and chat lines.
+
+**What it needs: a signalling server.** Before two browsers can connect, they have to swap a few lines of
+connection details. A small server does that for them, under a six-letter room code; once they are connected it is
+no longer used. Nobody runs one for you: both players use the same one, set up once.
+
+- **On one network** (two computers at home): one of you runs it on their computer, from the source code, with
+  [Node.js](https://nodejs.org/) 22.13 or newer:
+
+  ```
+  node port/web/signal/local.mjs 8787
+  ```
+
+  Its address is then `http://<that computer's address>:8787`.
+- **Over the internet:** put it on your own free Cloudflare account (a Worker and a small database). The steps are in
+  [port/web/signal/README.md](port/web/signal/README.md). Adding Cloudflare's TURN relay there (optional) lets players
+  connect whose networks block direct connections.
+
+**Then, each player:**
+
+1. Start the game as usual with `python play.py` (it also checks that your data is the unmodified disc's: online
+   matches are only between two unmodified games).
+2. Open **Settings, Online**, enter the signalling server's address under **Signalling server**, and press **Save**.
+   The page keeps it.
+3. In the game: **Main Menu, Tenkaichi Budokai Online.**
+   - One player: **Create Room**, choose the rules, **Open Room**. The room code is shown; **Copy Code** (Cross)
+     puts it on the clipboard. Send it to the other player.
+   - The other player: **Join Room**, type the code (or paste it with Ctrl+V), **Join**.
+4. Both pages load again for the match and connect again by themselves; the match starts at the character select.
+   **Tab** opens the chat; **Settings, Video, Meter** shows the ping and the waiting.
+
+Both players need the same version of this web build. The signalling server sees the room code, the player names
+and the connection details (network addresses) for at most ten minutes; see
+[port/web/signal/README.md](port/web/signal/README.md).
 
 ## Building from source
 
@@ -103,14 +153,17 @@ and 7-Zip.
 | [BROWSER_RELEASE.md](docs/BROWSER_RELEASE.md) | Running a release package |
 | [BROWSER_FEATURE_MATRIX.md](docs/BROWSER_FEATURE_MATRIX.md) | What works, and how it was verified |
 | [BROWSER_ARCHITECTURE.md](docs/BROWSER_ARCHITECTURE.md) | How the browser build is put together |
+| [BROWSER_ONLINE_PLAN.md](docs/BROWSER_ONLINE_PLAN.md) | Online play in the browser: the design, each step and its test results |
+| [port/web/signal/README.md](port/web/signal/README.md) | The signalling server for online play: running and deploying it |
 | [BROWSER_ONLY_AUDIT.md](docs/BROWSER_ONLY_AUDIT.md) | Dependencies and their licences |
 
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `port/web/` | The page: settings, controllers, controller picture, touch controls, saves, notifications |
-| `port/src/web/` | The engine's browser side: files over HTTP, settings, saves, touch input |
+| `port/web/` | The page: settings, controllers, controller picture, touch controls, saves, notifications, online connection, chat and meter |
+| `port/web/signal/` | The signalling server for online play (a Cloudflare Worker, also runnable with Node) |
+| `port/src/web/` | The engine's browser side: files over HTTP, settings, saves, touch input, the online transport |
 | `port/tests/web/` | The browser tests (headless Chrome) |
 | `port/tools/` | The build (`wasm_build.py`), disc unpacking, packaging |
 | `port/src/` | Shared with the PC version: memory, files, memory card, movies; `gs/` renderer, sound, input |
@@ -118,7 +171,7 @@ and 7-Zip.
 | `port/data/` | The game's built-in data tables as shape only (labels, sizes, pointer slots), no values |
 | `port/third_party/` | newlib's maths library, xxHash, Dear ImGui (PC only) |
 
-The PC version's code (Vulkan, the setup program, online play) is still in this repository and builds as before.
+The PC version's code (Vulkan, the setup program, its online play) is still in this repository and builds as before.
 For PC releases, see the original project:
 [z3xox/Tenkaichi3Decomp](https://github.com/z3xox/Tenkaichi3Decomp).
 

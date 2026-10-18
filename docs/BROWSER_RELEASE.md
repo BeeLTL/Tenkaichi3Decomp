@@ -56,7 +56,7 @@ In the game, **F1** (or START + SELECT on a controller) opens the settings. Keyb
 
 ## Known limitations
 
-- **Not in the browser version:** online play and the Vulkan renderer (both are in the PC version).
+- **Online play** (browser against browser, from the game's Tenkaichi Budokai Online menu) needs a signalling server; see the README's "Playing online". **Not in the browser version:** the Vulkan renderer, rollback, Quick Match, playing online against the PC version.
 - **Smooth motion** is off with WebGL 2, and up to 60 pictures a second with WebGPU.
 - **Saves** live in the browser's storage: clearing the site's data, or a private window, loses them. Export a copy.
 - **Not tested yet:** real controllers and real phones or tablets (simulated ones are tested), Firefox and Safari, playing an added song. The sound is checked to come out, not how it sounds.
