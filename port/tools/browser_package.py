@@ -8,6 +8,7 @@ Contents (an explicit list: anything else in port/build/web, such as test result
   play.py         starts the game: checks the data folder, runs the local server, opens the page
   devserver.py    the local server (HTTP Range, folder listings, cross-origin isolation), 127.0.0.1 only
   extract_disc.py unpacks the user's own disc into a data folder
+  signal/         online play's signalling server (port/web/signal): node signal/local.mjs, or a Cloudflare Worker
   README.md       docs/BROWSER_RELEASE.md
   licenses/       the project's licence and those of what the program contains (SDL3, Dawn's webgpu.h, Emscripten's
                   runtime, newlib's libm, xxHash)
@@ -56,6 +57,11 @@ def main():
     shutil.copy2(ROOT / "port/web/play.py", folder / "play.py")
     shutil.copy2(ROOT / "port/tools/extract_disc.py", folder / "extract_disc.py")
     shutil.copy2(ROOT / "port/tools/make_fingerprint.py", folder / "make_fingerprint.py")  # (devserver.py: the gameplay fingerprint)
+    # online play's signalling server (port/web/signal): run on one network with "node signal/local.mjs", or deployed
+    # to Cloudflare (its README)
+    (folder / "signal").mkdir()
+    for f in ("worker.js", "local.mjs", "schema.sql", "README.md"):
+        shutil.copy2(ROOT / "port/web/signal" / f, folder / "signal" / f)
     shutil.copy2(ROOT / "docs/BROWSER_RELEASE.md", folder / "README.md")
     for dst, src in LICENSES.items():
         shutil.copy2(src, folder / "licenses" / dst)
