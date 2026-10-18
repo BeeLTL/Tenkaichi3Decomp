@@ -50,6 +50,7 @@ def main():
         shutil.copy2(WEB / f, folder / "web" / f)
     shutil.copytree(WEB / "tbo", folder / "web" / "tbo")  # (Tenkaichi Budokai Online's pictures and their credits)
     shutil.copytree(WEB / "fonts", folder / "web" / "fonts")  # (the TrueType fonts, with their licences: its words)
+    shutil.copytree(WEB / "translations", folder / "web" / "translations")  # (the bundled translation catalogs: English)
     shutil.copy2(ROOT / "port/web/devserver.py", folder / "devserver.py")
     shutil.copy2(ROOT / "port/web/play.py", folder / "play.py")
     shutil.copy2(ROOT / "port/tools/extract_disc.py", folder / "extract_disc.py")

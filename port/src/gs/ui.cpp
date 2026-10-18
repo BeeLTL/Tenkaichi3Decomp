@@ -14,6 +14,7 @@
 #include "namefont.h"
 #include "../port_release.h"
 #include "menu_text.h"
+#include "menu_translation.h"
 #include "../quit_dialog.h"
 #include "net_chat.h"
 
@@ -86,6 +87,9 @@ void Port_LobbyCancel(void);
 void Port_LobbyLaunch(void);
 }
 static bool sReady, sOpen;
+static MenuTranslationOption sLanguages[256];
+static int sLanguageCount, sLanguageChoice;
+static bool sLanguageRestartPending;
 static bool sNet;                              // the open window is the online screen (Dragon Net Battle), not the settings
 static int sForceTab = -1;                     // BT3_UI_OPEN=<tab>: open at start on that tab (testing)
 static int sCapKind, sCapPlayer, sCapAction;   // waiting for a key (1) or a controller button (2) to bind
@@ -229,7 +233,7 @@ static SDL_GPUTexture *load_strip(const char *env, const char *rel, uint32_t *w,
 // replaces it by putting a trim.png and / or a fill.png of any size into a folder "bars" next to the game.
 #include "bars_png.h"
 static SDL_GPUTexture *sBarTrim, *sBarFill;
-static int sBars = -1; // 0 black, 1 the border; -1 not read yet
+static int sBars = -1; // 0 black, 1 the border, 2 the border with the fight panels; -1 not read yet
 static int sBarsTried;
 static int sChatSize = -1; // 0 = compact, 1 = normal, 2 = large; -1 = not read yet
 
@@ -267,9 +271,93 @@ static SDL_GPUTexture *bar_texture(const char *file, const unsigned char *png, s
 
 static bool bars_on(void) {
     if (sBars < 0) {
-        sBars = Port_Setting("side_bars", 0) != 0;
+        sBars = Port_Setting("side_bars", 0);
+        sBars = sBars < 0 ? 0 : sBars > 2 ? 2 : sBars;
     }
     return sBars != 0 && gUiPresentX > 0 && gUiPresentW > 0 && gUiPresentH > 0;
+}
+
+// For the fight panels (fight_panels_ui.cpp): textures of their own and the display faces.
+static ImFont *sFontBold;
+SDL_GPUTexture *Ui_Texture(uint8_t *pix, uint32_t w, uint32_t h) {
+    return make_strip(pix, (size_t)w * h * 4, w, h, 1);
+}
+void Ui_TextureFree(SDL_GPUTexture *tex) {
+    if (tex == NULL) {
+        return;
+    }
+    if (sGL) {
+        GsGl_StripTextureFree((unsigned)(intptr_t)tex);
+    } else {
+        SDL_ReleaseGPUTexture(sDevice, tex);
+    }
+}
+ImFont *Ui_FontBold(void) { return sFontBold; }
+bool FightPanels_Draw(ImDrawList *dl, float lx, float rx, float y0, float y1, float bar, float trim);
+
+// The fight panels' two faces ("Name font", "Form font" in the settings): fonts of the game's own list (fonts.tsv,
+// as the Menu font and the Dialogue / UI font), checked as those are (menu_text.c) and saved by their id; "Default"
+// is the first of the list that can be used. A choice is loaded into the font atlas between two frames (fonts_apply).
+struct PanelFont {
+    const char *setting;
+    ImFont *font;
+    int choice;  // in use (0: Default)
+    int pending; // chosen, loaded before the next frame (-1: nothing)
+};
+static PanelFont sPanelFont[2] = {{"panel_name_font_id", NULL, 0, -1}, {"panel_form_font_id", NULL, 0, -1}};
+ImFont *Ui_FontName(void) { return sPanelFont[0].font; }
+ImFont *Ui_FontForm(void) { return sPanelFont[1].font; }
+
+// A choice of the list as an ImGui font (NULL: none can be used).
+static ImFont *panel_font_load(int choice) {
+    char path[1400];
+    ImGuiIO &io = ImGui::GetIO();
+    for (int i = choice > 0 ? choice : 1; i < MenuText_FontCount(); i++) {
+        if (MenuText_FontFile(i, path, sizeof(path))) {
+            return io.Fonts->AddFontFromFileTTF(path, 48.0f);
+        }
+        if (choice > 0) {
+            break;
+        }
+    }
+    return NULL;
+}
+
+static void fonts_apply(void) {
+    for (PanelFont &pf : sPanelFont) {
+        if (pf.pending < 0) {
+            continue;
+        }
+        ImFont *f = panel_font_load(pf.pending);
+        if (f != NULL) {
+            if (pf.font != NULL) {
+                ImGui::GetIO().Fonts->RemoveFont(pf.font);
+            }
+            pf.font = f;
+            pf.choice = pf.pending;
+            Port_SettingSave(pf.setting, MenuText_FontId(pf.choice));
+            Port_SettingsWrite();
+        }
+        pf.pending = -1;
+    }
+}
+
+// A combo of the game's fonts; the choice is loaded before the next frame.
+static void font_picker(const char *label, PanelFont &pf, const char *tip) {
+    if (ImGui::BeginCombo(label, pf.choice > 0 ? MenuText_FontName(pf.choice) : "Default")) {
+        if (ImGui::Selectable("Default", pf.choice == 0)) {
+            pf.pending = 0;
+        }
+        for (int i = 1; i < MenuText_FontCount(); i++) {
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), pf.choice == i)) {
+                pf.pending = i;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("%s", tip);
 }
 
 static void bars_draw(void) {
@@ -295,6 +383,19 @@ static void bars_draw(void) {
     if (bar > trim) {
         dl->AddImage(ft, ImVec2(lx - bar, y0), ImVec2(lx - trim, y1), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
         dl->AddImage(ft, ImVec2(rx + trim, y0), ImVec2(rx + bar, y1), ImVec2(1.0f, 0.0f), ImVec2(0.0f, 1.0f));
+        // In a fight: each side's fighter over the plain panel, with the border along the picture at half its size
+        // (in proportion, twice down the height) so the fighter has more room (asked for).
+        const int tiles = 2;
+        float thin = trim / tiles;
+        if (sBars == 2 && FightPanels_Draw(dl, lx, rx, y0, y1, bar, thin)) {
+            float th = (y1 - y0) / tiles;
+            for (int i = 0; i < tiles; i++) {
+                float a = y0 + th * i, b = a + th;
+                dl->AddImage(tt, ImVec2(lx - thin, a), ImVec2(lx, b), ImVec2(u0, 0.0f), ImVec2(1.0f, 1.0f));
+                dl->AddImage(tt, ImVec2(rx, a), ImVec2(rx + thin, b), ImVec2(1.0f, 0.0f), ImVec2(u0, 1.0f));
+            }
+            return;
+        }
     }
     dl->AddImage(tt, ImVec2(lx - trim, y0), ImVec2(lx, y1), ImVec2(u0, 0.0f), ImVec2(1.0f, 1.0f));
     dl->AddImage(tt, ImVec2(rx, y0), ImVec2(rx + trim, y1), ImVec2(1.0f, 0.0f), ImVec2(u0, 1.0f));
@@ -349,6 +450,34 @@ static void style() {
     c[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 1.0f, 1.0f, 0.03f);
 }
 
+static void language_init() {
+    const char *override = getenv("BT3_MENU_LANG");
+    char saved[16];
+    Port_SettingText("menu_lang", "", saved, sizeof(saved));
+    sLanguageCount = MenuTranslation_Available(sLanguages, (int)(sizeof(sLanguages) / sizeof(sLanguages[0])));
+    sLanguageChoice = 0;
+    const char *preferred = override != NULL && override[0] != '\0' ? override : saved[0] != '\0' ? saved : "en";
+    for (int i = 0; i < sLanguageCount; i++) if (strcmp(sLanguages[i].locale, preferred) == 0) sLanguageChoice = i;
+}
+
+extern "C" void Ui_LanguageChosen(const char *locale) {
+    if (locale == NULL) return;
+    for (int i = 0; i < sLanguageCount; i++) {
+        if (strcmp(sLanguages[i].locale, locale) == 0) {
+            sLanguageChoice = i;
+            sLanguageRestartPending = false;
+            break;
+        }
+    }
+}
+
+static void language_choose(int choice) {
+    if (choice < 0 || choice >= sLanguageCount) return;
+    MenuTranslation_SaveChoice(sLanguages[choice].locale);
+    sLanguageChoice = choice;
+    sLanguageRestartPending = true;
+}
+
 int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const char *gpu_name) {
     static const char *fonts[] = { // a proportional system font if there is one; else the library's built-in font
         "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -373,6 +502,16 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const c
             break;
         }
     }
+    { // the fight panels' faces: the two chosen ones (sPanelFont), and the list's first where one cannot be had
+        if (io.Fonts->Fonts.Size == 0) {
+            io.Fonts->AddFontDefault(); // (the window's font stays the first)
+        }
+        sFontBold = panel_font_load(0);
+        for (PanelFont &pf : sPanelFont) {
+            pf.choice = MenuText_FontChoice(Port_Setting(pf.setting, 0));
+            pf.font = panel_font_load(pf.choice);
+        }
+    }
     if (device == NULL) { // the OpenGL back end (gs_gl.c), with its context current
         sGL = 1;
         if (!ImGui_ImplSDL3_InitForOpenGL(window, (SDL_GLContext)gl_context) || !ImGui_ImplOpenGL3_Init("#version 330 core")) {
@@ -392,8 +531,9 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const c
     ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll, NULL, 0); // any connected controller works the window
     sDevice = device;
     sReady = true;
+    language_init();
     load_strips(); /* the stage- and song-name overlays; the ready flags stay 0 if there is no strip */
-    if (getenv("BT3_UI_OPEN") != NULL) {
+    if (getenv("BT3_UI_OPEN") != NULL && !MenuTranslation_BootPending()) {
         sForceTab = atoi(getenv("BT3_UI_OPEN"));
         if (sForceTab == 9) { // testing: the online screen
             sForceTab = -1;
@@ -456,7 +596,8 @@ int Ui_QuitAsk(void) {
     sQuit = true;
     PortQuit_Request();
     input_owner();
-    PortA11y_Say(PortA11y_Label("Close the game? Progress that was not saved is lost."), 1);
+    const char *translated = MenuTranslation_PortText(PORT_TEXT_QUIT_CONFIRM);
+    PortA11y_Say(translated ? translated : PortA11y_Label("Close the game? Progress that was not saved is lost."), 1);
     say_quit_button(1, 0);
     PortA11y_Say(PortA11y_Label("Left and right choose, Enter confirms, Escape goes back to the game"), 0);
     return 1;
@@ -483,7 +624,8 @@ static void build_quit(void) {
     }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Exit game", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-        static const char *const kAsk = "Close the game? Progress that was not saved is lost.";
+        const char *translated = MenuTranslation_PortText(PORT_TEXT_QUIT_CONFIRM);
+        const char *kAsk = translated ? translated : "Close the game?\nUnsaved progress will be lost.";
         // the two buttons under the middle of the question (the window is as wide as its text)
         float line = ImGui::CalcTextSize(kAsk).x, pair = 140.0f * 2.0f + ImGui::GetStyle().ItemSpacing.x;
         ImGui::TextUnformatted(kAsk);
@@ -502,7 +644,7 @@ static void build_quit(void) {
         focus = ImGui::IsItemFocused() ? 1 : focus;
         if (ImGui::IsWindowAppearing()) {
             ImGui::SetItemDefaultFocus(); // (on Cancel: a second press of the same button does not close the game)
-            PortA11y_Say(PortA11y_Label(kAsk), 1);
+            PortA11y_Say(translated ? translated : PortA11y_Label("Close the game? Progress that was not saved is lost."), 1);
             say_quit_button(1, 0);
             PortA11y_Say(PortA11y_Label("Left and right choose, Enter confirms, Escape goes back to the game"), 0);
             said = 1;
@@ -1304,9 +1446,32 @@ static void misc_tab(void) {
 }
 
 static void ui_tab(PortVideo &v) {
+    if (sLanguageCount > 0) {
+        bool overridden = getenv("BT3_MENU_LANG") != NULL && getenv("BT3_MENU_LANG")[0] != '\0';
+        ImGui::BeginDisabled(overridden || Port_NetActive());
+        if (ImGui::BeginCombo("Language", sLanguages[sLanguageChoice].name)) {
+            for (int i = 0; i < sLanguageCount; i++) {
+                if (ImGui::Selectable(sLanguages[i].name, i == sLanguageChoice) && i != sLanguageChoice) language_choose(i);
+                if (i == sLanguageChoice) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Game language based on available translations.");
+        bool alwaysPrompt = Port_Setting("language_prompt_always", 0) != 0;
+        if (ImGui::Checkbox("Show language selector at startup", &alwaysPrompt)) {
+            Port_SettingSave("language_prompt_always", alwaysPrompt);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("Show the language list at every normal startup when more than one language is available.");
+        if (sLanguageRestartPending) {
+            ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.35f, 1.0f), "Language saved. It will apply on the next launch.");
+        }
+        ImGui::Separator();
+    }
     if (ImGui::BeginCombo("Menu font", MenuText_FontName(v.menuFont))) {
         for (int i = 0; i < MenuText_FontCount(); i++) {
-            if (!MenuText_FontAvailable(i, 0)) { continue; }
+            if (!MenuText_FontAvailable(i, MENU_TEXT_MENU)) { continue; }
             ImGui::PushID(i);
             if (ImGui::Selectable(MenuText_FontName(i), v.menuFont == i)) { v.menuFont = i; }
             if (v.menuFont == i) { ImGui::SetItemDefaultFocus(); }
@@ -1314,10 +1479,21 @@ static void ui_tab(PortVideo &v) {
         }
         ImGui::EndCombo();
     }
-    ImGui::SetItemTooltip("Original uses the game's sprites. Other fonts replace matching menu labels immediately.\nDecorative lettering keeps its original artwork.");
+    ImGui::SetItemTooltip("Original uses the game's sprites. Other fonts replace matching menu labels immediately.\nBattle announcements have their own setting below.");
+    if (ImGui::BeginCombo("Battle font", MenuText_FontName(v.battleFont))) {
+        for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, MENU_TEXT_BATTLE)) { continue; }
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), v.battleFont == i)) { v.battleFont = i; }
+            if (v.battleFont == i) { ImGui::SetItemDefaultFocus(); }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Choose original battle announcements and HUD text, or any battle font listed in fonts.tsv.");
     if (ImGui::BeginCombo("Dialogue / UI font", MenuText_FontName(v.textFont))) {
         for (int i = 0; i < MenuText_FontCount(); i++) {
-            if (!MenuText_FontAvailable(i, 1)) { continue; }
+            if (!MenuText_FontAvailable(i, MENU_TEXT_DIALOGUE)) { continue; }
             ImGui::PushID(i);
             if (ImGui::Selectable(MenuText_FontName(i), v.textFont == i)) { v.textFont = i; }
             if (v.textFont == i) { ImGui::SetItemDefaultFocus(); }
@@ -1343,17 +1519,24 @@ static void ui_tab(PortVideo &v) {
                               "instead of stretched to the width. Fights keep the wide picture.");
     }
     {
-        static const char *const kBars[] = {"Black", "Border"};
-        int b = sBars > 0;
-        if (ImGui::Combo("Side bars", &b, kBars, 2)) {
+        static const char *const kBars[] = {"Black", "Border", "Fighter panels"};
+        int b = sBars < 0 ? 0 : sBars;
+        if (ImGui::Combo("Side bars", &b, kBars, 3)) {
             sBars = b;
             Port_SettingSave("side_bars", sBars);
             Port_SettingsWrite();
         }
         ImGui::SetItemTooltip("What fills the sides where the picture is narrower than the window:\n"
                               "a 4:3 picture, or the menus with \"Menus in 4:3\", in a wide window.\n"
+                              "Fighter panels: the border, and in a fight each side's fighter with its name and form.\n"
                               "Your own: a folder \"bars\" next to the game with trim.png (the strip along the\n"
                               "picture, kept in proportion) and fill.png (stretched over the rest). Read at start.");
+    }
+    if (sBars == 2) { // the fighter panels' faces
+        font_picker("Name font", sPanelFont[0], "The fighter's name down the panel. The game's fonts, as for the Menu font\n"
+                                                "(a font of your own: add it to fonts/fonts.tsv). Default: the first of the list.");
+        font_picker("Form font", sPanelFont[1], "The form under the portrait. The game's fonts, as for the Menu font.\n"
+                                                "Default: the first of the list.");
     }
 }
 
@@ -1708,17 +1891,17 @@ static void build(void) {
                                       "counts as one of them while the clash lasts, as a tap of the d-pad does.\n"
                                       "It only changes your own pad, so it can be used in online play.");
                 if (cs) {
-                    static const int kQuarters[] = {4, 6, 7, 8};
-                    static const char *const kWorth[] = {"1", "1.5", "1.75", "2"};
-                    int at = 2;
-                    for (int i = 0; i < 4; i++) {
+                    static const int kQuarters[] = {4, 6, 7, 8, 9};
+                    static const char *const kWorth[] = {"1", "1.5", "1.75", "2", "2.25"};
+                    int at = 4;
+                    for (int i = 0; i < 5; i++) {
                         if (kQuarters[i] == Port_ClashSquareX()) {
                             at = i;
                         }
                     }
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(80.0f);
-                    if (ImGui::Combo("per press", &at, kWorth, 4)) {
+                    if (ImGui::Combo("per press", &at, kWorth, 5)) {
                         Port_ClashSquareXSet(kQuarters[at]);
                     }
                     ImGui::SetItemTooltip("What one press of Square is worth. The d-pad has four buttons to tap in turn and the\n"
@@ -1786,6 +1969,21 @@ static volatile int sNoticeNew;
 extern "C" void Port_UiNotice(const char *text) {
     SDL_strlcpy(sNotice, text != NULL ? text : "", sizeof(sNotice));
     sNoticeNew = 1;
+}
+
+// A line in the middle of the screen, the picture behind it dimmed, while the game's thread waits inside a blank
+// (the start of an online match, gs/net.c): drawn by the frames it shows meanwhile (Gs_HoldFrame). `ms` > 0: the
+// wait is over; the line stays that long more, over the game's own pictures and without the dimming. NULL: gone.
+static char sBanner[256];
+static Uint64 sBannerUntil; // 0: while the game waits
+extern "C" void Port_UiBanner(const char *text, int ms) {
+    if (text != NULL) {
+        SDL_strlcpy(sBanner, text, sizeof(sBanner));
+    }
+    if (text == NULL && ms <= 0) {
+        sBanner[0] = '\0';
+    }
+    sBannerUntil = ms > 0 ? SDL_GetTicks() + (Uint64)ms : 0;
 }
 
 // The meter: frames shown and the game's speed, and in an online match the connection. A setting (Video tab).
@@ -2150,9 +2348,13 @@ static bool frame_build(void) {
         chat_close();
     }
     bool chat = online && (sChat || chat_recent());
+    if (sBanner[0] != '\0' && sBannerUntil != 0 && SDL_GetTicks() >= sBannerUntil) {
+        sBanner[0] = '\0';
+    }
+    bool banner = sReady && sBanner[0] != '\0';
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars && !chat)) {
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars && !chat && !banner)) {
         return false;
     }
     if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
@@ -2182,6 +2384,7 @@ static bool frame_build(void) {
         ImGui_ImplSDLGPU3_NewFrame();
     }
     ImGui_ImplSDL3_NewFrame();
+    fonts_apply(); // (a face chosen for the fight panels, between two frames)
     ImGui::NewFrame();
     if (bars) {
         bars_draw();
@@ -2231,6 +2434,28 @@ static bool frame_build(void) {
             }
             dl->AddText(font, size, ImVec2(x, y), IM_COL32(255, 255, 255, 255), text);
         }
+    }
+    if (banner) { // the start of an online match (Port_UiBanner): in the middle, large, outlined
+        ImGuiIO &io = ImGui::GetIO();
+        ImDrawList *dl = ImGui::GetForegroundDrawList();
+        ImFont *font = ImGui::GetFont();
+        float size = ImGui::GetFontSize() * (io.DisplaySize.y >= 900.0f ? 2.0f : 1.6f);
+        float wrap = io.DisplaySize.x * 0.8f;
+        ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, wrap, sBanner);
+        float x = (io.DisplaySize.x - extent.x) * 0.5f, y = (io.DisplaySize.y - extent.y) * 0.5f;
+        if (sBannerUntil == 0) { // still waiting: the picture dimmed
+            dl->AddRectFilled(ImVec2(0.0f, 0.0f), io.DisplaySize, IM_COL32(0, 0, 0, 150));
+        }
+        dl->AddRectFilled(ImVec2(x - size, y - size * 0.6f), ImVec2(x + extent.x + size, y + extent.y + size * 0.6f), IM_COL32(10, 14, 40, 210),
+                          size * 0.4f);
+        for (int ox = -1; ox <= 1; ox++) {
+            for (int oy = -1; oy <= 1; oy++) {
+                if (ox != 0 || oy != 0) {
+                    dl->AddText(font, size, ImVec2(x + (float)ox * 2.0f, y + (float)oy * 2.0f), IM_COL32(0, 0, 0, 230), sBanner, NULL, wrap);
+                }
+            }
+        }
+        dl->AddText(font, size, ImVec2(x, y), IM_COL32(255, 236, 120, 255), sBanner, NULL, wrap);
     }
     if (notice) { // a line over the picture for a few seconds (the end of an online match)
         ImGuiIO &io = ImGui::GetIO();

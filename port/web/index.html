@@ -424,6 +424,12 @@ async function start() {
   const fontFiles = await Promise.all(fontNames.split('\n').filter(Boolean).map((n) =>
     fetch('fonts/' + n).then((r) => (r.ok ? r.arrayBuffer() : null), () => null).then((b) => [n, b])));
   if (!fontNames || fontFiles.some(([, b]) => !b)) log(`fonts: ${fontNames ? `${fontFiles.filter(([, b]) => !b).length} could not be fetched` : 'none found (fonts/files.txt)'}: Tenkaichi Budokai Online's screens have no words without them`);
+  // the bundled translation catalogs (port/translations): put at /translations, where the game looks for them and
+  // copies them into the data folder's game-text/translations (menu_translation.c, docs/port/translations.md)
+  const trNames = await fetch('translations/files.txt').then((r) => (r.ok ? r.text() : ''), () => '');
+  const trFiles = await Promise.all(trNames.split('\n').filter(Boolean).map((n) =>
+    fetch('translations/' + n).then((r) => (r.ok ? r.arrayBuffer() : null), () => null).then((b) => [n, b])));
+  if (!trNames || trFiles.some(([, b]) => !b)) log(`translations: ${trNames ? `${trFiles.filter(([, b]) => !b).length} could not be fetched` : 'none found (translations/files.txt)'}: the English catalogs are made from the disc or built in`);
   s(`fetched ${early.map((r) => `${r} (${pre[r].length} bytes)`).join(', ')}`, 'ok');
   {
     const fp = await fingerprint;
@@ -457,6 +463,11 @@ async function start() {
           if (!b) continue;
           m.FS.mkdirTree(('/fonts/' + n).slice(0, ('/fonts/' + n).lastIndexOf('/')));
           m.FS.writeFile('/fonts/' + n, new Uint8Array(b));
+        }
+        for (const [n, b] of trFiles) {
+          if (!b) continue;
+          m.FS.mkdirTree(('/translations/' + n).slice(0, ('/translations/' + n).lastIndexOf('/')));
+          m.FS.writeFile('/translations/' + n, new Uint8Array(b));
         }
         Object.assign(m.ENV, env);
         Bt3Settings.restore(m.FS);  // the settings saved by an earlier visit

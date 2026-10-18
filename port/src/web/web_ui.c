@@ -40,6 +40,7 @@ void Port_ClashSquareXSet(int quarters);
 void Port_SettingSave(const char *name, int value);
 void Port_SettingsWrite(void);
 int Port_Setting(const char *name, int def);
+void Port_SettingText(const char *name, const char *def, char *out, int size); /* plat_settings.c */
 int Port_GameSpeed(void);               /* plat_stub.c: the player's own game speed, percent (never used online) */
 void Port_GameSpeedSet(int percent);
 void Port_AudioRefresh(void);           /* snd_adx.c: playing streams follow the volumes and the speed at once */
@@ -99,8 +100,11 @@ VIDEO_FIELD(frameSkip)
 VIDEO_FIELD(texPack)
 VIDEO_FIELD(menuFont)
 VIDEO_FIELD(textFont)
+VIDEO_FIELD(battleFont)
 int Port_LateInput(void);           /* plat_stub.c: "Low input lag", the blanks are waited for before the pad read */
 void Port_LateInputSet(int on);
+static int get_language_prompt(void) { return Port_Setting("language_prompt_always", 0) != 0; }
+static void set_language_prompt(int x) { Port_SettingSave("language_prompt_always", x != 0); Port_SettingsWrite(); }
 static void set_late_input(int x) { Port_LateInputSet(x); Port_SettingsWrite(); } /* (the native window writes the file on closing) */
 static int get_texPackCount(void) { PortVideo v; GsGpu_GetSettings(&v); return v.texPackCount; }
 /* Content added from outside the disc: what was found, and whether it has been looked for yet (web_extras.c) */
@@ -211,6 +215,8 @@ static const struct {
     {"smooth_2d", get_smooth2d, set_smooth2d},
     {"menu_font_id", get_menuFont, set_menuFont},
     {"text_font_id", get_textFont, set_textFont},
+    {"battle_font_id", get_battleFont, set_battleFont},
+    {"language_prompt_always", get_language_prompt, set_language_prompt},
     {"late_input", Port_LateInput, set_late_input},
     {"fx_off", get_fxOff, set_fxOff},
     {"glow", get_glow, set_glow},
@@ -555,6 +561,7 @@ EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetStats(void) {
 /* ---- what the native window's UI tab and controller section offer besides the table above (ui.cpp ui_tab, the
    sticks' part): the fonts to choose from, and per player each stick's deadzone and the vibration ---- */
 #include "gs/menu_text.h"
+#include "gs/menu_translation.h"
 /* The fonts of fonts.tsv that can be chosen for the menus (shared 0) or for dialogue and other text (shared 1):
    "number<TAB>name" each, a line feed between (0 is "Original", the game's own). */
 /* The page gets a copy made on the game's thread (REQ_FONT_LIST, between two frames): reading the list can wait for
@@ -562,13 +569,14 @@ EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_NetStats(void) {
    wait ("trying to suspend JS frames": the list stayed at Original and the panel's start-up refresh broke off).
    Asked for again at most every two seconds while it holds no more than Original (the menu fonts are offered once
    the labels are made). "" until the first copy is there; then "changed" tells the page. */
-static char sFontLists[2][4096];
+static char sFontLists[3][4096]; /* menu, dialogue, battle (MENU_TEXT_MENU / _DIALOGUE / _BATTLE) */
+static char sLanguageList[4096]; /* (made with them: font_lists_make) */
 static int sFontListsMade;
 static uint64_t sFontListsAsked;
 
 static void font_lists_make(void) {
     int shared, i;
-    for (shared = 0; shared < 2; shared++) {
+    for (shared = 0; shared < 3; shared++) {
         size_t used = 0;
         sFontLists[shared][0] = '\0';
         for (i = 0; i < MenuText_FontCount() && used < sizeof(sFontLists[shared]) - 1; i++) {
@@ -578,18 +586,67 @@ static void font_lists_make(void) {
             }
         }
     }
+    {   /* the languages too (upstream 0.1.37, docs/port/translations.md): finding the catalogs looks through the data
+           folder, over HTTP here */
+        MenuTranslationOption langs[64];
+        int n = MenuTranslation_Available(langs, (int)(sizeof(langs) / sizeof(langs[0])));
+        size_t used = 0;
+        sLanguageList[0] = '\0';
+        for (i = 0; i < n && used < sizeof(sLanguageList) - 1; i++) {
+            used += (size_t)snprintf(sLanguageList + used, sizeof(sLanguageList) - used, "%s%s\t%s", used ? "\n" : "", langs[i].locale, langs[i].name);
+        }
+    }
     sFontListsMade = 1;
 }
 
-EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_FontList(int shared) {
+/* At most this many times while a list holds no more than Original (the menu and battle fonts are offered once the
+   labels made from the disc are there): a data folder with no font for a kind stays at Original without asking on. */
+#define FONT_LISTS_ASKS 15
+static void font_lists_ask(int incomplete) {
+    static int asks;
     uint64_t now = SDL_GetTicks();
-    shared = shared != 0;
-    if ((!sFontListsMade || strchr(sFontLists[shared], '\n') == NULL) && (sFontListsAsked == 0 || now - sFontListsAsked > 2000) &&
-        gPortVBlanks > 0) {
+    if ((!sFontListsMade || incomplete) && asks < FONT_LISTS_ASKS && (sFontListsAsked == 0 || now - sFontListsAsked > 2000) && gPortVBlanks > 0) {
         sFontListsAsked = now;
+        asks++;
         queue_push(REQ_FONT_LIST, 0, 0);
     }
+}
+
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_FontList(int shared) {
+    shared = shared < 0 || shared > 2 ? 0 : shared;
+    font_lists_ask(strchr(sFontLists[shared], '\n') == NULL);
     return sFontListsMade ? sFontLists[shared] : "";
+}
+
+/* The languages for the panel ("locale<TAB>name" each, a line feed between; "" until the list is made), the one in
+   use for this run and the one chosen for the next (menu_lang: a language is loaded once a run, as natively). */
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_Languages(void) {
+    font_lists_ask(0);
+    return sFontListsMade ? sLanguageList : "";
+}
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_LanguageSaved(void) {
+    static char saved[16];
+    Port_SettingText("menu_lang", "en", saved, sizeof(saved));
+    return saved;
+}
+EMSCRIPTEN_KEEPALIVE void Bt3Ui_LanguageSet(const char *locale) {
+    MenuTranslation_SaveChoice(locale); /* (saved and written: from the next start, the page loaded again) */
+}
+
+/* ---- ui.cpp's two calls the game makes of the native window (upstream 0.1.37) ----
+   Port_UiBanner (gs/net.c, the start of an online match): a line in the middle, the picture dimmed, while the game's
+   thread waits in a blank; ms > 0: the wait is over and the line stays that long more, undimmed; NULL and no ms: gone.
+   The page draws it (net_overlay.js). Ui_LanguageChosen (the start-up language screen, menu/port_language.c): the
+   native window's language list follows it; the page reads the saved choice (Bt3Ui_LanguageSaved) instead. */
+EM_JS(void, page_banner, (const char *text, int ms), {
+    if (Module.bt3Ui && typeof Module.bt3Ui.banner === 'function') Module.bt3Ui.banner(text ? UTF8ToString(text) : null, ms);
+});
+void Port_UiBanner(const char *text, int ms) {
+    page_banner(text, ms);
+}
+void Ui_LanguageChosen(const char *locale) {
+    (void)locale;
+    page_call("changed", 0); /* (the panel reads the choice again) */
 }
 /* stick 0 left, 1 right: -1 the game's own, 0..PORT_DEADZONE_MAX a round one (percent); saved as natively */
 EMSCRIPTEN_KEEPALIVE int Bt3Ui_Deadzone(int player, int stick) {

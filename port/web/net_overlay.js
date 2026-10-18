@@ -31,7 +31,11 @@ class Bt3NetOverlay {
       #net-chat .mine { color: #59d9ff; } #net-chat .theirs { color: #ffd147; }
       #net-chat .head { display: flex; justify-content: space-between; gap: 12px; color: #ffd147; margin-bottom: 4px; }
       #net-chat input[type=text] { width: 100%; box-sizing: border-box; margin-top: 4px; font: inherit; }
-      #net-chat .hint { color: #aaa; font-size: 11.5px; }`;
+      #net-chat .hint { color: #aaa; font-size: 11.5px; }
+      #net-banner { position: absolute; inset: 0; z-index: 6; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+      #net-banner.dim { background: rgba(0, 0, 0, .55); }
+      #net-banner span { font: 700 clamp(18px, 3.2vw, 34px)/1.25 system-ui, sans-serif; color: #fff; text-align: center; padding: 0 5%;
+        text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000; }`;
     document.head.appendChild(style);
     if (getComputedStyle(stage).position === 'static') stage.style.position = 'relative';
     this.meter = Object.assign(document.createElement('div'), { id: 'net-meter', hidden: true });
@@ -51,7 +55,10 @@ class Bt3NetOverlay {
     this.input.setAttribute('aria-label', 'Chat line');
     this.hint = Object.assign(document.createElement('div'), { className: 'hint' });
     this.box.append(this.head, this.lines, this.input, this.hint);
-    stage.append(this.meter, this.box);
+    this.bannerEl = Object.assign(document.createElement('div'), { id: 'net-banner', hidden: true });
+    this.bannerEl.setAttribute('role', 'status');
+    this.bannerEl.appendChild(document.createElement('span'));
+    stage.append(this.meter, this.box, this.bannerEl);
     this.mute.addEventListener('change', () => { this.call('Bt3Ui_ChatMutedSet', null, [this.mute.checked ? 1 : 0]); this.input.focus(); });
     this.input.addEventListener('keydown', (e) => this.onKey(e));
     this.lines.addEventListener('click', (e) => {  // a click copies the line (a room code or an address is passed on this way)
@@ -64,6 +71,18 @@ class Bt3NetOverlay {
   }
 
   call(name, ret, args) { return this.settings.mod.ccall(name, ret, args.map((a) => (typeof a === 'string' ? 'string' : 'number')), args); }
+
+  // the engine (web_ui.c Port_UiBanner, upstream 0.1.37 gs/net.c): the start of an online match. A line in the middle,
+  // the picture dimmed, while the game waits ("Connecting to your rival...", then the rival's name); ms > 0: the wait
+  // is over, the line stays that long more without the dimming; no text and no ms: gone.
+  banner(text, ms) {
+    clearTimeout(this.bannerTimer);
+    if (text !== null) this.bannerEl.firstChild.textContent = text;
+    if (text === null && ms <= 0) { this.bannerEl.hidden = true; return; }
+    this.bannerEl.hidden = this.bannerEl.firstChild.textContent === '';
+    this.bannerEl.classList.toggle('dim', ms <= 0);
+    if (ms > 0) this.bannerTimer = setTimeout(() => { this.bannerEl.hidden = true; }, ms);
+  }
 
   // the engine: the chat key during a match (web_ui.c)
   open() {

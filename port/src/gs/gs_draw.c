@@ -25,6 +25,8 @@
 #include "ui.h"         /* PortVideo and the window helpers */
 #include "gs_texpack.h" /* texture packs (replacement textures) */
 #include "menu_text.h"  /* editable labels in the original menu texture slots */
+#include "menu_translation.h" /* optional language screen artwork */
+#include "menu_labels.h"      /* the chosen language's menu art from the European disc */
 #include <math.h>
 
 /* Stage-name overlay: defined here (C) so both the renderer (gs_gpu.c) and the game's menu (menu_c_e.c) can
@@ -49,6 +51,28 @@ extern int Port_PageAspectMilli(void); /* plat_stub.c: the shape of the page sho
 extern int gPortMusicPercent, gPortSePercent, gPortVoicePercent, gPortStagePercent;
 
 static GsBackend *sBackend;
+
+/* The last picture again, with the overlay on it (Port_UiBanner, ui.cpp), and the window's events taken: for the
+   game's thread while it waits inside a blank (the start of an online match, gs/net.c), so that the window shows
+   something and does not look hung. The frame being recorded is set aside and left as it was for the blank's own
+   end. At most every 1/30 s. Nothing of the game's state is touched (the renderer's memory is not part of it). */
+void Gs_HoldFrame(void) {
+    static uint64_t last;
+    uint64_t now = SDL_GetTicksNS();
+    uint32_t draws = gsDrawCount, verts = gsVertCount, vuVerts = gsVuVertCount, vuIdx = gsVuIdxCount, vuUni = gsVuUniCount;
+
+    if (sBackend == NULL || now - last < 33000000ull) {
+        return;
+    }
+    last = now;
+    gsDrawCount = gsVertCount = gsVuVertCount = gsVuIdxCount = gsVuUniCount = 0;
+    sBackend->frameEnd();
+    gsDrawCount = draws;
+    gsVertCount = verts;
+    gsVuVertCount = vuVerts;
+    gsVuIdxCount = vuIdx;
+    gsVuUniCount = vuUni;
+}
 static int sSmooth2d = 1; /* the setting "2D filtering" (smooth_2d; BT3_2D_SMOOTH=0/1 wins): 1 smooth */
 static int sWholeFrame; /* the draw being set up shows a frame the game read back (the cross-fade) */
 
@@ -123,6 +147,7 @@ typedef struct Tex {
     GsTex tex;
     unsigned last; /* frame last used */
     int replaced;  /* 1: texture pack, 2: vector menu labels, 3: packed shared glyphs */
+    int battleText; /* the source texture has Battle font artwork, even with Original selected */
     uint32_t ow, oh, rw, rh; /* then: the original's size and the replacement's */
     uint32_t amax;           /* and the largest alpha byte of the original */
 } Tex;
@@ -170,6 +195,8 @@ static const char *const kTboNames[TBO_ART_COUNT] = {TBO_ART_LIST(TBO_NAME)};
 #undef TBO_NAME
 static GsTex sTboTex[TBO_ART_COUNT];
 static unsigned char sTboMissing[TBO_ART_COUNT]; /* not found or not readable: not looked for again */
+static GsTex sLangTex[3];
+static unsigned char sLangMissing[3];
 
 /* Makes a texture of RGBA pixels (the GS's alpha) with its smaller copies, each half the one before, averaged by
    2 x 2: these pictures are mostly shown smaller than they are (letters, the crest), and one sample of the full
@@ -267,42 +294,52 @@ static GsTex tbo_text_texture(uint32_t id) {
 }
 
 static GsTex tbo_texture(uint32_t id) {
-    char path[1024];
+    char path[1024] = {0};
     SDL_Surface *png, *rgba;
     uint32_t *px, w, h, x, y;
     GsTex tex;
     const char *base;
+    GsTex *cached;
+    unsigned char *missing;
+    int languageArt = id >= TBO_LANG_BG && id <= TBO_LANG_ARROW_RIGHT;
 
     if (id >= TBO_TEXT_BASE && id < TBO_TEXT_BASE + TBO_TEXT_SLOTS) {
         return tbo_text_texture(id);
     }
-    if (id >= TBO_ART_COUNT || sTboMissing[id]) {
+    if (id >= TBO_ART_COUNT && !languageArt) {
         return gsWhite;
     }
-    if (sTboTex[id] != 0) {
-        return sTboTex[id];
+    cached = languageArt ? &sLangTex[id - TBO_LANG_BG] : &sTboTex[id];
+    missing = languageArt ? &sLangMissing[id - TBO_LANG_BG] : &sTboMissing[id];
+    if (*missing) return gsWhite;
+    if (*cached != 0) {
+        return *cached;
     }
     if (sBackend->texSlotsLeft() <= 0) {
         return gsWhite; /* (no room this frame: the next one tries again) */
     }
-    base = SDL_GetBasePath();
-    snprintf(path, sizeof(path), "%stbo/ui/%s.png", base != NULL ? base : "", kTboNames[id]);
-    png = SDL_LoadPNG(path);
-    if (png == NULL) {
-        snprintf(path, sizeof(path), "tbo/ui/%s.png", kTboNames[id]);
+    if (languageArt) {
+        png = MenuTranslation_ArtPath((int)id, path, sizeof(path)) ? SDL_LoadPNG(path) : NULL;
+    } else {
+        base = SDL_GetBasePath();
+        snprintf(path, sizeof(path), "%stbo/ui/%s.png", base != NULL ? base : "", kTboNames[id]);
         png = SDL_LoadPNG(path);
-    }
-    if (png == NULL) { /* a source checkout: the pictures where they are kept (port/tbo/ui) */
-        snprintf(path, sizeof(path), "port/tbo/ui/%s.png", kTboNames[id]);
-        png = SDL_LoadPNG(path);
+        if (png == NULL) {
+            snprintf(path, sizeof(path), "tbo/ui/%s.png", kTboNames[id]);
+            png = SDL_LoadPNG(path);
+        }
+        if (png == NULL) { /* a source checkout: the pictures where they are kept (port/tbo/ui) */
+            snprintf(path, sizeof(path), "port/tbo/ui/%s.png", kTboNames[id]);
+            png = SDL_LoadPNG(path);
+        }
     }
     rgba = png != NULL ? SDL_ConvertSurface(png, SDL_PIXELFORMAT_RGBA32) : NULL;
     if (png != NULL) {
         SDL_DestroySurface(png);
     }
     if (rgba == NULL) {
-        fprintf(stderr, "bt3: tbo: cannot read %s\n", path);
-        sTboMissing[id] = 1;
+        fprintf(stderr, "bt3: artwork: cannot read %s\n", path);
+        *missing = 1;
         return gsWhite;
     }
     w = (uint32_t)rgba->w;
@@ -312,7 +349,14 @@ static GsTex tbo_texture(uint32_t id) {
         const uint8_t *row = (const uint8_t *)rgba->pixels + (size_t)y * rgba->pitch;
         for (x = 0; x < w; x++) {
             const uint8_t *c = row + x * 4;
-            uint32_t a = ((uint32_t)c[3] * 128 + 127) / 255; /* the GS's alpha: 0x80 is opaque */
+            uint32_t imageAlpha = c[3];
+            uint32_t a;
+            /* These arrow PNGs use 127 for their solid pixels. Preserve the antialiased edge while
+               bringing the chevron itself up to full opacity over the green selection bar. */
+            if (languageArt && id != TBO_LANG_BG) {
+                imageAlpha = imageAlpha * 2 > 255 ? 255 : imageAlpha * 2;
+            }
+            a = (imageAlpha * 128 + 127) / 255; /* the GS's alpha: 0x80 is opaque */
             px[y * w + x] = (uint32_t)c[0] | ((uint32_t)c[1] << 8) | ((uint32_t)c[2] << 16) | (a << 24);
             /* the window: its inside is bands of two teals, which fall anywhere under the lines at the sizes it is
                drawn (src/menu/port_tbo.c, Tb_Panel). Every teal pixel is the darker one; the frame (grey, nearly
@@ -327,8 +371,8 @@ static GsTex tbo_texture(uint32_t id) {
     if (tex == 0) {
         return gsWhite;
     }
-    sTboTex[id] = tex;
-    fprintf(stderr, "bt3: tbo: %s (%ux%u)\n", kTboNames[id], (unsigned)w, (unsigned)h);
+    *cached = tex;
+    fprintf(stderr, "bt3: artwork: %s (%ux%u)\n", path, (unsigned)w, (unsigned)h);
     return tex;
 }
 
@@ -343,7 +387,7 @@ static GsTex texture_get(int ctx) {
     uint64_t tex_t0;
     TexPackImage pack;
     uint32_t packMaxAlpha = 255, rw = tw, rh = th;
-    int packFormat = GS_TEXFMT_RGBA8, replaced = 0, menuText = 0, sharedText = 0;
+    int packFormat = GS_TEXFMT_RGBA8, replaced = 0, menuText = 0, sharedText = 0, battleText = 0;
 
     if (tw > 1024) { tw = 1024; }
     if (th > 1024) { th = 1024; }
@@ -356,9 +400,10 @@ static GsTex texture_get(int ctx) {
     if (bits <= 8) {
         gen = (gen ^ clut_hash(cbp, cpsm, bits == 8 ? 256 : 16)) * 16777619u;
     }
-    /* a font instead of the game's lettering (menu_text.c): the labels and glyph sheets it draws follow the font
-       and the resolution. Nothing is added with both settings on "Original". */
+    /* Font replacements follow their settings and resolution. A new label catalog also refreshes cached Battle
+       texture identities when the artwork is still on "Original". */
     gen ^= MenuText_TexKey((int)tw, (int)th, bits <= 8, (int)tbp, (int)cbp, MenuText_RasterScale(SCALE));
+    gen ^= bits <= 8 ? MenuLabels_ArtKey() : 0; /* the chosen language's menu art ready: decoded again */
     if (sTexPackOn && TexPack_Count() != 0) {
         gen ^= 0x5BD1E995u; /* with the pack and without it are different textures: switching it takes effect at once */
     }
@@ -424,8 +469,11 @@ static GsTex texture_get(int ctx) {
             }
         }
     }
-    px = replaced ? NULL : malloc((size_t)tw * th * 4);
-    for (y = 0; !replaced && y < th; y++) {
+    /* A texture pack still uses the game's source pixels to identify Battle text for widescreen geometry. */
+    px = !replaced || MenuText_MayHaveBattleTexture((int)tw, (int)th, bits <= 8) ?
+         malloc((size_t)tw * th * 4) : NULL;
+    if (!replaced && px == NULL) { return gsWhite; }
+    for (y = 0; px != NULL && y < th; y++) {
         for (x = 0; x < tw; x++) {
             uint32_t c = Gs_VramRead(tbp, tbw, psm, x, y), a;
             if (bits > 8) {
@@ -440,6 +488,16 @@ static GsTex texture_get(int ctx) {
                         above 0x80 matter: the see-through pass gives palettes alpha 0xF9 to write an id */
             px[y * tw + x] = c;
         }
+    }
+    if (px != NULL && !replaced && bits <= 8) {
+        MenuLabels_ArtSwap((unsigned char *)px, (int)tw, (int)th); /* the European picture, in the chosen language */
+    }
+    if (px != NULL) {
+        battleText = MenuText_IsBattleTexture((const uint8_t *)px, (int)tw, (int)th, bits <= 8);
+    }
+    if (replaced) {
+        free(px);
+        px = NULL;
     }
     if (!replaced && px != NULL) {
         int mw, mh;
@@ -508,6 +566,7 @@ static GsTex texture_get(int ctx) {
     t->gen = gen;
     t->last = gGsFrame;
     t->replaced = replaced ? 1 : sharedText ? 3 : menuText ? 2 : 0;
+    t->battleText = battleText;
     t->ow = tw;
     t->oh = th;
     t->rw = rw;
@@ -1046,6 +1105,7 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
     if (!draw_state(ctx, type == 1 ? 1 : type == 0 ? 2 : 0, type == 6, 0, &d, &us, &vs)) {
         return;
     }
+    int battleText = !d.tex_is_target && sLast != NULL && sLast->tex == d.tex && sLast->battleText;
     int tbo = (prim >> 4) & 1 && ((t0 >> 20) & 0x3F) == TBO_PSM; /* a Tenkaichi Budokai Online picture */
     if (type == 6 || fst) {
         d.sampler &= ~GS_SAMPLER_MIPMAPS; /* 2D art: never the smaller copies of a replacement */
@@ -1210,7 +1270,10 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
     /* (Not the cross-fade's picture: it is the whole frame as it was shown, wide view and all, drawn back over the
        whole frame in strips. Each strip is narrower than the screen, so the rule below took it for a piece of 2D
        art and the old shot was drawn at three quarters of the width over the new one: seen by the user.) */
-    if (Port_IsWide() && (!gPortMenuMode || (gsAnchor == 7 && Port_PageAspectMilli() > 1340)) && !sWholeFrame && !d.tex_is_target && !tbo && (type == 6 || fst) && gsTargets[d.target].fbp == (uint32_t)gGsMainFbp) {
+    if (Port_IsWide() && (!gPortMenuMode || (gsAnchor == 7 && Port_PageAspectMilli() > 1340) ||
+                          (battleText && Port_PageAspectMilli() > 1340)) &&
+        !sWholeFrame && !d.tex_is_target && !tbo && (type == 6 || fst || battleText || gsAnchor == 8) &&
+        gsTargets[d.target].fbp == (uint32_t)gGsMainFbp) {
         /* Widescreen. The 3D scene is projected for a 16:9 picture by the game itself; 2D art is laid out for
            4:3 and would come out a third too wide. Each 2D piece is narrowed to 3/4 about a fixed point:
              (not in the menus: their pages are shown whole, stretched to the width; see Port_WideFactor)
@@ -1220,7 +1283,9 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
            Only what is drawn into the picture itself: the work buffers of the effects and of the shadow are
            filled with 2D rectangles too, and narrowing those left unfilled bands and stripes in them.
            Left alone: full-screen fills and fades (untextured, full height), and in a fight sprites as wide as
-           the screen (flashes, speed lines) and 2D triangles outside the HUD. */
+           the screen (flashes, speed lines) and 2D triangles outside the HUD. Battle text is kept in proportion
+           even when its atlas piece is almost as wide as the screen. The announcement's mask, streak and rotated
+           pieces use the same scale as its word, so their alpha and additive passes remain aligned. */
         float x0 = gsVerts[d.first].x, x1 = x0, y0 = gsVerts[d.first].y, y1 = y0, pivot = -1.0f;
         uint32_t k;
         for (k = d.first; k < gsVertCount; k++) {
@@ -1229,11 +1294,11 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
             if (gsVerts[k].y < y0) { y0 = gsVerts[k].y; }
             if (gsVerts[k].y > y1) { y1 = gsVerts[k].y; }
         }
-        if (type == 6 && !d.mode[0] && y1 - y0 >= 400.0f) {
+        if (type == 6 && !d.mode[0] && y1 - y0 >= 400.0f && !battleText) {
             pivot = -1.0f;
-        } else if (x1 - x0 >= 480.0f && gsAnchor != 5 && gsAnchor != 6) {
-            /* as wide as the screen (the bands and streaks of READY / FIGHT, flashes, speed lines): meant to
-               reach from edge to edge, so it keeps the full width */
+        } else if (x1 - x0 >= 480.0f && gsAnchor != 5 && gsAnchor != 6 && gsAnchor != 8 && !battleText) {
+            /* Other screen-wide flashes and speed lines still reach the edges. Announcement bands and streaks
+               follow their word's width so the mask and additive layers stay together. */
             pivot = -1.0f;
         } else if (gsAnchor == 7) {
             /* Loading animations keep their left margin and sprite proportions, even in menu mode.
@@ -1517,8 +1582,8 @@ void GsGpu_Native(int effect) {
 
     /* 1 = outline. 2 (the see-through tint) is drawn by the generic table pass now (depth_clut), from the game's
        own table. */
-    if (effect >= 0x15 && effect <= 0x17) {
-        /* 5/6: extended life bar, anchored left/right even beyond 480 pixels; 7: loading page, anchored left. */
+    if (effect >= 0x15 && effect <= 0x18) {
+        /* 5/6: extended life bar; 7: loading page; 8: an announcement and all its effect layers. */
         gsAnchor = effect - 0x10;
         return;
     }
@@ -1827,6 +1892,7 @@ void GsGpu_GetSettings(PortVideo *v) {
     v->texPack = sTexPackOn;
     v->texPackCount = TexPack_Count();
     v->menuFont = MenuText_GetFont();
+    v->battleFont = MenuText_GetBattleFont();
     v->textFont = MenuText_GetSharedFont();
     v->smooth2d = sSmooth2d;
     v->vsync = Port_Setting("vsync", 0) != 0;
@@ -1871,7 +1937,9 @@ void GsGpu_SetSettings(const PortVideo *v) {
     sDisplaySetting = v->display;
     sTexPackOn = v->texPack != 0;
     MenuText_SetFont(v->menuFont);
+    MenuText_SetBattleFont(v->battleFont);
     MenuText_SetSharedFont(v->textFont);
+    Port_SettingSave("battle_font_id", MenuText_BattleFontIdToSave());
     Port_SettingSave("text_font_id", MenuText_FontId(MenuText_GetSharedFont()));
     Port_SettingSave("menu_font_id", MenuText_FontIdToSave());
     sSmooth2d = v->smooth2d != 0;
@@ -1959,6 +2027,7 @@ int GsGpu_Init(void) {
     gsFxOff = (unsigned)(getenv("BT3_FX_OFF") != NULL ? atoi(getenv("BT3_FX_OFF")) : Port_Setting("fx_off", 0)) & 63;
     gsGlowPercent = getenv("BT3_GLOW") != NULL ? atoi(getenv("BT3_GLOW")) : Port_Setting("glow", GLOW_DEFAULT);
     MenuText_SetFontId(Port_Setting("menu_font_id", 0));
+    MenuText_SetBattleFontId(Port_Setting("battle_font_id", 0));
     MenuText_SetSharedFontId(Port_Setting("text_font_id", 0));
     sTexPackOn = Port_Setting("texture_pack", 1) != 0;
     sSmooth2d = getenv("BT3_2D_SMOOTH") != NULL ? atoi(getenv("BT3_2D_SMOOTH")) != 0 : Port_Setting("smooth_2d", 1) != 0;

@@ -310,17 +310,21 @@ def link():
     for name in names:
         (tbo / name).write_bytes((ROOT / "port/tbo/ui" / name).read_bytes())
     (tbo / "files.txt").write_text("\n".join(n for n in names if n.endswith(".png")) + "\n", newline="\n")
-    # the TrueType fonts (port/third_party/fonts, with their licences): Tenkaichi Budokai Online writes its headings,
-    # buttons and talk with them (gs/tbo_text.c, menu_text.c); the page puts them at /fonts, where menu_text.c looks
-    # ("fonts/fonts.tsv" next to the program); files.txt lists them for it
-    fonts_src, fonts = ROOT / "port/third_party/fonts", WEB / "fonts"
-    if fonts.exists():
-        shutil.rmtree(fonts)
-    rels = sorted(f.relative_to(fonts_src).as_posix() for f in fonts_src.rglob("*") if f.is_file())
-    for rel in rels:
-        (fonts / rel).parent.mkdir(parents=True, exist_ok=True)
-        (fonts / rel).write_bytes((fonts_src / rel).read_bytes())
-    (fonts / "files.txt").write_text("\n".join(r for r in rels if r.endswith((".ttf", ".tsv"))) + "\n", newline="\n")
+    # Folders the page puts into the program's file system at the same name (the program's folder is "/"), each with a
+    # files.txt of what it fetches:
+    #   - the TrueType fonts (port/third_party/fonts, with their licences): Tenkaichi Budokai Online and the menu,
+    #     battle and dialogue fonts write with them (gs/tbo_text.c, menu_text.c look for "fonts/fonts.tsv");
+    #   - the bundled translation catalogs (port/translations, upstream 0.1.37): menu_translation.c looks for
+    #     "translations/" and copies them into gamedata/game-text/translations/ (docs/port/translations.md)
+    for src_rel, name, kinds in (("port/third_party/fonts", "fonts", (".ttf", ".tsv")), ("port/translations", "translations", (".json",))):
+        src, dst = ROOT / src_rel, WEB / name
+        if dst.exists():
+            shutil.rmtree(dst)
+        rels = sorted(f.relative_to(src).as_posix() for f in src.rglob("*") if f.is_file())
+        for rel in rels:
+            (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+            (dst / rel).write_bytes((src / rel).read_bytes())
+        (dst / "files.txt").write_text("\n".join(r for r in rels if r.endswith(kinds)) + "\n", newline="\n")
     if r.returncode == 0:  # the game's variables in bt3.wasm, for state.c's checksum (bt3.mem; wasm_state.py)
         st = run([sys.executable, str(ROOT / "port/tools/wasm_state.py")])
         print((st.stdout or st.stderr).strip())

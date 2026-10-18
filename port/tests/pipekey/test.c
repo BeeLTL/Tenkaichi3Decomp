@@ -1,7 +1,8 @@
 /* Test of the pipeline key (port/src/gs/gs_pipekey.c) against the code it replaced.
  *
  * REFERENCE below is a verbatim copy of the encoding as it was in gs_draw.c (blend_key, pipeline_get; upstream 0.1.31's,
- * with bit 23, the fragment shader without its depth output) and of the blend factors the OpenGL back end chose from it
+ * with bit 23, the fragment shader without its depth output, and 0.1.37's bit 9, the source scaled by its alpha in the
+ * shader) and of the blend factors the OpenGL back end chose from it
  * (gs_gl.c apply_blend), before the shared decoder existed. Every combination of the inputs is checked, with the
  * variant switched on and off (BT3_NZ):
  *   1. the new key equals the old key (the values are kept between runs, and the Vulkan back end decodes them itself);
@@ -22,7 +23,8 @@ static uint32_t ref_blend_key(uint64_t alpha, int abe) {
         int c = (A == i) - (B == i), one = D == i;
         k[i] = c == 0 ? one : c > 0 ? (one ? 5 : 2) : (one ? 4 : 3);
     }
-    return 1u | (uint32_t)k[0] << 1 | (uint32_t)k[1] << 4 | (uint32_t)C << 7;
+    return 1u | (uint32_t)k[0] << 1 | (uint32_t)k[1] << 4 | (uint32_t)C << 7 |
+           (uint32_t)(C == 0 && (k[0] == 2 || k[0] == 3) && k[1] <= 1) << 9;
 }
 /* (upstream 0.1.35.2 pipeline_get: bit 24 the flat-shadow stencil mask, given by the caller; not in the table pass) */
 static uint32_t ref_key(uint64_t alpha, int abe, uint64_t test, uint64_t zb, uint32_t m, int topo, int vu, int nz, int shadow) {
@@ -49,6 +51,9 @@ static void ref_gl_blend(uint32_t bkey, char f[2], char *op, int *csrc) {
     int k[2] = {(int)((bkey >> 1) & 7), (int)((bkey >> 4) & 7)}, C = (int)((bkey >> 7) & 3), i;
     for (i = 0; i < 2; i++) {
         f[i] = k[i] == 0 ? 'Z' : k[i] == 1 || k[i] == 5 ? '1' : k[i] == 4 ? 'i' : 'c';
+    }
+    if (bkey & (1u << 9)) {
+        f[0] = '1'; /* (upstream 0.1.37: the shader scaled the source by its alpha) */
     }
     *op = k[0] == 3 ? 'R' : k[1] == 3 ? 'S' : 'A';
     *csrc = C == 0 ? 0 : C == 1 ? 1 : 2;
@@ -98,7 +103,7 @@ int main(void) {
             GsBlendDesc bd = GsBlend_Describe(d.blend);
             char nop = bd.op == GS_OP_ADD ? 'A' : bd.op == GS_OP_SUBTRACT ? 'S' : 'R';
             int nc = bd.c == GS_BLEND_C_SRC_ALPHA ? 0 : bd.c == GS_BLEND_C_DST_ALPHA ? 1 : 2;
-            ref_gl_blend(want & 0x1FF, f, &op, &csrc);
+            ref_gl_blend(want & 0x3FF, f, &op, &csrc);
             if ((factor_char(bd.srcFactor) != f[0] || factor_char(bd.dstFactor) != f[1] || nop != op || nc != csrc) && bad[2]++ < 5) {
                 printf("  blend differs for key %08x: new %c %c %c C%d, old %c %c %c C%d\n", key, factor_char(bd.srcFactor),
                        factor_char(bd.dstFactor), nop, nc, f[0], f[1], op, csrc);

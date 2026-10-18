@@ -58,7 +58,7 @@ typedef struct GsParams {
     float misc[4];
     float rect[4];
     float orig[4];
-    float extra[4]; /* x: the depth buffer's largest value (GsDraw_DepthMax) */
+    float extra[4]; /* x: the depth buffer's largest value (GsDraw_DepthMax); y: 1 = the shader scales the colour by its alpha */
 } GsParams;
 /* the full-screen passes' Params (dclut.frag, outline.frag, blit.frag): one vec4. Stored in a GsParams-sized slot, so
    that one bind group of sizeof(GsParams) serves every fragment stage. */
@@ -1556,6 +1556,7 @@ static void replay_primitive(const GsDraw *d) {
     memcpy(p.rect, d->rect, sizeof(p.rect));
     memcpy(p.orig, d->orig, sizeof(p.orig));
     p.extra[0] = GsDraw_DepthMax(d);
+    p.extra[1] = GsPipeKey_SrcInShader(sPipes[d->pipeline].key) ? 1.0f : 0.0f; /* (upstream 0.1.37: the source scaled by its alpha) */
     if (!sR.haveLastParams || memcmp(&p, &sR.lastParams, sizeof(p)) != 0) {
         sR.lastParams = p;
         sR.lastParamsOffset = uniforms_push(&p, sizeof(p), sUniforms.paramsSlot);

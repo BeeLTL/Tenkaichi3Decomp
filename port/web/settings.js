@@ -61,6 +61,9 @@ const PANEL = [
     { key: 'texture_pack', label: 'Texture pack', type: 'checkbox', when: (s) => s.get('texture_pack_count') > 0,
       help: 'Replacement textures found next to the game.' },
     { heading: 'Text' },
+    { language: true },
+    { key: 'language_prompt_always', label: 'Show the language screen at every start', type: 'checkbox',
+      help: 'Otherwise the language screen shows only while more than one language is there and none is chosen yet.' },
     { fonts: true },
   ] },
   { tab: 'Effects', items: [
@@ -202,6 +205,7 @@ class Bt3Settings {
       cardWritten: () => this.saves.cardWritten(),
       copy: (text) => this.copyText(text),
       chatOpen: () => this.netOverlay.open(),
+      banner: (text, ms) => this.netOverlay.banner(text, ms),
     };
   }
 
@@ -259,6 +263,7 @@ class Bt3Settings {
         page.appendChild(item.heading ? el('h3', {}, item.heading) : item.bindings ? this.buildBindings() : item.controllers ? this.controllers.root : item.saves ? this.saves.buildUi()
                          : item.unlock ? this.buildUnlock() : item.added ? this.buildAdded() : item.touch ? this.touch.buildSettings()
                          : item.online ? this.buildOnline() : item.fonts ? this.buildFonts() : item.sticks ? this.buildSticks()
+                         : item.language ? this.buildLanguage()
                          : this.buildControl(item));
       }
       if (t.tab === 'Video') page.appendChild(this.buildRenderer());
@@ -580,12 +585,41 @@ class Bt3Settings {
     return box;
   }
 
+  // The language (upstream 0.1.37, docs/port/translations.md): the catalogs found (English is bundled; others are a
+  // translator's or made from a European disc), the engine's own list. Loaded once a run, as natively: a choice is
+  // kept and used from the next start (the page loaded again).
+  buildLanguage() {
+    const id = 'set-language', row = el('div', { class: 'row' });
+    const select = el('select', { id, 'aria-describedby': `${id}-help` });
+    const help = el('p', { class: 'help', id: `${id}-help` });
+    select.addEventListener('change', () => {
+      this.call('Bt3Ui_LanguageSet', null, [select.value]);
+      this.persist();
+      this.notice('The language is used from the next start: reload the page.');
+      this.refresh();
+    });
+    row.append(el('label', { for: id }, 'Language'), select, help);
+    this.refreshers.push(() => {
+      const list = this.call('Bt3Ui_Languages', 'string', []).split('\n').filter(Boolean).map((l) => l.split('\t'));
+      if (list.length !== select.options.length) {
+        select.replaceChildren(...list.map(([locale, name]) => el('option', { value: locale }, name)));
+      }
+      select.value = this.call('Bt3Ui_LanguageSaved', 'string', []);
+      select.disabled = list.length < 2;
+      help.textContent = list.length < 2
+        ? 'Only English is there. Another language comes as a catalog in the data folder\'s game-text/translations (the repository\'s docs/port/translations.md).'
+        : 'Used from the next start (the page loaded again). Menu art shows translated words with a Menu or Battle font other than Original.';
+    });
+    return row;
+  }
+
   // The fonts (the native window's UI tab): fonts.tsv's, as the engine lists them (web_ui.c Bt3Ui_FontList); 0 is
   // "Original", the game's own lettering. Menu font: matching menu labels; Dialogue / UI font: dialogue, subtitles,
   // ordinary text.
   buildFonts() {
     const box = el('div');
     const rows = [['menu_font_id', 'Menu font', 0, 'Original uses the game\'s own lettering. Another font replaces matching menu labels at once; decorative lettering keeps its artwork.'],
+      ['battle_font_id', 'Battle font', 2, 'The words of a fight (announcements, the HUD). Original keeps the game\'s own artwork.'],
       ['text_font_id', 'Dialogue / UI font', 1, 'The font of dialogue, subtitles and ordinary text. Original keeps the game\'s glyphs; placement, colours, shadows and icons are kept.']];
     for (const [key, label, shared, help] of rows) {
       const id = `set-${key}`, row = el('div', { class: 'row' });

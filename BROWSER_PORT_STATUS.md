@@ -598,6 +598,30 @@ Also: a fault in the page's panel no longer ends the game (it did: a panel bug s
 engine's calls into the page catch it, log it and show a notice. Regression: demo 12/12 identical, trace unchanged on
 both renderers.
 
+### Upstream 0.1.37 merged (2026-10-18) — verified
+
+Merged from 0.1.35.2 through 0.1.35.4, 0.1.36 and 0.1.37 (33 commits): translations (a language screen, menu art,
+the game's UI text and the port's own lines; the European disc for Spanish, German, French and Italian), battle
+fonts, the online match's start line and a start without the ping-long pause, the Random item-set fix, low input
+lag with smooth motion, the clash Square worth 2.25, and the Solar Flare's whiteout (a source alpha above 0x80).
+
+- **Conflicts:** two, both from the whiteout fix (upstream's `blend_key` bit 9 and its GL blend). Carried into the
+  shared pipeline key (`gs_pipekey.c`: `GsBlend.srcInShader`, the same bit 9, so upstream's Vulkan back end reads
+  our keys alike; `GsBlend_Describe` takes the source with factor one), and `Params.extra.y` set by both browser
+  back ends (`gs_gl.c`, `web/gs_wgpu.c`); `gs.frag`'s line merged as upstream wrote it. `port/tests/pipekey`: the
+  reference moved to 0.1.37's encoding; PASS, 39,813,120 combinations.
+- **ui.cpp's new calls:** `Port_UiBanner` (net.c at every online match's start: it would have been an aborting stub)
+  drawn by the page (`net_overlay.js`); `Ui_LanguageChosen` (the language screen) answered in `web_ui.c`. Stubs back
+  to 103.
+- **The page:** the bundled translation catalogs shipped like the fonts (`web/translations`, at `/translations`);
+  Battle font, Language and "Show the language screen at every start" in the Video tab (the language list made on
+  the game's thread, as the fonts').
+- **Pictures:** boot 12 / 12 identical on both renderers. The demo fight differs (0 / 12) in its additive glows:
+  the whiteout fix brightens them as upstream intends. Checked: the merged build with bit 9 switched off gives
+  12 / 12 identical to 0.1.35.2 on WebGL 2 and on WebGPU, so every difference is that fix. The fight trace is
+  unchanged (`8ad198bf58dbed33`).
+- **Tests:** WGSL (11 shaders), page tests, `settings_more`, `signal_setting`, the Worker's, O2 to O5: all pass.
+
 ### Upstream 0.1.31 integrated (2026-10-12) — verified
 **Upstream commit**: `fff151eb989ecaa5a0aaeb637984e33e07ef3ad9` (z3xox/Tenkaichi3Decomp `main`, "Release 0.1.31"): 39
 commits on top of the previous base `80e0dd4` (0.1.25 to 0.1.31). **Strategy**: a merge of `origin/main` into

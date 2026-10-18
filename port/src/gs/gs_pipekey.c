@@ -11,6 +11,7 @@
 #define KEY_BLEND_SRC_SHIFT 1
 #define KEY_BLEND_DST_SHIFT 4
 #define KEY_BLEND_C_SHIFT 7
+#define KEY_BLEND_SRC_IN_SHADER_SHIFT 9 /* (upstream 0.1.37: the same bit as its blend_key's) */
 #define KEY_DEPTH_TEST_SHIFT 10
 #define KEY_DEPTH_WRITE_SHIFT 12
 #define KEY_TOPOLOGY_SHIFT 13
@@ -56,6 +57,8 @@ static GsBlend blend_from_alpha(uint64_t alpha, int abe) {
     b.src = k[0];
     b.dst = k[1];
     b.c = (GsBlendC)ALPHA_C(alpha);
+    b.srcInShader = b.c == GS_BLEND_C_SRC_ALPHA && (k[0] == GS_BLEND_K_C || k[0] == GS_BLEND_K_MINUS_C) &&
+                    (k[1] == GS_BLEND_K_ZERO || k[1] == GS_BLEND_K_ONE);
     return b;
 }
 
@@ -103,7 +106,7 @@ uint32_t GsPipeKey_Encode(const GsPipeState *s) {
 
     if (s->blend.enabled) {
         key |= KEY_BLEND_ENABLE | (uint32_t)s->blend.src << KEY_BLEND_SRC_SHIFT | (uint32_t)s->blend.dst << KEY_BLEND_DST_SHIFT |
-               (uint32_t)s->blend.c << KEY_BLEND_C_SHIFT;
+               (uint32_t)s->blend.c << KEY_BLEND_C_SHIFT | (uint32_t)(s->blend.srcInShader != 0) << KEY_BLEND_SRC_IN_SHADER_SHIFT;
     }
     if (s->tablePass) {
         return key | 1u << KEY_TABLE_PASS_SHIFT;
@@ -118,6 +121,7 @@ void GsPipeKey_Decode(uint32_t key, GsPipeState *s) {
     s->blend.src = (GsBlendK)((key >> KEY_BLEND_SRC_SHIFT) & KEY_BLEND_K_MASK);
     s->blend.dst = (GsBlendK)((key >> KEY_BLEND_DST_SHIFT) & KEY_BLEND_K_MASK);
     s->blend.c = (GsBlendC)((key >> KEY_BLEND_C_SHIFT) & KEY_TWO_BITS);
+    s->blend.srcInShader = (int)((key >> KEY_BLEND_SRC_IN_SHADER_SHIFT) & 1u);
     s->depthTest = (GsDepthTest)((key >> KEY_DEPTH_TEST_SHIFT) & KEY_TWO_BITS);
     s->depthWrite = (int)((key >> KEY_DEPTH_WRITE_SHIFT) & 1u);
     s->topology = (GsTopology)((key >> KEY_TOPOLOGY_SHIFT) & KEY_TWO_BITS);
@@ -140,9 +144,13 @@ static GsBlendFactor blend_factor(GsBlendK k) {
     return GS_FACTOR_C;
 }
 
+int GsPipeKey_SrcInShader(uint32_t key) {
+    return (key & KEY_BLEND_ENABLE) != 0 && ((key >> KEY_BLEND_SRC_IN_SHADER_SHIFT) & 1u) != 0;
+}
+
 GsBlendDesc GsBlend_Describe(GsBlend b) {
     GsBlendDesc d;
-    d.srcFactor = blend_factor(b.src);
+    d.srcFactor = b.srcInShader ? GS_FACTOR_ONE : blend_factor(b.src); /* (the shader has scaled it: srcInShader) */
     d.dstFactor = blend_factor(b.dst);
     d.op = b.src == GS_BLEND_K_MINUS_C ? GS_OP_REVERSE_SUBTRACT : b.dst == GS_BLEND_K_MINUS_C ? GS_OP_SUBTRACT : GS_OP_ADD;
     d.c = b.c;

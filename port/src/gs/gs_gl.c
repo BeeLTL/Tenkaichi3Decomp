@@ -1166,6 +1166,7 @@ static void frame_end(void) {
         memcpy(fu.rect, d->rect, sizeof(fu.rect));
         memcpy(fu.orig, d->orig, sizeof(fu.orig));
         fu.extra[0] = GsDraw_DepthMax(d);
+        fu.extra[1] = GsPipeKey_SrcInShader(sPipes[d->pipeline].key) ? 1.0f : 0.0f; /* (the source scaled by its alpha) */
         if (!haveFu || memcmp(&fu, &lastFu, sizeof(fu)) != 0) {
             set_params(&fu, sizeof(fu));
             memcpy(&lastFu, &fu, sizeof(fu));
