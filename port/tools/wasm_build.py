@@ -300,7 +300,7 @@ def link():
             break
         need |= more
         write_stubs()
-    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "net_overlay.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
+    for f in ("index.html", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "net_overlay.js", "screen_overlay.js", "saves.js", "touch.js", "gamepad.svg"):  # the page (port/web)
         (WEB / f).write_bytes((ROOT / "port/web" / f).read_bytes())
     # Tenkaichi Budokai Online's pictures (port/tbo/ui, with their credits): the page puts them at /tbo/ui in the game's
     # file system (the program's folder is "/"), where gs_draw.c tbo_texture looks; files.txt lists them for it
@@ -316,7 +316,8 @@ def link():
     #     battle and dialogue fonts write with them (gs/tbo_text.c, menu_text.c look for "fonts/fonts.tsv");
     #   - the bundled translation catalogs (port/translations, upstream 0.1.37): menu_translation.c looks for
     #     "translations/" and copies them into gamedata/game-text/translations/ (docs/port/translations.md)
-    for src_rel, name, kinds in (("port/third_party/fonts", "fonts", (".ttf", ".tsv")), ("port/translations", "translations", (".json",))):
+    for src_rel, name, kinds in (("port/third_party/fonts", "fonts", (".ttf", ".tsv")), ("port/translations", "translations", (".json",)),
+                                ("port/assets/bars", "bars", (".png",))):  # (the side bars' art: the page draws it, screen_overlay.js)
         src, dst = ROOT / src_rel, WEB / name
         if dst.exists():
             shutil.rmtree(dst)

@@ -32,6 +32,7 @@ class Bt3NetOverlay {
       #net-chat .head { display: flex; justify-content: space-between; gap: 12px; color: #ffd147; margin-bottom: 4px; }
       #net-chat input[type=text] { width: 100%; box-sizing: border-box; margin-top: 4px; font: inherit; }
       #net-chat .hint { color: #aaa; font-size: 11.5px; }
+      #net-banner[hidden], #net-chat .head[hidden], #net-chat [hidden] { display: none; } /* (a display: flex would override the hidden attribute) */
       #net-banner { position: absolute; inset: 0; z-index: 6; display: flex; align-items: center; justify-content: center; pointer-events: none; }
       #net-banner.dim { background: rgba(0, 0, 0, .55); }
       #net-banner span { font: 700 clamp(18px, 3.2vw, 34px)/1.25 system-ui, sans-serif; color: #fff; text-align: center; padding: 0 5%;
@@ -124,18 +125,31 @@ class Bt3NetOverlay {
   update() {
     const s = this.settings;
     if (!s.engineReady || !s.mod) return;
-    // the meter
-    const stats = s.get('meter') === 1 ? this.call('Bt3Ui_NetStats', 'string', []) : '';
-    if (stats) {
-      const [ping, rbs, rbf, waits, waitMs, rollMax, delay, auto, relayed] = stats.split(',').map(Number);
-      this.meter.textContent = [
-        ping >= 0 ? `ping ${ping} ms${relayed ? ' (relay)' : ''}` : 'ping ...',
-        rollMax > 0 ? `rollbacks ${rbs}/s, ${(rbf / 10).toFixed(1)} frames` : 'rollback off',
-        `waited ${waitMs} ms/s (${waits} times)`,
-        `delay ${delay}${auto ? ' (auto)' : ''}, rollback up to ${rollMax}`,
-      ].join('\n');
+    // the meter (as ui.cpp meter_draw): the pictures shown a second and the game's speed (its blanks a second as a
+    // share of 60; a fight shows 30 pictures a second and the menus 60, as on the console), and during an online
+    // match the connection
+    const meterOn = s.get('meter') === 1;
+    if (meterOn) {
+      const now = performance.now(), frame = s.get('frame'), blanks = s.get('vblanks');
+      if (!this.count || now - this.count.t < 0 || frame < this.count.frame) this.count = { t: now, frame, blanks, fps: 0, speed: 0 };
+      else if (now - this.count.t >= 500) {
+        this.count = { t: now, frame, blanks, fps: (frame - this.count.frame) * 1000 / (now - this.count.t),
+          speed: (blanks - this.count.blanks) * 1000 / (now - this.count.t) / 60 * 100 };
+      }
+      const lines = [`${this.count.fps.toFixed(0)} fps   speed ${this.count.speed.toFixed(0)}%`];
+      const stats = this.call('Bt3Ui_NetStats', 'string', []);
+      if (stats) {
+        const [ping, rbs, rbf, waits, waitMs, rollMax, delay, auto, relayed] = stats.split(',').map(Number);
+        lines.push(ping >= 0 ? `ping ${ping} ms${relayed ? ' (relay)' : ''}` : 'ping ...',
+          rollMax > 0 ? `rollbacks ${rbs}/s, ${(rbf / 10).toFixed(1)} frames` : 'rollback off',
+          `waited ${waitMs} ms/s (${waits} times)`,
+          `delay ${delay}${auto ? ' (auto)' : ''}, rollback up to ${rollMax}`);
+      }
+      this.meter.textContent = lines.join('\n');
+    } else {
+      this.count = null;
     }
-    this.meter.hidden = !stats;
+    this.meter.hidden = !meterOn;
     // the chat
     const online = this.call('Bt3Ui_ChatOnline', 'number', []) === 1;
     if (!online && this.typing) this.close();  // (the match ended while a line was typed)

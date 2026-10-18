@@ -18,7 +18,7 @@ import os, pathlib, shutil, sys, zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 WEB = ROOT / "port/build/web"
-PAGE = ["index.html", "bt3.js", "bt3.wasm", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "net_overlay.js", "bt3.mem", "saves.js", "touch.js", "gamepad.svg"]
+PAGE = ["index.html", "bt3.js", "bt3.wasm", "bt3_data.js", "settings.js", "dashboard.js", "controllers.js", "toasts.js", "net_web.js", "net_overlay.js", "screen_overlay.js", "bt3.mem", "saves.js", "touch.js", "gamepad.svg"]
 EMSDK = pathlib.Path(os.environ.get("EMSDK", ROOT.parent / "tools/emsdk"))
 LICENSES = {
     "Tenkaichi3Decomp-AGPL.txt": ROOT / "LICENSE",       # (AGPL-3.0-only from the original project's 06e4671 on)
@@ -51,6 +51,7 @@ def main():
     shutil.copytree(WEB / "tbo", folder / "web" / "tbo")  # (Tenkaichi Budokai Online's pictures and their credits)
     shutil.copytree(WEB / "fonts", folder / "web" / "fonts")  # (the TrueType fonts, with their licences: its words)
     shutil.copytree(WEB / "translations", folder / "web" / "translations")  # (the bundled translation catalogs: English)
+    shutil.copytree(WEB / "bars", folder / "web" / "bars")  # (the side bars' art: upstream's, port/assets/bars)
     shutil.copy2(ROOT / "port/web/devserver.py", folder / "devserver.py")
     shutil.copy2(ROOT / "port/web/play.py", folder / "play.py")
     shutil.copy2(ROOT / "port/tools/extract_disc.py", folder / "extract_disc.py")

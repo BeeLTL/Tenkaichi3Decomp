@@ -705,11 +705,12 @@ SELECT, or the bound one) calls the page's `toggle`.
 | Full screen (F11) | page button (browser Fullscreen API; a browser grants it only from a click, so the saved setting cannot apply it at start) |
 | Controls: player, controller, reset, 24 bindings + the settings key; clash option and its worth | panel, same engine values |
 | Cheats: unlock everything | panel (offered once a save is loaded; reports the result) |
-| Meter (frame rate, game speed) | Developer section (with renderer, GPU, resolution, frame, WebGPU errors, screenshot, restart with start-up switches) |
+| Meter (frame rate, game speed) | over the picture (2026-10-18, `net_overlay.js`): Video > Meter, the pictures a second and the game's speed as natively, and the connection during an online match; the Developer section keeps its own numbers |
 | Display (monitor choice) | not offered: the browser decides |
 | Smooth motion (60 / 120 / 240) | **not offered**: measured in the browser, it slows the game (speed 90 % at "60", 74 % at "120") and the in-between pictures do not reach the screen (a page shows one picture per animation frame). The engine's F9 still switches it, with that effect |
 | Online play window, players' names, connection meter | the game's own Tenkaichi Budokai Online menu (P5); the Dragon Net Battle entry stays hidden (`BT3_MENU_ITEM4=0`) |
-| Names of stages / songs added from outside the disc | the game prints them with its own font (its fallback without the overlay); the browser data has none |
+| Names of stages / songs added from outside the disc | drawn by the page over the Map Select and the BGM Select (2026-10-18, `screen_overlay.js`, `Bt3Ui_MenuNames`), in the game's rectangle, cream with a dark outline as natively; seen through the real menus with an added stage and song (`port/tests/web/screen_overlay.js`) |
+| Side bars (border art beside a picture narrower than the window) | drawn by the page beside the picture in full screen and in touch play (2026-10-18, `screen_overlay.js`): Video > Side bars, upstream's art (`port/assets/bars`) |
 | Notices (`Port_UiNotice`) | a line under the game |
 | Menu font, Dialogue / UI font (UI tab) | Video tab, under Text (2026-10-16): the engine's own list of `fonts.tsv` (made on the game's thread: reading it can wait for a file over HTTP, which a call from the page cannot); a choice is applied and kept as natively, the menu font once the labels made from the disc are there |
 | Low input lag (experimental) | Video tab (2026-10-16), the same engine setting `late_input` |

@@ -56,6 +56,10 @@ const PANEL = [
       help: 'In a picture wider than 4:3, the menus are shown at their own shape with black at the sides instead of stretched. Fights are not changed.' },
     { key: 'frame_skip', label: 'Skip pictures instead of slowing down', type: 'checkbox',
       help: 'When this machine cannot show a picture in time, the game stays at full speed and leaves pictures out instead (choppier, not slower).' },
+    { key: 'meter', label: 'Meter', type: 'checkbox',
+      help: 'In the corner of the picture: the pictures shown a second and the game\'s speed (a fight shows 30 a second and the menus 60, as on the console); during an online match also the connection.' },
+    { key: 'side_bars', label: 'Side bars', type: 'checkbox',
+      help: 'In full screen and in touch play, where the picture leaves room at its sides: the border art there instead of black.' },
     { key: 'late_input', label: 'Low input lag (experimental)', type: 'checkbox',
       help: 'The game reads the controller, computes, and then waits before the picture is shown: about 33 ms in a fight. With this on the wait comes first, so the picture follows your press sooner. The game itself is unchanged. Not during online play.' },
     { key: 'texture_pack', label: 'Texture pack', type: 'checkbox', when: (s) => s.get('texture_pack_count') > 0,
@@ -103,8 +107,7 @@ const PANEL = [
       help: 'During an online match, Tab opens a line to the other player (Enter sends, Esc closes). The last lines show in the lower left.' },
     { key: 'chat_size', label: 'Chat box size', type: 'select', when: (s) => s.get('chat') === 1,
       options: [[0, 'Compact'], [1, 'Normal'], [2, 'Large']] },
-    { key: 'meter', label: 'Connection meter', type: 'checkbox',
-      help: 'During an online match: the ping, the time spent waiting for the other player, the input delay.' },
+    { heading: 'The connection meter: Video > Meter (during a match it shows the ping, the waits and the delay).' },
   ] },
   { tab: 'Extras', items: [
     { key: 'game_speed', label: 'Game speed', type: 'range', min: 50, max: 200, unit: '%', reset: 100,
@@ -140,7 +143,8 @@ class Bt3Settings {
     this.captureListener = null;  // the guided set-up's, while it runs: the engine's captureDone goes there
     this.controllers = new Bt3Controllers(this);  // the Controls tab's controller part (controllers.js)
     this.touch = new Bt3Touch({ stage, settings: this, log });  // the on-screen touch controls and the Touch tab (touch.js)
-    this.netOverlay = new Bt3NetOverlay({ stage, settings: this });  // online play's chat box and connection meter (net_overlay.js)
+    this.netOverlay = new Bt3NetOverlay({ stage, settings: this });
+    this.screenOverlay = new Bt3ScreenOverlay({ stage, canvas, settings: this });  // side bars, added stages' and songs' names (screen_overlay.js)  // online play's chat box and connection meter (net_overlay.js)
     // the Developer section's live numbers and the diagnostics export (dashboard.js)
     this.dashboard = new Bt3Dashboard({ root: document.getElementById('dev-dashboard'), renderer, data, log, getLog,
                                         getSettings: () => this.snapshot() });

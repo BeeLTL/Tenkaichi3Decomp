@@ -103,6 +103,10 @@ VIDEO_FIELD(textFont)
 VIDEO_FIELD(battleFont)
 int Port_LateInput(void);           /* plat_stub.c: "Low input lag", the blanks are waited for before the pad read */
 void Port_LateInputSet(int on);
+/* the native window's side bars (ui.cpp bars_draw: its art beside a picture narrower than the window); the page draws
+   them beside the picture in full screen and in touch play (screen_overlay.js) */
+static int get_side_bars(void) { return Port_Setting("side_bars", 0) != 0; }
+static void set_side_bars(int x) { Port_SettingSave("side_bars", x != 0); Port_SettingsWrite(); }
 static int get_language_prompt(void) { return Port_Setting("language_prompt_always", 0) != 0; }
 static void set_language_prompt(int x) { Port_SettingSave("language_prompt_always", x != 0); Port_SettingsWrite(); }
 static void set_late_input(int x) { Port_LateInputSet(x); Port_SettingsWrite(); } /* (the native window writes the file on closing) */
@@ -217,6 +221,7 @@ static const struct {
     {"text_font_id", get_textFont, set_textFont},
     {"battle_font_id", get_battleFont, set_battleFont},
     {"language_prompt_always", get_language_prompt, set_language_prompt},
+    {"side_bars", get_side_bars, set_side_bars},
     {"late_input", Port_LateInput, set_late_input},
     {"fx_off", get_fxOff, set_fxOff},
     {"glow", get_glow, set_glow},
@@ -415,8 +420,31 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context, const c
         fprintf(stderr, "bt3: no SDL event for the page's settings: %s\n", SDL_GetError());
         return 0;
     }
+    /* the names of stages and songs added from outside the disc: drawn by the page over the menus (Bt3Ui_MenuNames,
+       screen_overlay.js), as the native window draws them, instead of the game's plain fallback font */
+    gUiNameReady = 1;
+    gUiSongReady = 1;
     page_call("ready", 0);
     return 1;
+}
+
+/* ---- what the native window draws over and beside the picture (ui.cpp), for the page (screen_overlay.js) ----
+   The picture's rectangle in the canvas (the back ends fill gUiPresent*: gs_gl.c, web/gs_wgpu.c) and the name of an
+   added stage or song the menu shows now, its rectangle in the game's 512 x 448:
+   "px,py,pw,ph" then a line "stage|song<TAB>x<TAB>y<TAB>w<TAB>h<TAB>lit<TAB>name" for each name shown. */
+extern const char *PortStages_Name(int index), *PortSongs_Name(int index);
+EMSCRIPTEN_KEEPALIVE const char *Bt3Ui_MenuNames(void) {
+    static char out[1024];
+    size_t used = (size_t)snprintf(out, sizeof(out), "%d,%d,%d,%d", gUiPresentX, gUiPresentY, gUiPresentW, gUiPresentH);
+    if (gUiNameIdx >= 0 && gUiNameIdx < PortStages_Count() && used < sizeof(out)) {
+        used += (size_t)snprintf(out + used, sizeof(out) - used, "\nstage\t%d\t%d\t%d\t%d\t0\t%s", gUiNameX, gUiNameY, gUiNameW, gUiNameH,
+                                 PortStages_Name(gUiNameIdx));
+    }
+    if (gUiSongIdx >= 0 && gUiSongIdx < PortSongs_Count() && used < sizeof(out)) {
+        snprintf(out + used, sizeof(out) - used, "\nsong\t%d\t%d\t%d\t%d\t%d\t%s", gUiSongX, gUiSongY, gUiSongW, gUiSongH, gUiSongLit != 0,
+                 PortSongs_Name(gUiSongIdx));
+    }
+    return out;
 }
 
 /* ---- Tenkaichi Budokai Online's keypads (src/menu/port_tbo.c: a name, a room code) -------------------------------
